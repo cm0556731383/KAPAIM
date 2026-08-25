@@ -122,8 +122,8 @@
             </nav>
             <nav>
                 <div class="nav-group-label">ניהול ומערכת</div>
+                <a href="{{ route('programs-catalog') }}" class="{{ request()->routeIs('programs-catalog') ? 'active' : '' }}"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
                 @foreach ([
-                    ['קטלוג תוכניות', 'icon-catalog'],
                     ['תבניות מסמכים', 'icon-documents'],
                 ] as [$label, $icon])
                     <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>

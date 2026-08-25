@@ -19,4 +19,5 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/users-roles', 'users-roles')->name('users-roles');
     Route::livewire('/activity-log', 'activity-log')->name('activity-log');
     Route::livewire('/settings', 'settings')->name('settings');
+    Route::livewire('/programs-catalog', 'programs-catalog')->name('programs-catalog');
 });

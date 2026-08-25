@@ -53,5 +53,6 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->call(ReferenceDataSeeder::class);
+        $this->call(ProgramsCatalogSeeder::class);
     }
 }
