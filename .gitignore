@@ -1,0 +1,17 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Future app dependencies (once Laravel is scaffolded here)
+/vendor/
+/node_modules/
+/public/build/
+.env
+.env.*
+!.env.example
+
+# Duplicate of assets/logo/kapaim-logo.gif left at the repo root (same md5) —
+# kept on disk but not tracked twice.
+/חסי-כפיים-004.gif

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>עריכת פרטי לקוחה — כפיים</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* Design Tokens — כפיים
+   מקור: docs/brand-guidelines.md — אין לערוך ערכי צבע כאן בלי לעדכן את המסמך.
+   גרסה 3.0: צבעי המותג נדגמו ישירות מפיקסלי assets/logo/kapaim-logo.gif (טבלת הצבעים של ה-GIF), במקום פלטה מומצאת.
+   פונט אחיד לכל הטקסט (כולל כותרות) — Heebo בלבד, ללא גופן תצוגה נפרד. */
+
+:root {
+  /* Typography — פונט אחד לכל המערכת */
+  --font-body: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-display: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --fs-caption: 12px;
+  --fs-small: 14px;
+  --fs-body: 16px;
+  --fs-h3: 19px;
+  --fs-h2: 25px;
+  --fs-h1: 34px;
+
+  /* Spacing */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+
+  /* Radius — קרוב וקצר, לא "כדורי" בכל מקום */
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-modal: 14px;
+  --radius-tag: 4px;
+  --radius-pill: 9999px;
+
+  /* Shadow — כמעט שטוח, כמו נייר מונח */
+  --shadow-card: 0 1px 2px rgb(28 35 31 / 0.05);
+  --shadow-card-hover: 0 3px 10px rgb(28 35 31 / 0.09);
+  --shadow-modal: 0 20px 45px -14px rgb(28 35 31 / 0.30);
+
+  /* Palette — נדגם מתוך הלוגו: פטרול/טורקיז, ורוד-מג'נטה, זהב-ענבר */
+  --color-primary: #286E9A;
+  --color-primary-hover: #1C5679;
+  --color-primary-light: #8FBAD3;
+  --color-primary-lighter: #E1EEF4;
+  --color-secondary: #D6335F;
+  --color-secondary-hover: #AD2A4D;
+  --color-secondary-light: #F0A9BE;
+  --color-accent: #FDB92D;
+  --color-accent-hover: #B8830F;
+  --color-accent-light: #FEF0D4;
+  --color-background: #EFEEE5;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #20241F;
+  --color-text-secondary: #5C6B5F;
+  --color-border: #DAD7C7;
+
+  /* Status — קבועים ומוסכמים, בלתי תלויים בפלטת המותג */
+  --color-success: #16A34A;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #D97706;
+  --color-warning-bg: #FEF3C7;
+  --color-error: #DC2626;
+  --color-error-bg: #FEE2E2;
+  --color-info: #2563EB;
+  --color-info-bg: #DBEAFE;
+}
+
+/* ===== Base elements ===== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+body {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+h1, h2, h3 { margin: 0 0 var(--sp-sm); }
+h1 { font-family: var(--font-display); font-weight: 500; font-size: var(--fs-h1); letter-spacing: 0; }
+h2 { font-family: var(--font-body); font-weight: 700; font-size: var(--fs-h2); }
+h3 { font-family: var(--font-body); font-weight: 600; font-size: var(--fs-h3); }
+
+/* Handprint mark — כפיים's signature motif, used sparingly */
+.hand-mark { color: var(--color-primary); }
+.hand-mark.muted { color: var(--color-primary-light); opacity: .6; }
+
+/* Faint ruled-notebook texture — used only behind hero moments */
+.notebook-texture {
+  background-image: repeating-linear-gradient(
+    var(--color-background) 0px, var(--color-background) 31px,
+    var(--color-border) 31px, var(--color-border) 32px
+  );
+  background-blend-mode: normal;
+}
+
+/* Numbers/dates/currency stay LTR inside RTL flow */
+.ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; }
+
+/* ===== Components ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.btn-primary { background: var(--color-primary); color: #FFFFFF; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-secondary { background: transparent; color: var(--color-primary); border-color: var(--color-primary); }
+.btn-secondary:hover { background: var(--color-primary-lighter); }
+.btn-ghost { background: transparent; color: var(--color-text-secondary); }
+.btn-ghost:hover { background: var(--color-border); }
+.btn-destructive { background: var(--color-error); color: #FFFFFF; }
+.btn-destructive:hover { filter: brightness(0.92); }
+.btn[disabled], .btn.is-disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+.btn-sm { padding: 6px 12px; font-size: var(--fs-caption); }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--sp-lg);
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+/* Icon chip — קונטיינר מרובע ומאופק לאייקון, לא באדג' כדורי צבעוני */
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+.icon-chip svg { width: 18px; height: 18px; }
+.icon-chip.tone-primary { border-color: transparent; background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.icon-chip.tone-secondary { color: var(--color-text-secondary); }
+.icon-chip.tone-accent { border-color: transparent; background: var(--color-accent-light); color: #8A5A0F; }
+.icon-chip.tone-error { border-color: transparent; background: var(--color-error-bg); color: var(--color-error); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  border-radius: var(--radius-tag);
+  padding: 3px 9px;
+}
+.badge-primary { background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.badge-success { background: var(--color-success-bg); color: var(--color-success); }
+.badge-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.badge-error { background: var(--color-error-bg); color: var(--color-error); }
+.badge-info { background: var(--color-info-bg); color: var(--color-info); }
+.badge-neutral { background: var(--color-border); color: var(--color-text-secondary); }
+
+input, select, textarea {
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  color: var(--color-text-primary);
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-lighter);
+}
+label {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--sp-xs);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+th {
+  text-align: start;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+td {
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+tr:hover td { background: var(--color-primary-lighter); }
+
+/* Scrollbars — עדינים, לא הפס האפור של ברירת המחדל */
+html { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+</style>
+<style>
+  .wrap { max-width: 760px; margin: 0 auto; padding: var(--sp-lg) var(--sp-lg) var(--sp-2xl); }
+  .masthead { display: flex; align-items: center; justify-content: space-between; padding-bottom: var(--sp-md); border-bottom: 1px solid var(--color-border); margin-bottom: var(--sp-xl); flex-wrap: wrap; gap: var(--sp-md); }
+  .masthead-brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 500; font-size: 18px; color: var(--color-text-primary); text-decoration: none; }
+  .masthead-brand svg { width: 16px; height: 19px; color: var(--color-primary); }
+  .masthead nav { display: flex; gap: var(--sp-xs); flex-wrap: wrap; font-size: var(--fs-small); margin: 0; }
+  .masthead nav a { color: var(--color-text-secondary); text-decoration: none; padding: 6px 12px; border-radius: var(--radius-pill); }
+  .masthead nav a.current, .masthead nav a:hover { color: var(--color-primary-hover); background: var(--color-primary-lighter); }
+  .topbar { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: var(--sp-lg); gap: var(--sp-md); }
+  .topbar h1 { margin-bottom: 4px; }
+  .section { margin-bottom: var(--sp-lg); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-md); }
+  .form-grid .full { grid-column: 1 / -1; }
+  .contact-item { border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--sp-md); margin-bottom: var(--sp-sm); }
+  .contact-view { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-md); }
+  .contact-view .who { font-weight: 600; }
+  .contact-view .role { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+  .contact-view .actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+  .contact-edit-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-md); }
+  .contact-edit-head .tag { font-size: var(--fs-caption); font-weight: 700; color: var(--color-primary-hover); text-transform: uppercase; letter-spacing: .04em; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input[type="checkbox"] { width: auto; }
+  .checkbox-row label { margin: 0; font-weight: 500; color: var(--color-text-primary); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="hand-mark-shape" viewBox="0 0 120 140">
+    <rect x="32" y="44" width="10" height="32" rx="5" transform="rotate(-16 37 76)"/>
+    <rect x="47" y="30" width="11" height="46" rx="5.5" transform="rotate(-6 52.5 76)"/>
+    <rect x="61" y="24" width="12" height="52" rx="6" transform="rotate(2 67 76)"/>
+    <rect x="75" y="31" width="11" height="44" rx="5.5" transform="rotate(11 80.5 76)"/>
+    <rect x="17" y="68" width="14" height="32" rx="7" transform="rotate(-46 24 84)"/>
+    <ellipse cx="59" cy="88" rx="38" ry="33"/>
+  </symbol>
+  <g id="icon-defs">
+    <symbol id="icon-trash" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 7h14"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/>
+    </symbol>
+  </g>
+</svg>
+<div class="wrap">
+  <div class="masthead">
+    <a class="masthead-brand" href="index.html"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg><span>כפיים</span></a>
+    <nav>
+    <a href="design-system.html">Design System</a>
+    <a href="loading.html">מסך טעינה</a>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="leads.html">רשימת לידים</a>
+    <a href="lead-detail.html">כרטיס ליד</a>
+    <a href="customer-deal.html">לקוחה + עסקה</a>
+    <a class="current" href="customer-edit.html">עריכת לקוחה</a>
+    </nav>
+  </div>
+
+  <div class="topbar">
+    <div>
+      <h1>עריכת פרטי לקוחה</h1>
+      <p style="color:var(--color-text-secondary); margin:0">בית ספר יובלים · לקוחה מאז 01/09/2024</p>
+    </div>
+    <div style="display:flex; gap:var(--sp-sm); flex-shrink:0">
+      <button class="btn btn-ghost" onclick="location.href='customer-deal.html'">ביטול</button>
+      <button class="btn btn-primary" onclick="location.href='customer-deal.html'">שמירת שינויים</button>
+    </div>
+  </div>
+
+  <div class="card section">
+    <h3>פרטי מוסד</h3>
+    <div class="form-grid">
+      <div class="full">
+        <label>שם המוסד</label>
+        <input type="text" value="בית ספר יובלים">
+      </div>
+      <div>
+        <label>עיר</label>
+        <input type="text" value="רעננה">
+      </div>
+      <div>
+        <label>סוג מוסד</label>
+        <select>
+          <option selected>בית ספר עצמאי</option>
+          <option>סניף ברשת חינוך</option>
+        </select>
+      </div>
+      <div class="full">
+        <label>הערות פנימיות</label>
+        <textarea rows="3" placeholder="הערות חופשיות על הלקוחה..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <h3>אנשי קשר</h3>
+
+    <div class="contact-item">
+      <div class="contact-view">
+        <div>
+          <div class="who">מירב כהן</div>
+          <div class="role">רכזת · <span class="ltr-num">052-1112223</span></div>
+        </div>
+        <div class="actions">
+          <span class="badge badge-primary">איש קשר ראשי</span>
+          <button class="btn btn-ghost btn-sm">עריכה</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="contact-item">
+      <div class="contact-view">
+        <div>
+          <div class="who">דנה אורן</div>
+          <div class="role">מנהלת · <span class="ltr-num">03-9876543</span></div>
+        </div>
+        <div class="actions">
+          <span class="badge badge-neutral">גורם חשבונאי</span>
+          <button class="btn btn-ghost btn-sm">עריכה</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="contact-item" style="border-color:var(--color-primary); box-shadow:0 0 0 3px var(--color-primary-lighter)">
+      <div class="contact-edit-head">
+        <span class="tag">איש קשר חדש</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--color-error)"><svg width="14" height="14"><use href="#icon-trash"></use></svg>ביטול הוספה</button>
+      </div>
+      <div class="form-grid">
+        <div><label>שם מלא</label><input type="text" placeholder="לדוגמה: יעל שגיא"></div>
+        <div><label>תפקיד</label><input type="text" placeholder="לדוגמה: גזברית"></div>
+        <div><label>טלפון ראשי</label><input type="text" class="ltr-num" dir="ltr" placeholder="050-1234567"></div>
+        <div><label>טלפון נוסף</label><input type="text" class="ltr-num" dir="ltr" placeholder="—"></div>
+        <div><label>דוא"ל ראשי</label><input type="text" class="ltr-num" dir="ltr" placeholder="name@example.com"></div>
+        <div><label>דוא"ל נוסף</label><input type="text" class="ltr-num" dir="ltr" placeholder="—"></div>
+        <div class="full" style="display:flex; gap:var(--sp-lg)">
+          <div class="checkbox-row"><input type="checkbox" id="c-primary"><label for="c-primary">איש קשר ראשי</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="c-billing"><label for="c-billing">גורם חשבונאי</label></div>
+        </div>
+      </div>
+      <div style="display:flex; gap:var(--sp-sm); margin-top:var(--sp-md)">
+        <button class="btn btn-primary btn-sm">הוספת איש קשר</button>
+      </div>
+    </div>
+
+    <button class="btn btn-secondary" style="margin-top:var(--sp-sm)">+ הוספת איש קשר</button>
+    <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לא ניתן להסיר את הסימון מאיש הקשר הראשי האחרון, וללקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד.</p>
+  </div>
+</div>
+</body>
+</html>

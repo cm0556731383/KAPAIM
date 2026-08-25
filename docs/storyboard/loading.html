@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מסך טעינה — כפיים</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* Design Tokens — כפיים
+   מקור: docs/brand-guidelines.md — אין לערוך ערכי צבע כאן בלי לעדכן את המסמך.
+   גרסה 3.0: צבעי המותג נדגמו ישירות מפיקסלי assets/logo/kapaim-logo.gif (טבלת הצבעים של ה-GIF), במקום פלטה מומצאת.
+   פונט אחיד לכל הטקסט (כולל כותרות) — Heebo בלבד, ללא גופן תצוגה נפרד. */
+
+:root {
+  /* Typography — פונט אחד לכל המערכת */
+  --font-body: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-display: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --fs-caption: 12px;
+  --fs-small: 14px;
+  --fs-body: 16px;
+  --fs-h3: 19px;
+  --fs-h2: 25px;
+  --fs-h1: 34px;
+
+  /* Spacing */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+
+  /* Radius — קרוב וקצר, לא "כדורי" בכל מקום */
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-modal: 14px;
+  --radius-tag: 4px;
+  --radius-pill: 9999px;
+
+  /* Shadow — כמעט שטוח, כמו נייר מונח */
+  --shadow-card: 0 1px 2px rgb(28 35 31 / 0.05);
+  --shadow-card-hover: 0 3px 10px rgb(28 35 31 / 0.09);
+  --shadow-modal: 0 20px 45px -14px rgb(28 35 31 / 0.30);
+
+  /* Palette — נדגם מתוך הלוגו: פטרול/טורקיז, ורוד-מג'נטה, זהב-ענבר */
+  --color-primary: #286E9A;
+  --color-primary-hover: #1C5679;
+  --color-primary-light: #8FBAD3;
+  --color-primary-lighter: #E1EEF4;
+  --color-secondary: #D6335F;
+  --color-secondary-hover: #AD2A4D;
+  --color-secondary-light: #F0A9BE;
+  --color-accent: #FDB92D;
+  --color-accent-hover: #B8830F;
+  --color-accent-light: #FEF0D4;
+  --color-background: #EFEEE5;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #20241F;
+  --color-text-secondary: #5C6B5F;
+  --color-border: #DAD7C7;
+
+  /* Status — קבועים ומוסכמים, בלתי תלויים בפלטת המותג */
+  --color-success: #16A34A;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #D97706;
+  --color-warning-bg: #FEF3C7;
+  --color-error: #DC2626;
+  --color-error-bg: #FEE2E2;
+  --color-info: #2563EB;
+  --color-info-bg: #DBEAFE;
+}
+
+/* ===== Base elements ===== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+body {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+h1, h2, h3 { margin: 0 0 var(--sp-sm); }
+h1 { font-family: var(--font-display); font-weight: 500; font-size: var(--fs-h1); letter-spacing: 0; }
+h2 { font-family: var(--font-body); font-weight: 700; font-size: var(--fs-h2); }
+h3 { font-family: var(--font-body); font-weight: 600; font-size: var(--fs-h3); }
+
+/* Handprint mark — כפיים's signature motif, used sparingly */
+.hand-mark { color: var(--color-primary); }
+.hand-mark.muted { color: var(--color-primary-light); opacity: .6; }
+
+/* Faint ruled-notebook texture — used only behind hero moments */
+.notebook-texture {
+  background-image: repeating-linear-gradient(
+    var(--color-background) 0px, var(--color-background) 31px,
+    var(--color-border) 31px, var(--color-border) 32px
+  );
+  background-blend-mode: normal;
+}
+
+/* Numbers/dates/currency stay LTR inside RTL flow */
+.ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; }
+
+/* ===== Components ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.btn-primary { background: var(--color-primary); color: #FFFFFF; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-secondary { background: transparent; color: var(--color-primary); border-color: var(--color-primary); }
+.btn-secondary:hover { background: var(--color-primary-lighter); }
+.btn-ghost { background: transparent; color: var(--color-text-secondary); }
+.btn-ghost:hover { background: var(--color-border); }
+.btn-destructive { background: var(--color-error); color: #FFFFFF; }
+.btn-destructive:hover { filter: brightness(0.92); }
+.btn[disabled], .btn.is-disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--sp-lg);
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+/* Icon chip — קונטיינר מרובע ומאופק לאייקון, לא באדג' כדורי צבעוני */
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+.icon-chip svg { width: 18px; height: 18px; }
+.icon-chip.tone-primary { border-color: transparent; background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.icon-chip.tone-secondary { color: var(--color-text-secondary); }
+.icon-chip.tone-accent { border-color: transparent; background: var(--color-accent-light); color: #8A5A0F; }
+.icon-chip.tone-error { border-color: transparent; background: var(--color-error-bg); color: var(--color-error); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  border-radius: var(--radius-tag);
+  padding: 3px 9px;
+}
+.badge-primary { background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.badge-success { background: var(--color-success-bg); color: var(--color-success); }
+.badge-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.badge-error { background: var(--color-error-bg); color: var(--color-error); }
+.badge-info { background: var(--color-info-bg); color: var(--color-info); }
+.badge-neutral { background: var(--color-border); color: var(--color-text-secondary); }
+
+input, select, textarea {
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  color: var(--color-text-primary);
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-lighter);
+}
+label {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--sp-xs);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+th {
+  text-align: start;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+td {
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+tr:hover td { background: var(--color-primary-lighter); }
+
+/* Scrollbars — עדינים, לא הפס האפור של ברירת המחדל */
+html { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+</style>
+<style>
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 38%, var(--color-primary-lighter) 0%, var(--color-background) 62%);
+  }
+
+  .corner-link {
+    position: fixed;
+    top: var(--sp-md);
+    inset-inline-end: var(--sp-md);
+    font-size: var(--fs-caption);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    opacity: .55;
+    z-index: 50;
+  }
+  .corner-link:hover { opacity: 1; }
+
+  .splash {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-lg);
+    opacity: 0;
+    transform: scale(.96);
+    animation: enter 700ms cubic-bezier(.22,1,.36,1) forwards;
+  }
+
+  .logo-frame {
+    width: min(60vw, 340px);
+    aspect-ratio: 16 / 9;
+    border-radius: var(--radius-modal);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-modal);
+  }
+  .logo-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-sm);
+    width: min(60vw, 260px);
+  }
+  .status-text {
+    font-size: var(--fs-small);
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    min-height: 1.4em;
+  }
+  .progress-track {
+    width: 100%;
+    height: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--color-border);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--color-primary);
+    border-radius: var(--radius-pill);
+    animation: fill 2600ms cubic-bezier(.45,0,.2,1) forwards;
+    animation-delay: 250ms;
+  }
+
+  .fade-out {
+    animation: leave 420ms ease forwards;
+  }
+
+  @keyframes enter {
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes fill {
+    to { width: 100%; }
+  }
+  @keyframes leave {
+    to { opacity: 0; transform: scale(1.02); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .splash { animation: none; opacity: 1; transform: none; }
+    .progress-fill { animation: none; width: 100%; transition: none; }
+    .fade-out { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <a class="corner-link" href="index.html">← סטוריבורד</a>
+
+  <div class="splash" id="splash">
+    <div class="logo-frame">
+      <img src="../../assets/logo/kapaim-logo.gif" alt="כפיים" width="960" height="540">
+    </div>
+    <div class="status">
+      <div class="progress-track"><div class="progress-fill"></div></div>
+      <div class="status-text" id="statusText" role="status" aria-live="polite">מתחברים…</div>
+    </div>
+  </div>
+
+<script>
+  var messages = ['מתחברים…', 'טוענים את הנתונים שלך…', 'כמעט מוכן…'];
+  var statusEl = document.getElementById('statusText');
+  var i = 0;
+  var swap = setInterval(function () {
+    i++;
+    if (i < messages.length) statusEl.textContent = messages[i];
+  }, 900);
+
+  function goToDashboard() {
+    clearInterval(swap);
+    var splash = document.getElementById('splash');
+    splash.classList.add('fade-out');
+    setTimeout(function () { window.location.href = 'dashboard.html'; }, 380);
+  }
+
+  var redirectTimer = setTimeout(goToDashboard, 2900);
+
+  /* בסביבת סטוריבורד בלבד: לחיצה בכל מקום מדלגת מיידית לדשבורד */
+  document.body.addEventListener('click', function (e) {
+    if (e.target.closest('.corner-link')) return;
+    clearTimeout(redirectTimer);
+    goToDashboard();
+  });
+</script>
+</body>
+</html>

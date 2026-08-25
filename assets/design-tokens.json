@@ -1,0 +1,66 @@
+{
+  "$schema": "https://design-tokens.org/schema.json",
+  "brand": "כפיים",
+  "defaultTheme": "brand",
+  "primitive": {
+    "spacing": {
+      "xs": { "$value": "4px", "$type": "dimension" },
+      "sm": { "$value": "8px", "$type": "dimension" },
+      "md": { "$value": "16px", "$type": "dimension" },
+      "lg": { "$value": "24px", "$type": "dimension" },
+      "xl": { "$value": "32px", "$type": "dimension" },
+      "2xl": { "$value": "48px", "$type": "dimension" }
+    },
+    "radius": {
+      "control": { "$value": "6px", "$type": "dimension" },
+      "card": { "$value": "10px", "$type": "dimension" },
+      "modal": { "$value": "14px", "$type": "dimension" },
+      "tag": { "$value": "4px", "$type": "dimension" },
+      "pill": { "$value": "9999px", "$type": "dimension" }
+    },
+    "fontSize": {
+      "caption": { "$value": "12px", "$type": "dimension" },
+      "small": { "$value": "14px", "$type": "dimension" },
+      "body": { "$value": "16px", "$type": "dimension" },
+      "h3": { "$value": "19px", "$type": "dimension" },
+      "h2": { "$value": "25px", "$type": "dimension" },
+      "h1": { "$value": "34px", "$type": "dimension" }
+    },
+    "fontFamily": {
+      "body": { "$value": "'Heebo', system-ui, -apple-system, sans-serif", "$type": "fontFamily" },
+      "mono": { "$value": "'JetBrains Mono', 'Courier New', monospace", "$type": "fontFamily" }
+    }
+  },
+  "semantic": {
+    "status": {
+      "success": { "$value": "#16A34A", "$type": "color" },
+      "warning": { "$value": "#D97706", "$type": "color" },
+      "error": { "$value": "#DC2626", "$type": "color" },
+      "info": { "$value": "#2563EB", "$type": "color" }
+    }
+  },
+  "themes": {
+    "brand": {
+      "name": "כפיים",
+      "default": true,
+      "source": "נדגם ישירות מטבלת הצבעים (Global Color Table) של kapaim-logo.gif — לא הערכה חזותית. ראו docs/brand-guidelines.md סעיף 1.",
+      "color": {
+        "primary": "#286E9A",
+        "primary-hover": "#1C5679",
+        "primary-light": "#8FBAD3",
+        "primary-lighter": "#E1EEF4",
+        "secondary": "#D6335F",
+        "secondary-hover": "#AD2A4D",
+        "secondary-light": "#F0A9BE",
+        "accent": "#FDB92D",
+        "accent-hover": "#B8830F",
+        "accent-light": "#FEF0D4",
+        "background": "#EFEEE5",
+        "surface": "#FFFFFF",
+        "text-primary": "#20241F",
+        "text-secondary": "#5C6B5F",
+        "border": "#DAD7C7"
+      }
+    }
+  }
+}

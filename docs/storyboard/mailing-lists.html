@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>רשימות תפוצה — כפיים</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* Design Tokens — כפיים
+   מקור: docs/brand-guidelines.md — אין לערוך ערכי צבע כאן בלי לעדכן את המסמך.
+   גרסה 3.0: צבעי המותג נדגמו ישירות מפיקסלי assets/logo/kapaim-logo.gif (טבלת הצבעים של ה-GIF), במקום פלטה מומצאת.
+   פונט אחיד לכל הטקסט (כולל כותרות) — Heebo בלבד, ללא גופן תצוגה נפרד. */
+
+:root {
+  /* Typography — פונט אחד לכל המערכת */
+  --font-body: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-display: 'Heebo', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --fs-caption: 12px;
+  --fs-small: 14px;
+  --fs-body: 16px;
+  --fs-h3: 19px;
+  --fs-h2: 25px;
+  --fs-h1: 34px;
+
+  /* Spacing */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+
+  /* Radius — קרוב וקצר, לא "כדורי" בכל מקום */
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-modal: 14px;
+  --radius-tag: 4px;
+  --radius-pill: 9999px;
+
+  /* Shadow — כמעט שטוח, כמו נייר מונח */
+  --shadow-card: 0 1px 2px rgb(28 35 31 / 0.05);
+  --shadow-card-hover: 0 3px 10px rgb(28 35 31 / 0.09);
+  --shadow-modal: 0 20px 45px -14px rgb(28 35 31 / 0.30);
+
+  /* Palette — נדגם מתוך הלוגו: פטרול/טורקיז, ורוד-מג'נטה, זהב-ענבר */
+  --color-primary: #286E9A;
+  --color-primary-hover: #1C5679;
+  --color-primary-light: #8FBAD3;
+  --color-primary-lighter: #E1EEF4;
+  --color-secondary: #D6335F;
+  --color-secondary-hover: #AD2A4D;
+  --color-secondary-light: #F0A9BE;
+  --color-accent: #FDB92D;
+  --color-accent-hover: #B8830F;
+  --color-accent-light: #FEF0D4;
+  --color-background: #EFEEE5;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #20241F;
+  --color-text-secondary: #5C6B5F;
+  --color-border: #DAD7C7;
+
+  /* Status — קבועים ומוסכמים, בלתי תלויים בפלטת המותג */
+  --color-success: #16A34A;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #D97706;
+  --color-warning-bg: #FEF3C7;
+  --color-error: #DC2626;
+  --color-error-bg: #FEE2E2;
+  --color-info: #2563EB;
+  --color-info-bg: #DBEAFE;
+}
+
+/* ===== Base elements ===== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+body {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+h1, h2, h3 { margin: 0 0 var(--sp-sm); }
+h1 { font-family: var(--font-display); font-weight: 500; font-size: var(--fs-h1); letter-spacing: 0; }
+h2 { font-family: var(--font-body); font-weight: 700; font-size: var(--fs-h2); }
+h3 { font-family: var(--font-body); font-weight: 600; font-size: var(--fs-h3); }
+
+/* Handprint mark — כפיים's signature motif, used sparingly */
+.hand-mark { color: var(--color-primary); }
+.hand-mark.muted { color: var(--color-primary-light); opacity: .6; }
+
+/* Faint ruled-notebook texture — used only behind hero moments */
+.notebook-texture {
+  background-image: repeating-linear-gradient(
+    var(--color-background) 0px, var(--color-background) 31px,
+    var(--color-border) 31px, var(--color-border) 32px
+  );
+  background-blend-mode: normal;
+}
+
+/* Numbers/dates/currency stay LTR inside RTL flow */
+.ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; }
+
+/* ===== Components ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.btn-primary { background: var(--color-primary); color: #FFFFFF; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-secondary { background: transparent; color: var(--color-primary); border-color: var(--color-primary); }
+.btn-secondary:hover { background: var(--color-primary-lighter); }
+.btn-ghost { background: transparent; color: var(--color-text-secondary); }
+.btn-ghost:hover { background: var(--color-border); }
+.btn-destructive { background: var(--color-error); color: #FFFFFF; }
+.btn-destructive:hover { filter: brightness(0.92); }
+.btn[disabled], .btn.is-disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--sp-lg);
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+/* Icon chip — קונטיינר מרובע ומאופק לאייקון, לא באדג' כדורי צבעוני */
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+.icon-chip svg { width: 18px; height: 18px; }
+.icon-chip.tone-primary { border-color: transparent; background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.icon-chip.tone-secondary { color: var(--color-text-secondary); }
+.icon-chip.tone-accent { border-color: transparent; background: var(--color-accent-light); color: #8A5A0F; }
+.icon-chip.tone-error { border-color: transparent; background: var(--color-error-bg); color: var(--color-error); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  border-radius: var(--radius-tag);
+  padding: 3px 9px;
+}
+.badge-primary { background: var(--color-primary-lighter); color: var(--color-primary-hover); }
+.badge-success { background: var(--color-success-bg); color: var(--color-success); }
+.badge-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.badge-error { background: var(--color-error-bg); color: var(--color-error); }
+.badge-info { background: var(--color-info-bg); color: var(--color-info); }
+.badge-neutral { background: var(--color-border); color: var(--color-text-secondary); }
+
+input, select, textarea {
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  color: var(--color-text-primary);
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-lighter);
+}
+label {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--sp-xs);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+th {
+  text-align: start;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+td {
+  padding: var(--sp-sm) var(--sp-md);
+  border-bottom: 1px solid var(--color-border);
+}
+tr:hover td { background: var(--color-primary-lighter); }
+
+/* Scrollbars — עדינים, לא הפס האפור של ברירת המחדל */
+html { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+</style>
+<style>
+  body { background: var(--color-background); }
+  .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+
+  .sidebar {
+    background: #16262D;
+    color: #A7B9C0;
+    padding: var(--sp-lg) var(--sp-md) var(--sp-md);
+    display: flex;
+    flex-direction: column;
+    max-height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  .sidebar .brand { display: flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 500; font-size: 21px; color: #F0F4F6; margin: 4px 4px var(--sp-lg); padding: 0 4px var(--sp-md); border-bottom: 1px solid rgba(240,244,246,.09); }
+  .sidebar .brand svg { width: 15px; height: 18px; color: var(--color-accent); }
+
+  .sidebar-scroll { overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(240,244,246,.22) transparent; }
+  .sidebar-scroll::-webkit-scrollbar { width: 6px; }
+  .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(240,244,246,.2); border-radius: 999px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(240,244,246,.35); }
+  .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+  .sidebar .nav-group-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; color: #63767E; text-transform: uppercase; padding: 14px 12px 6px; }
+  .sidebar nav a {
+    display: flex; align-items: center; gap: 12px;
+    text-decoration: none; color: #A7B9C0; font-size: var(--fs-small); font-weight: 500;
+    padding: 9px 12px; border-radius: var(--radius-control);
+    border-inline-start: 2px solid transparent;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+  .sidebar nav a svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .8; }
+  .sidebar nav a.active { background: rgba(240,244,246,.06); color: #F0F4F6; border-inline-start-color: var(--color-accent); }
+  .sidebar nav a.active svg { opacity: 1; color: var(--color-accent); }
+  .sidebar nav a:hover:not(.active) { background: rgba(240,244,246,.04); color: #F0F4F6; }
+
+  .nav-storyboard { margin-top: var(--sp-sm); padding-top: var(--sp-md); border-top: 1px solid rgba(240,244,246,.1); font-size: var(--fs-caption); display: flex; flex-direction: column; gap: 6px; }
+  .nav-storyboard a { color: #63767E; text-decoration: none; }
+  .nav-storyboard a:hover { color: #F0F4F6; }
+
+  main { padding: var(--sp-xl) var(--sp-2xl); }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-xl); }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: var(--sp-md); margin-bottom: var(--sp-xl); }
+  .kpi:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-2px); }
+  .kpi-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-md); }
+  .kpi .label { color: var(--color-text-secondary); font-size: var(--fs-small); font-weight: 500; }
+  .kpi .num { font-family: var(--font-display); font-weight: 500; font-size: 34px; line-height: 1; }
+  .kpi .delta { font-size: var(--fs-caption); font-weight: 600; margin-top: var(--sp-sm); display: flex; align-items: center; gap: 4px; }
+
+  .cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-lg); align-items: start; }
+  .list-item { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
+  .list-item:last-child { border-bottom: none; }
+  .list-item .who { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+
+  .rule-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-md); }
+  .rule-list li { display: flex; gap: 10px; align-items: flex-start; font-size: var(--fs-small); }
+  .rule-list svg { width: 16px; height: 16px; color: var(--color-primary); flex-shrink: 0; margin-top: 3px; }
+  .rule-list b { color: var(--color-text-primary); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="hand-mark-shape" viewBox="0 0 120 140">
+    <rect x="32" y="44" width="10" height="32" rx="5" transform="rotate(-16 37 76)"/>
+    <rect x="47" y="30" width="11" height="46" rx="5.5" transform="rotate(-6 52.5 76)"/>
+    <rect x="61" y="24" width="12" height="52" rx="6" transform="rotate(2 67 76)"/>
+    <rect x="75" y="31" width="11" height="44" rx="5.5" transform="rotate(11 80.5 76)"/>
+    <rect x="17" y="68" width="14" height="32" rx="7" transform="rotate(-46 24 84)"/>
+    <ellipse cx="59" cy="88" rx="38" ry="33"/>
+  </symbol>
+
+  <g id="icon-defs">
+    <symbol id="icon-dashboard" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/>
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/>
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/>
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>
+    </symbol>
+    <symbol id="icon-leads" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 4h16l-6.5 8.5v6L10.5 20v-7.5z"/>
+    </symbol>
+    <symbol id="icon-customers" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 21V10l7.5-5 7.5 5v11"/>
+      <path d="M4 21h16"/>
+      <rect x="10" y="14" width="4" height="7"/>
+    </symbol>
+    <symbol id="icon-deals" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="8" width="18" height="12" rx="2"/>
+      <path d="M8.5 8V6.5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2V8"/>
+      <line x1="3" y1="13.5" x2="21" y2="13.5"/>
+    </symbol>
+    <symbol id="icon-documents" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 3h6.5L18 7.5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+      <path d="M13.5 3v4.5H18"/>
+      <line x1="9" y1="13" x2="15" y2="13"/>
+      <line x1="9" y1="16.5" x2="15" y2="16.5"/>
+    </symbol>
+    <symbol id="icon-payments" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="6" width="18" height="13" rx="2.5"/>
+      <line x1="3" y1="10" x2="21" y2="10"/>
+      <line x1="6" y1="15" x2="10.5" y2="15"/>
+    </symbol>
+    <symbol id="icon-subscriptions" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3 21 7.5V16.5L12 21 3 16.5V7.5Z"/>
+      <path d="M3 7.5 12 12l9-4.5"/>
+      <line x1="12" y1="12" x2="12" y2="21"/>
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="10.5" cy="10.5" r="6.5"/>
+      <line x1="20" y1="20" x2="15.3" y2="15.3"/>
+    </symbol>
+    <symbol id="icon-mailing" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2"/>
+      <path d="M3.5 6.5 12 13 20.5 6.5"/>
+    </symbol>
+    <symbol id="icon-suppliers" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9.3 5 4h14l1 5.3"/>
+      <path d="M3.5 9.3h17l-.6 2.2a2.2 2.2 0 0 1-4.3.2 2.2 2.2 0 0 1-4.3 0 2.2 2.2 0 0 1-4.3 0 2.2 2.2 0 0 1-4.3-.2Z"/>
+      <path d="M5.3 11.8V20h13.4v-8.2"/>
+      <path d="M10 20v-5h4v5"/>
+    </symbol>
+    <symbol id="icon-catalog" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 5.3c0-1 .8-1.5 1.9-1.3l5.1 1v14l-5.1-1c-1.1-.2-1.9-.5-1.9-1.5Z"/>
+      <path d="M20 5.3c0-1-.8-1.5-1.9-1.3l-5.1 1v14l5.1-1c1.1-.2 1.9-.5 1.9-1.5Z"/>
+      <line x1="11" y1="5" x2="11" y2="19"/>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2"/>
+      <line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2"/>
+      <line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2"/>
+    </symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8.5" cy="8" r="3"/>
+      <path d="M3 20c0-3.3 2.5-5.7 5.5-5.7s5.5 2.4 5.5 5.7"/>
+      <circle cx="17" cy="9" r="2.3"/>
+      <path d="M15 14.7c2.5.3 4.5 2.6 4.5 5.3"/>
+    </symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M12 7v5l3.5 2"/>
+    </symbol>
+    <symbol id="icon-import" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v11"/>
+      <path d="M8 10l4 4 4-4"/>
+      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+    </symbol>
+    <symbol id="icon-integrations" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 2.5v4"/><path d="M15 2.5v4"/>
+      <path d="M6 6.5h12v3a6 6 0 0 1-12 0Z"/>
+      <path d="M12 15.5v6"/>
+    </symbol>
+    <symbol id="icon-phone" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 3h3l2 5-2.5 1.5a12 12 0 0 0 5 5L15 12l5 2v3a2 2 0 0 1-2 2C10.5 19 5 13.5 5 6a2 2 0 0 1 1-3Z"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8.5"/>
+      <path d="M8.2 12.3l2.6 2.6 5-5.2"/>
+    </symbol>
+    <symbol id="icon-star" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4-6.5 4V4.5a1 1 0 0 1 1-1Z"/>
+    </symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <symbol id="icon-arrow-flow" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/>
+      <path d="M13 6l6 6-6 6"/>
+    </symbol>
+  </g>
+</svg>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</div>
+    <div class="sidebar-scroll">
+      <nav>
+        <div class="nav-group-label">עבודה יומית</div>
+        <a href="dashboard.html"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
+        <a href="global-search.html"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
+        <a href="leads.html"><svg><use href="#icon-leads"></use></svg>לידים</a>
+        <a href="customer-deal.html"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
+        <a href="collections.html"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>
+        <a class="active" href="mailing-lists.html"><svg><use href="#icon-mailing"></use></svg>חומרים ורשימות תפוצה</a>
+        <a href="suppliers.html"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
+      </nav>
+      <nav>
+        <div class="nav-group-label">ניהול ומערכת</div>
+        <a href="programs-catalog.html"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
+        <a href="document-templates.html"><svg><use href="#icon-documents"></use></svg>תבניות מסמכים</a>
+        <a href="settings.html"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
+        <a href="integrations.html"><svg><use href="#icon-integrations"></use></svg>אינטגרציות</a>
+        <a href="users-roles.html"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
+        <a href="activity-log.html"><svg><use href="#icon-activity"></use></svg>יומן פעילות</a>
+        <a href="data-migration.html"><svg><use href="#icon-import"></use></svg>ייבוא נתונים</a>
+      </nav>
+    </div>
+    <div class="nav-storyboard">
+      <a href="index.html">← חזרה לסטוריבורד</a>
+      <a href="loading.html">מסך טעינה</a>
+      <a href="design-system.html">Design System</a>
+    </div>
+  </aside>
+  <main>
+    <div class="topbar">
+      <div>
+        <h1 style="margin-bottom:2px">רשימות תפוצה</h1>
+        <p style="color:var(--color-text-secondary); margin:0">כל פעולות הדיוור מתבצעות באמצעות Smove — המערכת מנהלת רק את השיוך</p>
+      </div>
+      <a href="materials-send.html" class="btn btn-primary">שליחת חומרים לדוגמה</a>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h3>הרשימות במערכת</h3>
+        <table>
+          <thead>
+            <tr><th>שם רשימה</th><th>סוג</th><th>חברים</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>רשימה ראשית</td>
+              <td><span class="badge badge-primary">כללית</span></td>
+              <td class="ltr-num">128</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+            <tr>
+              <td>רימונים בסתיו</td>
+              <td><span class="badge badge-info">תוכנית</span></td>
+              <td class="ltr-num">34</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+            <tr>
+              <td>חוכמת העצים</td>
+              <td><span class="badge badge-info">תוכנית</span></td>
+              <td class="ltr-num">29</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+            <tr>
+              <td>תוכנית פרימיום — סדנת יצירה</td>
+              <td><span class="badge badge-info">תוכנית</span></td>
+              <td class="ltr-num">11</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+            <tr>
+              <td>מנויים</td>
+              <td><span class="badge badge-success">מנויים</span></td>
+              <td class="ltr-num">22</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+            <tr>
+              <td>ספקים</td>
+              <td><span class="badge badge-warning">ספקים</span></td>
+              <td class="ltr-num">9</td>
+              <td><button class="btn btn-ghost" style="padding:6px 10px"><svg style="width:15px;height:15px"><use href="#icon-eye"></use></svg></button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>עדכון אוטומטי — לא נדרשת תחזוקה ידנית</h3>
+        <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin:-8px 0 var(--sp-md)">כל שינוי במצב העסקי מעדכן את השיוך ברשימות אוטומטית</p>
+        <ul class="rule-list">
+          <li><svg><use href="#icon-arrow-flow"></use></svg><span><b>ליד חדש</b> → רשימה ראשית</span></li>
+          <li><svg><use href="#icon-arrow-flow"></use></svg><span><b>רכישת תוכנית</b> → רשימת התוכנית שנרכשה</span></li>
+          <li><svg><use href="#icon-arrow-flow"></use></svg><span><b>רכישת מנוי</b> → רשימת מנויים + כל 10 רשימות התוכניות הכלולות</span></li>
+          <li><svg><use href="#icon-arrow-flow"></use></svg><span><b>ביטול מנוי</b> → הסרה ממנויים ומרשימות שטרם סופקו; השארה בראשית ובמה שכבר סופק</span></li>
+          <li><svg><use href="#icon-arrow-flow"></use></svg><span><b>ספק חדש</b> → רשימת ספקים</span></li>
+        </ul>
+        <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin-top:var(--sp-lg); margin-bottom:0">
+          כל שיוך הוא קריאה בפועל ל-Smove. כשל בשיוך מוצג ביומן הפעילות ובמסך האינטגרציות — לא נבלע בשקט.
+        </p>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
