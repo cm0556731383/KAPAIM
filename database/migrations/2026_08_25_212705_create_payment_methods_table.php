@@ -1,0 +1,30 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Deviation from docs/erd.md: the ERD's PAYMENT_METHOD (line ~347) does not list
+     * an is_active column, but the build-plan 02 Definition of Done explicitly requires
+     * disabling a payment method without deleting records that reference it. The DoD's
+     * explicit requirement wins over the apparent ERD omission.
+     */
+    public function up(): void
+    {
+        Schema::create('payment_methods', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('type');
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('payment_methods');
+    }
+};

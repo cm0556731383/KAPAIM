@@ -125,11 +125,11 @@
                 @foreach ([
                     ['קטלוג תוכניות', 'icon-catalog'],
                     ['תבניות מסמכים', 'icon-documents'],
-                    ['הגדרות מערכת', 'icon-settings'],
-                    ['אינטגרציות', 'icon-integrations'],
                 ] as [$label, $icon])
                     <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>
                 @endforeach
+                <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
+                <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#icon-integrations"></use></svg>אינטגרציות</span>
                 <a href="{{ route('users-roles') }}" class="{{ request()->routeIs('users-roles') ? 'active' : '' }}"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
                 <a href="{{ route('activity-log') }}" class="{{ request()->routeIs('activity-log') ? 'active' : '' }}"><svg><use href="#icon-activity"></use></svg>יומן פעילות</a>
                 <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#icon-import"></use></svg>ייבוא נתונים</span>

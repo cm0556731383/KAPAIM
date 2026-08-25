@@ -51,5 +51,7 @@ class DatabaseSeeder extends Seeder
             'role_id' => $fullAccess->id,
             'is_active' => true,
         ]);
+
+        $this->call(ReferenceDataSeeder::class);
     }
 }
