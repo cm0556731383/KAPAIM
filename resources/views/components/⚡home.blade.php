@@ -20,7 +20,7 @@ class extends Component
     </div>
 
     <div class="card">
-        <h3>שלב 0 — תשתית בסיס</h3>
-        <p class="text-text-secondary">מסכי המערכת האמיתיים ייבנו בשלבים הבאים לפי <code>docs/build-plan/</code>.</p>
+        <h3>שלב 1 — ליבת מערכת</h3>
+        <p class="text-text-secondary">התחברות, משתמשות, תפקידים והרשאות, ויומן פעילות מוכנים. שאר מסכי המערכת ייבנו בשלבים הבאים לפי <code>docs/build-plan/</code>.</p>
     </div>
 </div>

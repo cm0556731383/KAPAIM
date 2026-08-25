@@ -1,0 +1,77 @@
+/* Shared app chrome (sidebar + topbar) and cross-screen layout primitives —
+   ported from the docs/storyboard/*.html mockups so every real screen shares
+   one implementation instead of re-declaring these per Blade view. */
+
+.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+
+.sidebar {
+  background: #16262D;
+  color: #A7B9C0;
+  padding: var(--sp-lg) var(--sp-md) var(--sp-md);
+  display: flex;
+  flex-direction: column;
+  max-height: 100vh;
+  position: sticky;
+  top: 0;
+}
+.sidebar .brand { display: flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 500; font-size: 21px; color: #F0F4F6; margin: 4px 4px var(--sp-lg); padding: 0 4px var(--sp-md); border-bottom: 1px solid rgba(240,244,246,.09); }
+.sidebar .brand svg { width: 15px; height: 18px; color: var(--color-accent); }
+
+.sidebar-scroll { overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(240,244,246,.22) transparent; }
+.sidebar-scroll::-webkit-scrollbar { width: 6px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(240,244,246,.2); border-radius: 999px; }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(240,244,246,.35); }
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar .nav-group-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; color: #63767E; text-transform: uppercase; padding: 14px 12px 6px; }
+.sidebar nav a, .sidebar nav span.nav-disabled {
+  display: flex; align-items: center; gap: 12px;
+  text-decoration: none; color: #A7B9C0; font-size: var(--fs-small); font-weight: 500;
+  padding: 9px 12px; border-radius: var(--radius-control);
+  border-inline-start: 2px solid transparent;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.sidebar nav a svg, .sidebar nav span.nav-disabled svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .8; }
+.sidebar nav a.active { background: rgba(240,244,246,.06); color: #F0F4F6; border-inline-start-color: var(--color-accent); }
+.sidebar nav a.active svg { opacity: 1; color: var(--color-accent); }
+.sidebar nav a:hover:not(.active) { background: rgba(240,244,246,.04); color: #F0F4F6; }
+/* Nav destinations not built yet — shown, not hidden, per PRD 3.12 */
+.sidebar nav span.nav-disabled { color: #4C5B61; cursor: not-allowed; }
+.sidebar nav span.nav-disabled svg { opacity: .45; }
+
+main { padding: var(--sp-xl) var(--sp-2xl); }
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--sp-lg); }
+.topbar-user { display: flex; align-items: center; gap: var(--sp-md); font-size: var(--fs-small); color: var(--color-text-secondary); }
+.topbar-user form { margin: 0; }
+
+section { margin-bottom: var(--sp-2xl); }
+section > .section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sp-md); }
+section > .section-head p { margin: 2px 0 0; color: var(--color-text-secondary); font-size: var(--fs-small); }
+
+.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-lg); align-items: start; }
+
+.perm-table th:not(:first-child), .perm-table td:not(:first-child) { text-align: center; }
+.perm-cell-yes { color: var(--color-success); font-weight: 700; }
+.perm-cell-no { color: var(--color-border); }
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-md); }
+.form-grid .full { grid-column: 1 / -1; }
+.checkbox-row { display: flex; align-items: center; gap: 8px; }
+.checkbox-row input { width: auto; }
+
+.immutable-banner {
+  display: flex; align-items: center; gap: var(--sp-md);
+  background: var(--color-accent-light);
+  border: 1px solid #F0D49A;
+  border-radius: var(--radius-card);
+  padding: var(--sp-md) var(--sp-lg);
+  margin-bottom: var(--sp-lg);
+  font-size: var(--fs-small);
+}
+.immutable-banner svg { width: 22px; height: 22px; flex-shrink: 0; color: #92600D; }
+
+.filter-row { display: flex; gap: var(--sp-md); margin-bottom: var(--sp-lg); flex-wrap: wrap; }
+.filter-row > div { min-width: 180px; }
+.filter-row label { margin-bottom: 4px; }
+
+.actor-auto { color: var(--color-text-secondary); font-size: var(--fs-caption); margin-inline-start: 6px; }

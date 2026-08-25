@@ -31,6 +31,9 @@
 /* מקור הטוקנים בפועל — כל ערכי הצבע/טיפוגרפיה/רדיוס האמיתיים */
 @import "./design-tokens.css";
 
+/* מבנה ה-shell (sidebar/topbar) והרכיבים החוזרים בין מסכים — ראו docs/storyboard/ */
+@import "./layout.css";
+
 @theme {
   /* צבעי מותג — ערכה אחת (אין עוד data-theme להחלפה); הטוקנים כאן נשארים
      dynamic (var() עצמי) כדי שכל שינוי עתידי ב-design-tokens.css יזרום
