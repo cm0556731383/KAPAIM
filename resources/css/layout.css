@@ -141,3 +141,17 @@ tr.row-link { cursor: pointer; }
 .deal-row { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
 .deal-row:last-child { border-bottom: none; }
 .deal-row .amount { font-weight: 700; direction: ltr; }
+
+/* ===== Document chain (build-plan 07) — ported from docs/storyboard/document-view.html ===== */
+.doc-stepper { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: var(--sp-lg); }
+.doc-step { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius-pill); background: var(--color-surface); border: 1px solid var(--color-border); font-size: var(--fs-small); color: var(--color-text-secondary); }
+.doc-step.done { background: var(--color-success-bg); color: var(--color-success); border-color: transparent; }
+.doc-step.current { background: var(--color-primary); color: #FFFFFF; border-color: transparent; font-weight: 700; }
+.doc-step-arrow { color: var(--color-border); font-size: 18px; }
+.total-row td { font-weight: 700; font-size: var(--fs-h3); border-top: 2px solid var(--color-text-primary); border-bottom: none; }
+.chip-recipient { display: inline-flex; align-items: center; gap: 8px; background: var(--color-primary-lighter); color: var(--color-primary-hover); padding: 6px 8px 6px 14px; border-radius: var(--radius-pill); font-size: var(--fs-small); }
+.chip-recipient button { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 50%; }
+.chip-recipient button:hover { background: rgba(0,0,0,.08); }
+.recipients-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: var(--sp-md); }
+.mono { font-family: var(--font-mono); font-size: var(--fs-caption); direction: ltr; unicode-bidi: isolate; display: inline-block; }
+.template-editor textarea { min-height: 180px; line-height: 1.9; resize: vertical; }

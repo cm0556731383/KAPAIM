@@ -1,6 +1,9 @@
 <?php
 
+use App\Models\BusinessEntity;
 use App\Models\Deal;
+use App\Models\Document;
+use App\Models\DocumentTemplate;
 use App\Models\PaymentMethod;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
@@ -13,6 +16,11 @@ use Livewire\Component;
  * Deal::createForCustomer() (called from ⚡customer-detail.blade.php's
  * "עסקאות" tab) — this component never creates one, only displays it and
  * drives its status workflow (FR-8.19: optimistic locking on `version`).
+ *
+ * Build-plan 07 adds the "מסמכים" section below: the deal's document chain
+ * (quote -> order_form -> contract -> invoice) and "generate next document"
+ * buttons, gated by Document::canGenerate()/generateFor() (FR-4.3/FR-4.4,
+ * FR-8.7/FR-8.8).
  */
 new
 #[Layout('layouts.app', ['title' => 'כרטיס עסקה — כפיים'])]
@@ -33,6 +41,12 @@ class extends Component
 
     /** FR-8.19 conflict error — a friendly banner, not a silent overwrite. */
     public ?string $statusError = null;
+
+    // ===== מסמכים (DOCUMENT) =====
+    public string $invoiceBusinessEntityId = '';
+
+    /** Business-rule error from Document::generateFor() (FR-4.3/FR-4.4/FR-4.21/FR-8.7/FR-8.8/FR-8.9). */
+    public ?string $documentError = null;
 
     public function mount(Deal $deal): void
     {
@@ -121,6 +135,63 @@ class extends Component
     public function paymentMethods()
     {
         return PaymentMethod::where('is_active', true)->orderBy('name')->get();
+    }
+
+    // ----- מסמכים (DOCUMENT) -----
+
+    /**
+     * Generates the next document in the chain using the sole active
+     * template of that type (the template-manager screen is where multiple
+     * active templates per type, if ever needed, would be disambiguated —
+     * out of scope here). Document::generateFor() is the only place a
+     * Document row is ever created and re-checks every business rule
+     * server-side regardless of what the UI already disabled.
+     */
+    public function generateDocument(string $documentType): void
+    {
+        $this->documentError = null;
+
+        $template = DocumentTemplate::where('document_type', $documentType)->where('is_active', true)->orderBy('id')->first();
+
+        if (! $template) {
+            $this->documentError = 'לא נמצאה תבנית פעילה עבור סוג מסמך זה — יש להגדיר תבנית תחילה במסך תבניות מסמכים.';
+
+            return;
+        }
+
+        try {
+            $document = Document::generateFor(
+                $this->deal,
+                $template,
+                'digital',
+                $documentType === 'invoice' ? ($this->invoiceBusinessEntityId ?: null) : null,
+            );
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+
+            return;
+        }
+
+        unset($this->documents);
+
+        $this->redirect(route('document-view', $document), navigate: false);
+    }
+
+    #[Computed]
+    public function documents()
+    {
+        return $this->deal->documents()->with(['documentTemplate', 'status'])->get();
+    }
+
+    #[Computed]
+    public function activeBusinessEntities()
+    {
+        return BusinessEntity::where('is_active', true)->orderBy('name')->get();
+    }
+
+    public function canGenerateDocument(string $documentType): bool
+    {
+        return Document::canGenerate($this->deal, $documentType);
     }
 };
 ?>
@@ -214,5 +285,68 @@ class extends Component
                 @endif
             </div>
         </div>
+    </div>
+
+    {{-- ===== מסמכים (DOCUMENT) — build-plan 07 ===== --}}
+    <div class="card" style="margin-top:var(--sp-lg)">
+        <h3>מסמכים</h3>
+        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">
+            רצף עסקי מחייב: הצעת מחיר (אופציונלי) ← טופס הזמנה ← חוזה ← חשבונית. לא ניתן לדלג על שלב (FR-4.1, FR-4.3, FR-4.4).
+        </p>
+
+        @if ($documentError)
+            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+                {{ $documentError }}
+            </div>
+        @endif
+
+        <div class="doc-stepper">
+            @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
+                @php $existing = $this->documents->where('document_type', $type); @endphp
+                <span class="doc-step {{ $existing->isNotEmpty() ? 'done' : '' }}">{{ $label }} ({{ $existing->count() }})</span>
+                @if (! $loop->last)<span class="doc-step-arrow">←</span>@endif
+            @endforeach
+        </div>
+
+        <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg); align-items:flex-end">
+            @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
+                @if ($type === 'invoice')
+                    <div style="display:flex; gap:6px; align-items:flex-end">
+                        <div>
+                            <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק פטור (FR-4.15/FR-4.16)</label>
+                            <select id="invoiceBusinessEntityId" wire:model="invoiceBusinessEntityId" style="min-width:220px">
+                                <option value="">בחרו עוסק</option>
+                                @foreach ($this->activeBusinessEntities as $entity)
+                                    <option value="{{ $entity->id }}">{{ $entity->name }} — {{ $entity->classification }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <button type="button" wire:click="generateDocument('invoice')" class="btn btn-primary" @disabled(! $this->canGenerateDocument('invoice'))>הפקת חשבונית</button>
+                    </div>
+                @else
+                    <button type="button" wire:click="generateDocument('{{ $type }}')" class="btn btn-secondary" @disabled(! $this->canGenerateDocument($type))>+ הפקת {{ $label }}</button>
+                @endif
+            @endforeach
+        </div>
+
+        @if ($this->documents->isEmpty())
+            <div class="empty-state">טרם הופקו מסמכים לעסקה זו.</div>
+        @else
+            <table>
+                <thead><tr><th>סוג</th><th>סטטוס</th><th>נשלח</th><th>התקבל</th><th>נחתם</th><th></th></tr></thead>
+                <tbody>
+                    @foreach ($this->documents as $document)
+                        <tr>
+                            <td>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</td>
+                            <td><span class="badge badge-neutral">{{ $document->status?->name }}</span></td>
+                            <td class="ltr-num">{{ $document->sent_at?->format('d/m/Y') ?? '—' }}</td>
+                            <td class="ltr-num">{{ $document->received_at?->format('d/m/Y') ?? '—' }}</td>
+                            <td class="ltr-num">{{ $document->signed_at?->format('d/m/Y') ?? '—' }}</td>
+                            <td><a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">פתיחת מסמך</a></td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        @endif
     </div>
 </div>

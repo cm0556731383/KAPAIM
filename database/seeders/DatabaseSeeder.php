@@ -54,8 +54,10 @@ class DatabaseSeeder extends Seeder
 
         $this->call(ReferenceDataSeeder::class);
         $this->call(ProgramsCatalogSeeder::class);
+        $this->call(DocumentTemplatesSeeder::class);
         $this->call(LeadsDemoSeeder::class);
         $this->call(CustomersDemoSeeder::class);
         $this->call(DealsDemoSeeder::class);
+        $this->call(DocumentsDemoSeeder::class);
     }
 }

@@ -25,4 +25,13 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/customers', 'customers')->name('customers');
     Route::livewire('/customers/{customer}', 'customer-detail')->name('customer-detail');
     Route::livewire('/deals/{deal}', 'deal-detail')->name('deal-detail');
+    Route::livewire('/document-templates', 'document-templates')->name('document-templates');
+    Route::livewire('/documents/{document}', 'document-view')->name('document-view');
+    Route::get('/documents/{document}/print', function (\App\Models\Document $document) {
+        abort_unless(auth()->user()->can('documents.manage'), 403);
+
+        $document->load(['deal.customer.school', 'businessEntity', 'lines']);
+
+        return view('documents.print', ['document' => $document]);
+    })->name('document-print');
 });

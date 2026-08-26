@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -78,6 +79,16 @@ class Deal extends Model
     public function paymentMethod(): BelongsTo
     {
         return $this->belongsTo(PaymentMethod::class);
+    }
+
+    /**
+     * Build-plan 07: the deal's document chain (quote -> order_form ->
+     * contract -> invoice) — see Document::generateFor(), the only place a
+     * Document row is ever created.
+     */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(Document::class)->orderBy('id');
     }
 
     public static function badgeClassForStatusName(?string $statusName): string

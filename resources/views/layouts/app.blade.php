@@ -127,11 +127,7 @@
             <nav>
                 <div class="nav-group-label">ניהול ומערכת</div>
                 <a href="{{ route('programs-catalog') }}" class="{{ request()->routeIs('programs-catalog') ? 'active' : '' }}"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
-                @foreach ([
-                    ['תבניות מסמכים', 'icon-documents'],
-                ] as [$label, $icon])
-                    <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>
-                @endforeach
+                <a href="{{ route('document-templates') }}" class="{{ request()->routeIs('document-templates') ? 'active' : '' }}"><svg><use href="#icon-documents"></use></svg>תבניות מסמכים</a>
                 <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
                 <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#icon-integrations"></use></svg>אינטגרציות</span>
                 <a href="{{ route('users-roles') }}" class="{{ request()->routeIs('users-roles') ? 'active' : '' }}"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
