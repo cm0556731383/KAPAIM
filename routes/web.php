@@ -51,6 +51,9 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/deals/{deal}', 'deal-detail')->name('deal-detail');
     Route::livewire('/collections', 'collections')->name('collections');
     Route::livewire('/mailing-lists', 'mailing-lists')->name('mailing-lists');
+    Route::livewire('/suppliers', 'suppliers')->name('suppliers');
+    Route::livewire('/expenses', 'expenses')->name('expenses');
+    Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
     Route::livewire('/document-templates', 'document-templates')->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {

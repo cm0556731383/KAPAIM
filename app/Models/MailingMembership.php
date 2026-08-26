@@ -59,6 +59,11 @@ class MailingMembership extends Model
         return $this->belongsTo(Customer::class);
     }
 
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class);
+    }
+
     /** FR-1.17/FR-5.21: a brand-new lead joining the primary list, before any customer exists. */
     public static function addLead(MailingList $list, Lead $lead): self
     {
@@ -83,6 +88,26 @@ class MailingMembership extends Model
     public static function addCustomer(MailingList $list, Customer $customer): self
     {
         $membership = self::firstOrNew(['mailing_list_id' => $list->id, 'customer_id' => $customer->id]);
+
+        if (! $membership->exists) {
+            $membership->joined_at = now();
+        }
+
+        $membership->membership_status = self::STATUS_ACTIVE;
+        $membership->removed_at = null;
+        $membership->save();
+
+        return $membership;
+    }
+
+    /**
+     * Build-plan 11 (FR-5.26/FR-6.14-15): a new supplier joining the
+     * singleton "ספקים" list — same idempotent shape as addCustomer() above,
+     * keyed by (mailing_list_id, supplier_id).
+     */
+    public static function addSupplier(MailingList $list, Supplier $supplier): self
+    {
+        $membership = self::firstOrNew(['mailing_list_id' => $list->id, 'supplier_id' => $supplier->id]);
 
         if (! $membership->exists) {
             $membership->joined_at = now();

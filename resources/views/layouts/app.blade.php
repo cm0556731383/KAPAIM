@@ -118,11 +118,7 @@
                 <a href="{{ route('customers') }}" class="{{ request()->routeIs('customers') || request()->routeIs('customer-detail') ? 'active' : '' }}"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
                 <a href="{{ route('collections') }}" class="{{ request()->routeIs('collections') ? 'active' : '' }}"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>
                 <a href="{{ route('mailing-lists') }}" class="{{ request()->routeIs('mailing-lists') ? 'active' : '' }}"><svg><use href="#icon-mailing"></use></svg>חומרים ורשימות תפוצה</a>
-                @foreach ([
-                    ['ספקים והוצאות', 'icon-suppliers'],
-                ] as [$label, $icon])
-                    <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>
-                @endforeach
+                <a href="{{ route('suppliers') }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
             </nav>
             <nav>
                 <div class="nav-group-label">ניהול ומערכת</div>

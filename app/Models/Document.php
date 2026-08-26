@@ -24,7 +24,7 @@ use RuntimeException;
  * business-record convention in this codebase).
  */
 #[Fillable([
-    'deal_id', 'document_template_id', 'business_entity_id', 'preceding_document_id',
+    'deal_id', 'expense_id', 'document_template_id', 'business_entity_id', 'preceding_document_id',
     'document_type', 'status_id', 'format', 'file_reference', 'rendered_content',
     'field_values', 'sent_at', 'received_at', 'signed_at',
 ])]
@@ -43,6 +43,10 @@ class Document extends Model
         // only (Document::generateCreditNoteFor()) — deliberately absent from
         // PRECEDING_TYPE below since it isn't part of the normal chain.
         'credit_note' => 'חשבונית זיכוי',
+        // Build-plan 11: generated standalone whenever an expense needs its
+        // invoice attached (Expense::attachInvoice()) — never part of the
+        // sales chain, so also deliberately absent from PRECEDING_TYPE.
+        'expense_invoice' => 'חשבונית הוצאה',
     ];
 
     /** Chain order: quote -> order_form -> contract -> invoice (FR-4.1). */
@@ -65,6 +69,12 @@ class Document extends Model
     public function deal(): BelongsTo
     {
         return $this->belongsTo(Deal::class);
+    }
+
+    /** Build-plan 11 — set only for an 'expense_invoice' document (never alongside deal_id). */
+    public function expense(): BelongsTo
+    {
+        return $this->belongsTo(Expense::class);
     }
 
     public function documentTemplate(): BelongsTo
@@ -115,20 +125,46 @@ class Document extends Model
     }
 
     /**
-     * The only place a Document row is ever created. $businessEntityId is
-     * required (and validated active) for an invoice only (FR-4.15/FR-4.16,
-     * FR-8.9); every other document type ignores it.
+     * The only place a Document row is ever created. $subject is a Deal for
+     * every document type in the normal sales chain (quote/order_form/
+     * contract/invoice/credit_note) — or, build-plan 11, an Expense for the
+     * standalone 'expense_invoice' type (Expense::attachInvoice(), never
+     * called anywhere else). An expense-invoice document never belongs to a
+     * deal and a sales-chain document never belongs to an expense — see the
+     * documents-table exactly-one-of-deal_id/expense_id CHECK constraint.
+     *
+     * $businessEntityId is required (and validated active) for a deal
+     * invoice only (FR-4.15/FR-4.16, FR-8.9); it is meaningless for an
+     * expense invoice (that represents an incoming document FROM the
+     * supplier, not one of our own business entities issuing something) and
+     * is always ignored when $subject is an Expense.
      *
      * @throws RuntimeException on a business-rule violation.
      */
     public static function generateFor(
-        Deal $deal,
+        Deal|Expense $subject,
         DocumentTemplate $template,
         string $format = 'digital',
         ?int $businessEntityId = null,
     ): self {
-        self::assertCanGenerate($deal, $template->document_type);
+        self::assertCanGenerate($subject, $template->document_type);
 
+        if ($subject instanceof Expense) {
+            return self::createDocumentRow([
+                'deal_id' => null,
+                'expense_id' => $subject->id,
+                'document_template_id' => $template->id,
+                'business_entity_id' => null,
+                'preceding_document_id' => null,
+                'document_type' => $template->document_type,
+                'status_id' => self::defaultDraftStatus()->id,
+                'format' => $format,
+                'field_values' => [],
+                'rendered_content' => $template->renderContent([]),
+            ]);
+        }
+
+        $deal = $subject;
         $businessEntity = null;
 
         if ($template->document_type === 'invoice') {
@@ -146,18 +182,14 @@ class Document extends Model
         $preceding = self::precedingFor($deal, $template->document_type);
         $fieldValues = self::buildInitialFieldValues($template, $deal, $preceding);
 
-        $status = StatusDefinition::firstOrCreate(
-            ['scope' => 'document', 'name' => self::DEFAULT_STATUS_NAME],
-            ['is_active' => true, 'sort_order' => 1],
-        );
-
-        return self::create([
+        return self::createDocumentRow([
             'deal_id' => $deal->id,
+            'expense_id' => null,
             'document_template_id' => $template->id,
             'business_entity_id' => $businessEntity?->id,
             'preceding_document_id' => $preceding?->id,
             'document_type' => $template->document_type,
-            'status_id' => $status->id,
+            'status_id' => self::defaultDraftStatus()->id,
             'format' => $format,
             'field_values' => $fieldValues,
             'rendered_content' => $template->renderContent(
@@ -166,11 +198,39 @@ class Document extends Model
         ]);
     }
 
+    /** Shared by every generateFor()/generateCreditNoteFor() branch above — the sole INSERT point for this table. */
+    private static function createDocumentRow(array $attributes): self
+    {
+        return self::create($attributes);
+    }
+
+    private static function defaultDraftStatus(): StatusDefinition
+    {
+        return StatusDefinition::firstOrCreate(
+            ['scope' => 'document', 'name' => self::DEFAULT_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 1],
+        );
+    }
+
     /**
      * @throws RuntimeException on a business-rule violation.
      */
-    private static function assertCanGenerate(Deal $deal, string $documentType): void
+    private static function assertCanGenerate(Deal|Expense $subject, string $documentType): void
     {
+        if ($subject instanceof Expense) {
+            if ($documentType !== 'expense_invoice') {
+                throw new RuntimeException('סוג מסמך זה אינו נתמך עבור הוצאה.');
+            }
+
+            if ($subject->document_id) {
+                throw new RuntimeException('להוצאה זו כבר מצורפת חשבונית — לא ניתן לצרף יותר מחשבונית אחת לכל הוצאה.');
+            }
+
+            return;
+        }
+
+        $deal = $subject;
+
         if ($documentType === 'contract') {
             $hasReceivedOrderForm = self::where('deal_id', $deal->id)
                 ->where('document_type', 'order_form')

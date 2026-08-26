@@ -28,6 +28,8 @@ class DocumentTemplate extends Model
         'contract' => 'חוזה',
         'invoice' => 'חשבונית',
         'credit_note' => 'חשבונית זיכוי',
+        // Build-plan 11 — Expense::attachInvoice()'s standalone document type.
+        'expense_invoice' => 'חשבונית הוצאה',
     ];
 
     protected function casts(): array

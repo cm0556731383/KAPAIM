@@ -76,6 +76,17 @@ class DocumentTemplatesSeeder extends Seeder
             ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => true, 'sort_order' => 1],
         ]);
 
+        // ----- חשבונית הוצאה (build-plan 11) — placeholder תבנית מינימלית:
+        // חשבונית הוצאה היא מסמך שהספק כבר הפיק בעצמו (Expense::attachInvoice()
+        // רק מתעד את זה), ולכן אין כאן שדות digital-form-fill אמיתיים כמו
+        // בשרשרת המכירה. -----
+        DocumentTemplate::create([
+            'document_type' => 'expense_invoice',
+            'name' => 'חשבונית הוצאה — כללי',
+            'content' => 'חשבונית הוצאה שהתקבלה מספק — תיעוד בלבד, ללא שדות דינמיים.',
+            'is_active' => true,
+        ]);
+
         // Inactive "old" template — demonstrates FR-4.14/FR-7.11: deactivating
         // a template never touches documents already generated from it.
         DocumentTemplate::create([

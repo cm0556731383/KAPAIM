@@ -18,3 +18,8 @@ Schedule::command('collections:process')->daily();
 // deliveries not opened within the configured window. See
 // App\Console\Commands\ProcessMaterialReminders.
 Schedule::command('materials:process-reminders')->daily();
+
+// Build-plan 11 (FR-6.7-FR-6.9) — logs a (stubbed) reminder to the supplier
+// for expenses still missing an invoice once their expense_date's calendar
+// month has fully closed. See App\Console\Commands\ProcessExpenseReminders.
+Schedule::command('expenses:process-reminders')->daily();

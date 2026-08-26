@@ -135,6 +135,12 @@ tr.row-link { cursor: pointer; }
 .tabs { display: flex; gap: var(--sp-lg); border-bottom: 1px solid var(--color-border); margin-bottom: var(--sp-lg); font-size: var(--fs-small); flex-wrap: wrap; }
 .tabs span { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); cursor: pointer; }
 .tabs span.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }
+/* Build-plan 11 — same visual tab strip, but as real <a> links across the
+   ספקים / הוצאות ותזרים / דוח הכנסות ורווח pages (three separate routes,
+   unlike the in-component $activeTab tabs above). */
+.tabs a { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); text-decoration: none; }
+.tabs a.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }
+.tabs a:hover:not(.active) { color: var(--color-primary-hover); }
 .empty-state { color: var(--color-text-secondary); font-size: var(--fs-small); text-align: center; padding: var(--sp-xl) var(--sp-md); border: 1px dashed var(--color-border); border-radius: var(--radius-control); }
 
 /* ===== Deals tab (build-plan 06) — ported from docs/storyboard/customer-deal.html ===== */
