@@ -36,6 +36,12 @@ class extends Component
     /** @see Lead::findFuzzyDuplicateSchool() */
     public ?string $duplicateWarning = null;
 
+    /**
+     * Business-rule error (FR-7.25) from Lead::convertToCustomer() — e.g.
+     * blocking a re-conversion (FR-1.15) or a conversion with no school yet.
+     */
+    public ?string $conversionError = null;
+
     // ===== סטטוס =====
     public string $selectedStatusId = '';
     public string $selectedSubStatus = '';
@@ -79,6 +85,25 @@ class extends Component
         $this->leadNotes = (string) $lead->notes;
         $this->selectedStatusId = (string) $lead->status_id;
         $this->selectedSubStatus = (string) $lead->sub_status;
+    }
+
+    /**
+     * FR-1.15/FR-2.3/FR-8.2: the only place a lead becomes a customer — see
+     * Lead::convertToCustomer() for the actual business rules/logging.
+     */
+    public function convertToCustomer(ActivityLogger $activityLogger): void
+    {
+        $this->conversionError = null;
+
+        try {
+            $customer = $this->lead->convertToCustomer($activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->conversionError = $e->getMessage();
+
+            return;
+        }
+
+        $this->redirect(route('customer-detail', $customer), navigate: false);
     }
 
     private function syncSchoolFields(): void
@@ -533,9 +558,25 @@ class extends Component
         </div>
         <div style="display:flex; gap:var(--sp-sm)">
             <a href="{{ route('leads') }}" class="btn btn-ghost">חזרה לרשימה</a>
-            <button type="button" class="btn btn-primary" disabled title="ייבנה בשלב 5 — המרת ליד ללקוחה (FR-1.15)">המרה ללקוחה</button>
+            @if ($lead->customer)
+                <a href="{{ route('customer-detail', $lead->customer) }}" class="btn btn-primary">מעבר לכרטיס הלקוחה</a>
+            @else
+                <button type="button" class="btn btn-primary" wire:click="convertToCustomer" wire:confirm="להמיר ליד זה ללקוחה? הליד יכול להיות מומר פעם אחת בלבד.">המרה ללקוחה</button>
+            @endif
         </div>
     </div>
+
+    @if ($lead->customer)
+        <div class="mb-8" style="background: var(--color-info-bg); color: var(--color-info); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+            ליד זה הומר ללקוחה — <a href="{{ route('customer-detail', $lead->customer) }}" style="color:inherit; text-decoration:underline">מעבר לכרטיס הלקוחה</a>.
+        </div>
+    @endif
+
+    @if ($conversionError)
+        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+            {{ $conversionError }}
+        </div>
+    @endif
 
     @if ($duplicateWarning)
         <div class="mb-8" style="background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">

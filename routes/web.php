@@ -22,4 +22,6 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/programs-catalog', 'programs-catalog')->name('programs-catalog');
     Route::livewire('/leads', 'leads')->name('leads');
     Route::livewire('/leads/{lead}', 'lead-detail')->name('lead-detail');
+    Route::livewire('/customers', 'customers')->name('customers');
+    Route::livewire('/customers/{customer}', 'customer-detail')->name('customer-detail');
 });

@@ -34,4 +34,9 @@ class Contact extends Model
     {
         return $this->belongsTo(School::class);
     }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
+    }
 }

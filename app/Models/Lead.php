@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Services\ActivityLogger;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use RuntimeException;
 
 /**
  * A lead has exactly one active status at a time (FR-1.4), modeled as a
@@ -99,6 +102,15 @@ class Lead extends Model
         return $this->belongsToMany(Program::class, 'lead_program');
     }
 
+    /**
+     * FR-1.15/FR-2.3: a lead converts to at most one customer — see
+     * convertToCustomer() below.
+     */
+    public function customer(): HasOne
+    {
+        return $this->hasOne(Customer::class);
+    }
+
     public static function trafficLightColorForStatusName(?string $statusName): string
     {
         return self::TRAFFIC_LIGHT_COLORS[$statusName] ?? 'yellow';
@@ -184,5 +196,70 @@ class Lead extends Model
     {
         // TODO(stage 10 — mailing lists): attach $this to the primary
         // mailing list here once MAILING_MEMBERSHIP exists (FR-1.17).
+    }
+
+    /**
+     * Build-plan 05: the *only* place a Customer row is ever created
+     * (FR-2.3, FR-8.2 — there is no "create customer" UI). A lead converts
+     * at most once (FR-1.15/FR-2.3/FR-8.2): both enforced here and backed by
+     * the unique `lead_id` column on `customers`. Conversion never deletes
+     * or duplicates the lead — its full activity history (interactions,
+     * follow-ups, activity_logs) stays reachable via Customer::lead()
+     * (FR-1.14/FR-2.18).
+     *
+     * FR-2.2: a branch of an education network still gets its own separate
+     * Customer here — this method only ever operates on $this lead's own
+     * school, so each branch (its own School/Lead row) converts to its own
+     * Customer regardless of centralized network billing.
+     *
+     * @throws RuntimeException on a business-rule violation (already
+     *                          converted, or no school attached yet) — the
+     *                          caller shows the message as a friendly error.
+     */
+    public function convertToCustomer(ActivityLogger $activityLogger): Customer
+    {
+        if ($this->customer()->exists()) {
+            throw new RuntimeException('ליד זה כבר הומר ללקוחה — לא ניתן להמיר אותו ללקוחה פעם נוספת.');
+        }
+
+        if (! $this->school_id) {
+            throw new RuntimeException('יש להשלים פרטי בית ספר עבור הליד לפני המרתו ללקוחה.');
+        }
+
+        $activeStatus = StatusDefinition::firstOrCreate(
+            ['scope' => 'customer', 'name' => Customer::DEFAULT_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 1],
+        );
+
+        $customer = Customer::create([
+            'school_id' => $this->school_id,
+            'lead_id' => $this->id,
+            'status_id' => $activeStatus->id,
+            'converted_at' => now(),
+        ]);
+
+        // FR-2.5..FR-2.13: contacts move conceptually to the customer —
+        // backfill customer_id on the school's existing (non-deleted)
+        // contacts without touching school_id.
+        $contacts = Contact::where('school_id', $this->school_id)->get();
+        $contacts->each(fn (Contact $contact) => $contact->update(['customer_id' => $customer->id]));
+
+        // FR-2.8: a customer must always have at least one primary contact —
+        // stage 4 never enforced that for a lead's school, so if none of the
+        // backfilled contacts happens to be primary yet, promote the first.
+        if ($contacts->isNotEmpty() && $contacts->where('is_primary', true)->isEmpty()) {
+            $contacts->first()->update(['is_primary' => true]);
+        }
+
+        $this->update(['converted_at' => $customer->converted_at]);
+
+        $activityLogger->log('customer.created', "לקוחה נוצרה מהמרת ליד #{$this->id}: {$this->school->name}", [
+            'lead_id' => $this->id, 'customer_id' => $customer->id, 'school_id' => $this->school_id,
+        ]);
+        $activityLogger->log('lead.converted', "ליד #{$this->id} הומר ללקוחה #{$customer->id}", [
+            'lead_id' => $this->id, 'customer_id' => $customer->id,
+        ]);
+
+        return $customer;
     }
 }

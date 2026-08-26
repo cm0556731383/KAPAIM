@@ -127,3 +127,12 @@ tr.row-link { cursor: pointer; }
 .contact-view .actions { display: flex; gap: 6px; flex-shrink: 0; }
 .contact-edit-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-md); }
 .contact-edit-head .tag { font-size: var(--fs-caption); font-weight: 700; color: var(--color-primary-hover); text-transform: uppercase; letter-spacing: .04em; }
+
+/* ===== Customer card (build-plan 05) — tab strip ported from
+   docs/storyboard/customer-deal.html; the "stub" tabs (deals/documents/
+   payments/subscription/materials) reuse .empty-state below until their
+   own stages build the real thing. ===== */
+.tabs { display: flex; gap: var(--sp-lg); border-bottom: 1px solid var(--color-border); margin-bottom: var(--sp-lg); font-size: var(--fs-small); flex-wrap: wrap; }
+.tabs span { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); cursor: pointer; }
+.tabs span.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }
+.empty-state { color: var(--color-text-secondary); font-size: var(--fs-small); text-align: center; padding: var(--sp-xl) var(--sp-md); border: 1px dashed var(--color-border); border-radius: var(--radius-control); }
