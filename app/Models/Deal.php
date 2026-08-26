@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -103,6 +104,15 @@ class Deal extends Model
         return $this->hasMany(Payment::class)->orderBy('id');
     }
 
+    /**
+     * Build-plan 09: at most one — see openSubscriptionIfApplicable() below,
+     * the only place a Subscription row is ever created.
+     */
+    public function subscription(): HasOne
+    {
+        return $this->hasOne(Subscription::class);
+    }
+
     /** FR-4.32/FR-4.33: always computed from recorded payments — never a stored column. */
     public function totalPaid(): float
     {
@@ -131,8 +141,10 @@ class Deal extends Model
      * passes it from context) and exactly one of $programId/$bundleId must
      * be given. FR-8.5: the chosen program/bundle must be active. Snapshots
      * the chosen item's current name/price and defaults agreed_amount to
-     * that price (editable by the caller before/at creation — FR-3.11's
-     * premium-subscriber discount is out of scope for this stage).
+     * that price (editable by the caller before/at creation). FR-3.11: when
+     * the chosen program is a premium program and the customer already has
+     * an active subscription, the default instead becomes 10% off that
+     * price — still fully overridable by an explicit $agreedAmount.
      *
      * @throws RuntimeException on a business-rule violation — the caller
      *                          shows the message as a friendly error.
@@ -164,12 +176,18 @@ class Deal extends Model
 
         $snapshotPrice = (float) ($program->price ?? $bundle->price);
 
+        $defaultAgreedAmount = $snapshotPrice;
+
+        if ($program && $program->is_premium && self::customerHasActiveSubscription($customer)) {
+            $defaultAgreedAmount = round($snapshotPrice * 0.9, 2);
+        }
+
         $deal = self::create([
             'customer_id' => $customer->id,
             'program_id' => $program?->id,
             'bundle_id' => $bundle?->id,
             'status_id' => $status->id,
-            'agreed_amount' => $agreedAmount ?? $snapshotPrice,
+            'agreed_amount' => $agreedAmount ?? $defaultAgreedAmount,
             'program_price_snapshot' => $program?->price,
             'bundle_price_snapshot' => $bundle?->price,
             'program_name_snapshot' => $program?->name,
@@ -188,14 +206,14 @@ class Deal extends Model
     }
 
     /**
-     * FR-3.4 stub: when the deal's program is the subscription-type program
-     * (build-plan 03's is_subscription_type discriminator), deal creation
-     * should route into the subscription-opening flow instead of behaving
-     * like a plain one-off sale. Subscriptions (SUBSCRIPTION,
-     * SUBSCRIPTION_PROGRAM_DELIVERY) are build-plan stage 9, which doesn't
-     * exist yet — same stub pattern as Lead::joinPrimaryMailingList()
-     * (FR-1.17, stage 10). Deliberately a no-op: the deal itself is still
-     * created normally either way.
+     * FR-3.4/FR-3.12/FR-3.13: when the deal's program is the subscription-
+     * type program (build-plan 03's is_subscription_type discriminator),
+     * deal creation opens a real SUBSCRIPTION row plus exactly 10
+     * SUBSCRIPTION_DELIVERY rows (one per future program slot) — the
+     * specific catalog program for each slot is chosen later, at the moment
+     * it's marked supplied (Subscription::markDeliverySupplied()), not
+     * upfront. The deal itself is always created normally either way — this
+     * only ever adds to it, never changes deal creation itself.
      */
     public function openSubscriptionIfApplicable(?Program $program = null): void
     {
@@ -205,8 +223,35 @@ class Deal extends Model
             return;
         }
 
-        // TODO(stage 9 — subscriptions): open a SUBSCRIPTION row for this
-        // deal here instead of treating it as a single-program sale.
+        $activeStatus = StatusDefinition::firstOrCreate(
+            ['scope' => 'subscription', 'name' => Subscription::ACTIVE_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 1],
+        );
+
+        $subscription = Subscription::create([
+            'customer_id' => $this->customer_id,
+            'deal_id' => $this->id,
+            'status_id' => $activeStatus->id,
+            'start_date' => now()->toDateString(),
+            'agreed_price' => $this->agreed_amount,
+            'version' => 0,
+        ]);
+
+        for ($sequenceNumber = 1; $sequenceNumber <= Subscription::TOTAL_DELIVERIES; $sequenceNumber++) {
+            $subscription->deliveries()->create([
+                'sequence_number' => $sequenceNumber,
+                'program_id' => null,
+                'is_supplied' => false,
+            ]);
+        }
+    }
+
+    /** FR-3.11's prerequisite: does $customer currently have an active subscription? */
+    private static function customerHasActiveSubscription(Customer $customer): bool
+    {
+        return Subscription::where('customer_id', $customer->id)
+            ->whereHas('status', fn ($q) => $q->where('name', Subscription::ACTIVE_STATUS_NAME))
+            ->exists();
     }
 
     /**

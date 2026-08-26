@@ -27,6 +27,7 @@ class DocumentTemplate extends Model
         'order_form' => 'טופס הזמנה',
         'contract' => 'חוזה',
         'invoice' => 'חשבונית',
+        'credit_note' => 'חשבונית זיכוי',
     ];
 
     protected function casts(): array

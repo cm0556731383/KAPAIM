@@ -39,6 +39,10 @@ class Document extends Model
         'order_form' => 'טופס הזמנה',
         'contract' => 'חוזה',
         'invoice' => 'חשבונית',
+        // Build-plan 09: generated on-demand at subscription cancellation
+        // only (Document::generateCreditNoteFor()) — deliberately absent from
+        // PRECEDING_TYPE below since it isn't part of the normal chain.
+        'credit_note' => 'חשבונית זיכוי',
     ];
 
     /** Chain order: quote -> order_form -> contract -> invoice (FR-4.1). */
@@ -194,6 +198,42 @@ class Document extends Model
                 throw new RuntimeException('לעסקה זו כבר הופקה חשבונית — ניתן להפיק חשבונית אחת בלבד לכל עסקה (FR-4.21/FR-4.22).');
             }
         }
+
+        if ($documentType === 'credit_note') {
+            $hasInvoice = self::where('deal_id', $deal->id)->where('document_type', 'invoice')->exists();
+
+            if (! $hasInvoice) {
+                throw new RuntimeException('לא ניתן להפיק חשבונית זיכוי לעסקה שלא הופקה עבורה חשבונית (FR-4.5/FR-8.12).');
+            }
+        }
+    }
+
+    /**
+     * Build-plan 09 — the only place a credit_note Document is ever created,
+     * called from Subscription::generateCreditNote() at subscription
+     * cancellation. Reuses generateFor()/assertCanGenerate() for the FR-4.5/
+     * FR-8.12 "deal must already have an invoice" gate rather than a
+     * parallel check, and inherits that invoice's business entity
+     * automatically (no separate prompt needed — it's the same deal).
+     *
+     * @throws RuntimeException on a business-rule violation, or when no
+     *                          active credit_note template exists yet.
+     */
+    public static function generateCreditNoteFor(Deal $deal, float $creditAmount): self
+    {
+        $template = DocumentTemplate::where('document_type', 'credit_note')->where('is_active', true)->orderBy('id')->first();
+
+        if (! $template) {
+            throw new RuntimeException('לא נמצאה תבנית פעילה עבור חשבונית זיכוי — יש להגדיר תבנית תחילה במסך תבניות מסמכים.');
+        }
+
+        $invoice = $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
+
+        $document = self::generateFor($deal, $template, 'digital', $invoice?->business_entity_id);
+
+        $document->addLine('זיכוי בגין ביטול מנוי — עסקה #'.$deal->id, $creditAmount);
+
+        return $document;
     }
 
     private static function precedingFor(Deal $deal, string $documentType): ?self
@@ -308,8 +348,8 @@ class Document extends Model
      */
     public function addLine(string $description, float $amount, float $quantity = 1, ?float $unitPrice = null): DocumentLine
     {
-        if ($this->document_type !== 'invoice') {
-            throw new RuntimeException('שורות פירוט קיימות רק עבור מסמכי חשבונית (FR-4.17).');
+        if (! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            throw new RuntimeException('שורות פירוט קיימות רק עבור מסמכי חשבונית וחשבונית זיכוי (FR-4.17).');
         }
 
         if ($this->sent_at) {

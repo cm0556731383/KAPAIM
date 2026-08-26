@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\PaymentMethod;
 use App\Models\Program;
+use App\Models\Subscription;
 use App\Models\Task;
 use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
@@ -26,6 +27,15 @@ use Livewire\Component;
  * indicator (FR-2.15) and a direct link to an open collection task
  * (FR-2.16) — per-deal document/payment detail still lives on each deal's
  * own card (⚡deal-detail.blade.php).
+ *
+ * Build-plan 09 fills in the "מנוי" tab for real: the delivery log, the
+ * mark-supplied action (Subscription::markDeliverySupplied(), FR-3.14/
+ * FR-8.19), the monthly-payment field (FR-3.19-FR-3.21), and cancellation +
+ * credit-note generation (Subscription::cancel()/generateCreditNote(),
+ * US-010/FR-4.5/FR-8.12/FR-8.24). Also adds the active-subscription badge
+ * (FR-2.17) and the FR-8.23 price-exceeded banner to the card header. Every
+ * subscription action below is additionally gated on subscriptions.manage —
+ * this whole page still requires customers.manage at mount, unchanged.
  */
 new
 #[Layout('layouts.app', ['title' => 'כרטיס לקוחה — כפיים'])]
@@ -69,6 +79,17 @@ class extends Component
 
     /** Business-rule error (FR-7.25) from Deal::createForCustomer() (FR-3.3/FR-8.4/FR-8.5). */
     public ?string $dealError = null;
+
+    // ===== מנוי (SUBSCRIPTION / SUBSCRIPTION_DELIVERY) =====
+    /** delivery_id => chosen program_id, bound per delivery row. */
+    public array $deliveryProgramSelections = [];
+
+    public ?int $editingMonthlyPaymentForSubscriptionId = null;
+
+    public string $monthlyPaymentOverrideInput = '';
+
+    /** Business-rule error from Subscription::markDeliverySupplied()/cancel()/generateCreditNote(). */
+    public ?string $subscriptionError = null;
 
     public function mount(Customer $customer): void
     {
@@ -300,6 +321,185 @@ class extends Component
         return PaymentMethod::where('is_active', true)->orderBy('name')->get();
     }
 
+    // ----- מנוי (SUBSCRIPTION / SUBSCRIPTION_DELIVERY) -----
+
+    #[Computed]
+    public function subscriptions()
+    {
+        return $this->customer->subscriptions()
+            ->with(['status', 'deal', 'deliveries.program', 'deliveries.suppliedBy'])
+            ->orderByDesc('id')
+            ->get();
+    }
+
+    #[Computed]
+    public function hasActiveSubscription(): bool
+    {
+        return $this->customer->hasActiveSubscription();
+    }
+
+    /** FR-8.23: purely informational banner on the customer card. */
+    #[Computed]
+    public function priceExceededAlert(): bool
+    {
+        return $this->customer->exceedsSubscriptionPriceAlert();
+    }
+
+    /** FR-3.14: the secretary chooses which active, non-subscription catalog program filled a slot. */
+    #[Computed]
+    public function availableDeliveryPrograms()
+    {
+        return Program::where('is_active', true)->where('is_subscription_type', false)->orderBy('name')->get();
+    }
+
+    /**
+     * FR-3.14/FR-8.19: the only place this screen marks a delivery supplied —
+     * Subscription::markDeliverySupplied() enforces the version-guarded
+     * optimistic lock and the "active, non-subscription program" rule
+     * server-side. FR-3.15: purely manual, no materials-sending hook exists
+     * anywhere in this method or the model it calls.
+     */
+    public function markDeliverySupplied(int $subscriptionId, int $deliveryId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $this->subscriptionError = null;
+
+        $programId = $this->deliveryProgramSelections[$deliveryId] ?? null;
+
+        if (! $programId) {
+            $this->subscriptionError = 'יש לבחור תוכנית עבור שורת האספקה לפני הסימון (FR-3.14).';
+
+            return;
+        }
+
+        $subscription = Subscription::findOrFail($subscriptionId);
+
+        try {
+            $delivery = $subscription->markDeliverySupplied($subscription->version, $deliveryId, (int) $programId, auth()->user());
+        } catch (\RuntimeException $e) {
+            $this->subscriptionError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('subscription.delivery_supplied', "סומנה תוכנית מס' {$delivery->sequence_number} כסופקה במנוי #{$subscription->id}: {$delivery->program?->name}", [
+            'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            'metadata' => ['delivery_id' => $delivery->id, 'program_id' => $delivery->program_id],
+        ]);
+
+        if ($subscription->fresh()->status?->name === Subscription::ENDED_STATUS_NAME) {
+            $activityLogger->log('subscription.ended', "מנוי #{$subscription->id} הסתיים אוטומטית לאחר סימון התוכנית העשירית (FR-3.16/FR-3.17)", [
+                'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            ]);
+        }
+
+        unset($this->deliveryProgramSelections[$deliveryId]);
+        unset($this->subscriptions, $this->hasActiveSubscription);
+    }
+
+    /**
+     * US-010/FR-8.24: the only place this screen cancels a subscription —
+     * Subscription::cancel() computes the dynamic credit and is a
+     * status-only change (never deletes the deal/subscription/delivery
+     * history/activity log).
+     */
+    public function cancelSubscription(int $subscriptionId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $this->subscriptionError = null;
+
+        $subscription = Subscription::findOrFail($subscriptionId);
+
+        try {
+            $subscription->cancel();
+        } catch (\RuntimeException $e) {
+            $this->subscriptionError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('subscription.cancelled', "מנוי #{$subscription->id} בוטל — קיזוז מחושב: ₪".number_format((float) $subscription->cancellation_credit, 0), [
+            'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            'metadata' => ['cancellation_credit' => (float) $subscription->cancellation_credit],
+        ]);
+
+        unset($this->subscriptions, $this->hasActiveSubscription);
+    }
+
+    /**
+     * FR-4.5/FR-8.12: a deliberately separate explicit action from
+     * cancelSubscription() above — Subscription::generateCreditNote()
+     * re-checks the "deal already has an invoice" gate server-side via
+     * Document::generateCreditNoteFor().
+     */
+    public function generateSubscriptionCreditNote(int $subscriptionId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $this->subscriptionError = null;
+
+        $subscription = Subscription::findOrFail($subscriptionId);
+
+        try {
+            $document = $subscription->generateCreditNote();
+        } catch (\RuntimeException $e) {
+            $this->subscriptionError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('document.credit_note_generated', "הופקה חשבונית זיכוי עבור מנוי #{$subscription->id}", [
+            'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            'metadata' => ['document_id' => $document->id],
+        ]);
+
+        $this->redirect(route('document-view', $document), navigate: false);
+    }
+
+    /** FR-3.20: loads the current override (if any) into the edit form. */
+    public function editMonthlyPayment(int $subscriptionId): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $subscription = Subscription::findOrFail($subscriptionId);
+        $this->editingMonthlyPaymentForSubscriptionId = $subscriptionId;
+        $this->monthlyPaymentOverrideInput = $subscription->monthly_payment_override !== null
+            ? (string) $subscription->monthly_payment_override
+            : '';
+    }
+
+    /** FR-3.20: an empty value clears the override, falling back to the computed default again. */
+    public function saveMonthlyPayment(int $subscriptionId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $data = $this->validate(['monthlyPaymentOverrideInput' => ['nullable', 'numeric', 'gt:0']]);
+
+        $subscription = Subscription::findOrFail($subscriptionId);
+        $amount = $data['monthlyPaymentOverrideInput'] !== null && $data['monthlyPaymentOverrideInput'] !== ''
+            ? (float) $data['monthlyPaymentOverrideInput']
+            : null;
+
+        $subscription->setMonthlyPaymentOverride($amount);
+
+        $activityLogger->log('subscription.monthly_payment_overridden', "עודכן תשלום חודשי ידני עבור מנוי #{$subscription->id}", [
+            'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            'metadata' => ['monthly_payment_override' => $amount],
+        ]);
+
+        $this->editingMonthlyPaymentForSubscriptionId = null;
+        $this->monthlyPaymentOverrideInput = '';
+        unset($this->subscriptions);
+    }
+
+    public function cancelMonthlyPaymentEdit(): void
+    {
+        $this->editingMonthlyPaymentForSubscriptionId = null;
+        $this->monthlyPaymentOverrideInput = '';
+    }
+
     /**
      * FR-2.15: the customer card's debt indicator — sum of agreed_amount
      * minus paid across every non-cancelled deal.
@@ -449,6 +649,9 @@ class extends Component
     <div class="topbar">
         <div>
             <span class="badge {{ \App\Models\Customer::badgeClassForStatusName($customer->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $customer->status?->name }}</span>
+            @if ($this->hasActiveSubscription)
+                <span class="badge badge-primary" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">מנויה פעילה</span>
+            @endif
             @if ($this->outstandingBalance > 0)
                 <span class="badge badge-error" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">חוב פתוח: ₪{{ number_format($this->outstandingBalance, 0) }}</span>
             @endif
@@ -467,6 +670,12 @@ class extends Component
             @endif
         </div>
     </div>
+
+    @if ($this->priceExceededAlert)
+        <div class="mb-8" style="background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
+            התראת חריגת מחיר: סך רכישות התוכניות הבודדות (מחוץ למנוי) של לקוחה זו עולה על מחיר מנוי שנתי מלא (FR-8.23).
+        </div>
+    @endif
 
     @if ($contactError)
         <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
@@ -599,7 +808,121 @@ class extends Component
             </div>
         </div>
     @elseif ($activeTab === 'subscription')
-        <div class="card empty-state">מעקב מנוי שנתי, זכאות להטבות ויומן אספקה יוצגו כאן — יוצג בשלב 9 (מנויים).</div>
+        @if ($subscriptionError)
+            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+                {{ $subscriptionError }}
+            </div>
+        @endif
+
+        @forelse ($this->subscriptions as $subscription)
+            <div class="card" style="margin-bottom:var(--sp-lg)">
+                <div class="contact-edit-head">
+                    <h3 style="margin:0">מנוי #{{ $subscription->id }} — עסקה #{{ $subscription->deal_id }}</h3>
+                    <span class="badge {{ \App\Models\Subscription::badgeClassForStatusName($subscription->status?->name) }}">{{ $subscription->status?->name }}</span>
+                </div>
+
+                <div style="display:flex; gap:var(--sp-xl); flex-wrap:wrap; margin-bottom:var(--sp-md); font-size:var(--fs-small)">
+                    <div><span style="color:var(--color-text-secondary)">תאריך תחילה: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->start_date->format('d/m/Y') }}</span></div>
+                    <div><span style="color:var(--color-text-secondary)">מחיר שסוכם: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->agreed_price, 0) }}</span></div>
+                    <div><span style="color:var(--color-text-secondary)">התקדמות: </span><span style="font-weight:600">{{ $subscription->suppliedCount() }} מתוך {{ \App\Models\Subscription::TOTAL_DELIVERIES }} תוכניות סופקו</span></div>
+                    @if ($subscription->end_date)
+                        <div><span style="color:var(--color-text-secondary)">תאריך סיום: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->end_date->format('d/m/Y') }}</span></div>
+                    @endif
+                </div>
+
+                {{-- ===== תשלום חודשי (FR-3.19-FR-3.21) ===== --}}
+                <div class="field" style="margin-bottom:var(--sp-lg)">
+                    <div class="k">תשלום חודשי</div>
+                    @if ($editingMonthlyPaymentForSubscriptionId === $subscription->id)
+                        <form wire:submit="saveMonthlyPayment({{ $subscription->id }})" style="display:flex; gap:var(--sp-sm); align-items:center; margin-top:4px">
+                            <input type="text" wire:model="monthlyPaymentOverrideInput" class="ltr-num" dir="ltr" placeholder="₪" style="max-width:140px">
+                            <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                            <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelMonthlyPaymentEdit">ביטול</button>
+                        </form>
+                        @error('monthlyPaymentOverrideInput') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    @else
+                        <div class="v ltr-num">
+                            ₪{{ number_format($subscription->monthlyPayment(), 0) }}
+                            @if ($subscription->monthly_payment_override !== null)
+                                <span class="badge badge-neutral" style="margin-inline-start:6px">נקבע ידנית</span>
+                            @endif
+                            <button type="button" class="btn btn-ghost btn-sm" wire:click="editMonthlyPayment({{ $subscription->id }})">עריכה</button>
+                        </div>
+                    @endif
+                </div>
+
+                {{-- ===== יומן אספקה (FR-3.13-FR-3.15) ===== --}}
+                <h3 style="font-size:var(--fs-h3)">יומן אספקה</h3>
+                <table>
+                    <thead><tr><th>#</th><th>תוכנית</th><th>תאריך אספקה</th><th>סומן ע"י</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach ($subscription->deliveries as $delivery)
+                            <tr>
+                                <td>{{ $delivery->sequence_number }}</td>
+                                <td>
+                                    @if ($delivery->is_supplied)
+                                        {{ $delivery->program?->name }}
+                                    @elseif ($subscription->isActive())
+                                        <select wire:model="deliveryProgramSelections.{{ $delivery->id }}">
+                                            <option value="">בחרו תוכנית שסופקה</option>
+                                            @foreach ($this->availableDeliveryPrograms as $program)
+                                                <option value="{{ $program->id }}">{{ $program->name }}</option>
+                                            @endforeach
+                                        </select>
+                                    @else
+                                        —
+                                    @endif
+                                </td>
+                                <td class="ltr-num">{{ $delivery->supplied_at?->format('d/m/Y') ?? '—' }}</td>
+                                <td>{{ $delivery->suppliedBy?->name ?? '—' }}</td>
+                                <td>
+                                    @if ($delivery->is_supplied)
+                                        <span class="badge badge-success">סופקה</span>
+                                    @elseif ($subscription->isActive())
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="markDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})">סימון כסופקה</button>
+                                    @else
+                                        <span class="badge badge-neutral">טרם סופקה</span>
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
+                    סימון "סופקה" הוא פעולה ידנית בלבד ואינה נגזרת משליחת חומרי לימוד (FR-3.15). לאחר סימון התוכנית העשירית המנוי מסתיים אוטומטית ואינו מתחדש (FR-3.16/FR-3.17) — חידוש מתבצע ביצירת עסקה חדשה (FR-3.18).
+                </p>
+
+                {{-- ===== ביטול מנוי וחישוב קיזוז (US-010) ===== --}}
+                @if ($subscription->isActive())
+                    <div style="margin-top:var(--sp-lg); display:flex; justify-content:flex-end">
+                        <button
+                            type="button"
+                            class="btn btn-destructive"
+                            wire:click="cancelSubscription({{ $subscription->id }})"
+                            wire:confirm="ביטול המנוי יסמן אותו כמבוטל לצמיתות ויחשב זיכוי לפי התוכניות שטרם סופקו. פעולה זו אינה הפיכה — להמשיך?"
+                        >ביטול מנוי</button>
+                    </div>
+                @elseif ($subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME)
+                    <div class="card confirm-row" style="margin-top:var(--sp-lg); background:var(--color-background)">
+                        <div style="display:flex; gap:var(--sp-xl); flex-wrap:wrap; font-size:var(--fs-small)">
+                            <div><span style="color:var(--color-text-secondary)">תאריך ביטול: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->cancelled_at?->format('d/m/Y') }}</span></div>
+                            <div><span style="color:var(--color-text-secondary)">קיזוז מחושב: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->cancellation_credit, 0) }}</span></div>
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-secondary"
+                            wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
+                            @disabled(! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                        >הפקת חשבונית זיכוי</button>
+                    </div>
+                    @unless (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">לא ניתן להפיק חשבונית זיכוי — לעסקה זו טרם הופקה חשבונית (FR-4.5/FR-8.12).</p>
+                    @endunless
+                @endif
+            </div>
+        @empty
+            <div class="card empty-state">אין ללקוחה זו מנוי — מנוי נפתח אוטומטית עם יצירת עסקה עבור תוכנית המנוי השנתי (FR-3.12).</div>
+        @endforelse
     @elseif ($activeTab === 'deals')
         @if ($dealError)
             <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">

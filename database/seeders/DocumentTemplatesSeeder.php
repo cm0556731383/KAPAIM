@@ -65,6 +65,17 @@ class DocumentTemplatesSeeder extends Seeder
             ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => true, 'sort_order' => 1],
         ]);
 
+        // ----- חשבונית זיכוי (build-plan 09) — מופקת רק בעת ביטול מנוי -----
+        $creditNote = DocumentTemplate::create([
+            'document_type' => 'credit_note',
+            'name' => 'חשבונית זיכוי — ביטול מנוי',
+            'content' => "חשבונית זיכוי — עוסק פטור\n\nלכבוד: {{שם_בית_הספר}}\n\nהזיכוי ניתן בהתאם לביטול המנוי, לפי מספר התוכניות שטרם סופקו ולפי המחיר שסוכם עם הלקוחה (FR-8.24). הפירוט המלא מופיע בטבלת השורות המצורפת למסמך זה.\n\nתודה על שיתוף הפעולה!",
+            'is_active' => true,
+        ]);
+        $creditNote->fields()->createMany([
+            ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => true, 'sort_order' => 1],
+        ]);
+
         // Inactive "old" template — demonstrates FR-4.14/FR-7.11: deactivating
         // a template never touches documents already generated from it.
         DocumentTemplate::create([

@@ -26,7 +26,7 @@ class extends Component
     public function customers()
     {
         return Customer::query()
-            ->with(['school', 'status', 'contacts'])
+            ->with(['school', 'status', 'contacts', 'subscriptions.status'])
             ->when($this->filterStatusId !== '', fn ($q) => $q->where('status_id', $this->filterStatusId))
             ->orderByDesc('converted_at')
             ->get();
@@ -68,20 +68,25 @@ class extends Component
                     <th>בית ספר</th>
                     <th>איש קשר ראשי</th>
                     <th>סטטוס</th>
+                    <th>מנוי</th>
                     <th>לקוחה מאז</th>
                 </tr>
             </thead>
             <tbody>
                 @forelse ($this->customers as $customer)
-                    @php $primaryContact = $customer->contacts->firstWhere('is_primary', true); @endphp
+                    @php
+                        $primaryContact = $customer->contacts->firstWhere('is_primary', true);
+                        $hasActiveSubscription = $customer->subscriptions->first(fn ($s) => $s->status?->name === \App\Models\Subscription::ACTIVE_STATUS_NAME) !== null;
+                    @endphp
                     <tr class="row-link" onclick="window.location='{{ route('customer-detail', $customer) }}'">
                         <td>{{ $customer->school?->name ?? '—' }}</td>
                         <td>{{ $primaryContact ? $primaryContact->name.($primaryContact->role ? ', '.$primaryContact->role : '') : '—' }}</td>
                         <td><span class="badge {{ \App\Models\Customer::badgeClassForStatusName($customer->status?->name) }}">{{ $customer->status?->name }}</span></td>
+                        <td>@if ($hasActiveSubscription)<span class="badge badge-primary">מנויה פעילה</span>@else—@endif</td>
                         <td class="ltr-num">{{ $customer->converted_at->format('d/m/Y') }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="4" class="text-text-secondary">אין עדיין לקוחות — לקוחה נוצרת מהמרת ליד בכרטיס הליד.</td></tr>
+                    <tr><td colspan="5" class="text-text-secondary">אין עדיין לקוחות — לקוחה נוצרת מהמרת ליד בכרטיס הליד.</td></tr>
                 @endforelse
             </tbody>
         </table>

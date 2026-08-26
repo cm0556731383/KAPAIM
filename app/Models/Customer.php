@@ -72,6 +72,66 @@ class Customer extends Model
         return $this->hasMany(Deal::class);
     }
 
+    /**
+     * Build-plan 09: every subscription this customer has ever had — see
+     * Deal::openSubscriptionIfApplicable(), the only place one is ever
+     * created. A customer may have more than one over time (FR-3.18: a
+     * renewal is a brand-new deal, hence a brand-new subscription).
+     */
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
+    }
+
+    /**
+     * FR-2.17: "מנוי פעיל" everywhere the customer is shown — a badge check
+     * should always go through this (status-based), never through mere row
+     * existence, so a cancelled/ended subscription correctly falls off.
+     */
+    public function activeSubscription(): ?Subscription
+    {
+        return $this->subscriptions()
+            ->whereHas('status', fn ($q) => $q->where('name', Subscription::ACTIVE_STATUS_NAME))
+            ->latest('id')
+            ->first();
+    }
+
+    public function hasActiveSubscription(): bool
+    {
+        return $this->activeSubscription() !== null;
+    }
+
+    /**
+     * FR-8.23's prerequisite: sum of agreed_amount across this customer's own
+     * standalone program purchases — program-based deals only, excluding any
+     * deal against the subscription-type program itself (that one opens a
+     * subscription, it isn't a "standalone program purchase"), and excluding
+     * bundle deals entirely (FR-3.8).
+     */
+    public function standaloneProgramsTotal(): float
+    {
+        return (float) $this->deals()
+            ->whereNotNull('program_id')
+            ->whereHas('program', fn ($q) => $q->where('is_subscription_type', false))
+            ->sum('agreed_amount');
+    }
+
+    /**
+     * FR-8.23: purely informational — compares the total above to the
+     * current active subscription-type program's list price (build-plan 03's
+     * at-most-one-active-at-a-time discriminator/uniqueness guarantee).
+     */
+    public function exceedsSubscriptionPriceAlert(): bool
+    {
+        $subscriptionPrice = Program::where('is_subscription_type', true)->where('is_active', true)->first()?->price;
+
+        if (! $subscriptionPrice) {
+            return false;
+        }
+
+        return $this->standaloneProgramsTotal() > (float) $subscriptionPrice;
+    }
+
     public static function badgeClassForStatusName(?string $statusName): string
     {
         return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
