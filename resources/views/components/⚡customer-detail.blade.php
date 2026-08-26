@@ -1,8 +1,12 @@
 <?php
 
 use App\Models\ActivityLog;
+use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
+use App\Models\Deal;
+use App\Models\PaymentMethod;
+use App\Models\Program;
 use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -11,9 +15,11 @@ use Livewire\Component;
 /**
  * Build-plan 05 — כרטיס לקוחה. A Customer only ever exists via
  * Lead::convertToCustomer() (FR-8.2); this component never creates one.
- * Most tabs here (מנוי, עסקאות, מסמכים ותשלומים, חומרים) are deliberately
- * empty-state stubs — the real data model for each arrives in its own
- * build-plan stage (9/6/7+8/10) — per this stage's Definition of Done.
+ * Build-plan 06 fills in the "עסקאות" tab (a real deal list + "עסקה חדשה"
+ * creation form — see createDeal() below, which is the only place this
+ * screen ever creates a Deal, always scoped to $this->customer). מנוי,
+ * מסמכים ותשלומים, and חומרים remain deliberately empty-state stubs — their
+ * real data model arrives in build-plan stages 9/7+8/10.
  */
 new
 #[Layout('layouts.app', ['title' => 'כרטיס לקוחה — כפיים'])]
@@ -44,6 +50,19 @@ class extends Component
 
     /** Business-rule error (FR-7.25) — FR-2.9 "לא ניתן להסיר את הראשי האחרון". */
     public ?string $contactError = null;
+
+    // ===== עסקה חדשה (DEAL) =====
+    /** "program:{id}" or "bundle:{id}" — a single select so exactly one type is ever chosen. */
+    public string $dealItem = '';
+
+    public string $dealAgreedAmount = '';
+
+    public string $dealSpecialRequest = '';
+
+    public string $dealPaymentMethodId = '';
+
+    /** Business-rule error (FR-7.25) from Deal::createForCustomer() (FR-3.3/FR-8.4/FR-8.5). */
+    public ?string $dealError = null;
 
     public function mount(Customer $customer): void
     {
@@ -198,6 +217,81 @@ class extends Component
         }
 
         unset($this->contacts);
+    }
+
+    // ----- עסקאות (DEAL) -----
+
+    /**
+     * FR-3.2/FR-3.3/FR-8.4: the only place this screen creates a Deal — the
+     * customer is always $this->customer (never freely user-supplied), and
+     * dealItem's "program:{id}"/"bundle:{id}" encoding makes choosing both
+     * or neither structurally impossible on the UI side; Deal::createForCustomer()
+     * still re-checks everything server-side (including FR-8.5, disabled items).
+     */
+    public function createDeal(ActivityLogger $activityLogger): void
+    {
+        $this->dealError = null;
+
+        $data = $this->validate([
+            'dealItem' => ['required', 'string'],
+            'dealAgreedAmount' => ['nullable', 'numeric', 'gt:0'],
+            'dealSpecialRequest' => ['nullable', 'string'],
+            'dealPaymentMethodId' => ['nullable', 'exists:payment_methods,id'],
+        ], [], ['dealItem' => 'תוכנית / מארז']);
+
+        [$type, $id] = array_pad(explode(':', $data['dealItem'], 2), 2, null);
+
+        $program = $type === 'program' ? Program::find($id) : null;
+        $bundle = $type === 'bundle' ? Bundle::find($id) : null;
+
+        try {
+            $deal = Deal::createForCustomer(
+                $this->customer,
+                $program,
+                $bundle,
+                $data['dealAgreedAmount'] !== null && $data['dealAgreedAmount'] !== '' ? (float) $data['dealAgreedAmount'] : null,
+                $data['dealSpecialRequest'] ?: null,
+                $data['dealPaymentMethodId'] ?: null,
+            );
+        } catch (\RuntimeException $e) {
+            $this->dealError = $e->getMessage();
+
+            return;
+        }
+
+        $itemName = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot;
+        $activityLogger->log('deal.created', "נוצרה עסקה חדשה #{$deal->id} עבור לקוחה \"{$this->customer->school?->name}\": {$itemName}", [
+            'deal_id' => $deal->id, 'customer_id' => $this->customer->id,
+        ]);
+
+        $this->reset(['dealItem', 'dealAgreedAmount', 'dealSpecialRequest', 'dealPaymentMethodId']);
+        unset($this->deals);
+
+        $this->redirect(route('deal-detail', $deal), navigate: false);
+    }
+
+    #[Computed]
+    public function deals()
+    {
+        return $this->customer->deals()->with(['program', 'bundle', 'status'])->orderByDesc('purchased_at')->get();
+    }
+
+    #[Computed]
+    public function availablePrograms()
+    {
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function availableBundles()
+    {
+        return Bundle::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function paymentMethods()
+    {
+        return PaymentMethod::where('is_active', true)->orderBy('name')->get();
     }
 
     private function hasOtherPrimaryContact(int $excludingContactId): bool
@@ -471,7 +565,82 @@ class extends Component
     @elseif ($activeTab === 'subscription')
         <div class="card empty-state">מעקב מנוי שנתי, זכאות להטבות ויומן אספקה יוצגו כאן — יוצג בשלב 9 (מנויים).</div>
     @elseif ($activeTab === 'deals')
-        <div class="card empty-state">עסקאות הלקוחה (רכישות, סכומים, סטטוס) יוצגו כאן — יוצג בשלב 6 (עסקאות).</div>
+        @if ($dealError)
+            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+                {{ $dealError }}
+            </div>
+        @endif
+        <div class="cols2">
+            <div>
+                <div class="card">
+                    <h3>עסקאות הלקוחה</h3>
+                    @forelse ($this->deals as $deal)
+                        <div class="deal-row">
+                            <div>
+                                <div style="font-weight:600">עסקה #{{ $deal->id }} — {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</div>
+                                <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">נפתחה <span class="ltr-num">{{ $deal->purchased_at->format('d/m/Y') }}</span></div>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:var(--sp-md)">
+                                <span class="amount ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</span>
+                                <span class="badge {{ \App\Models\Deal::badgeClassForStatusName($deal->status?->name) }}">{{ $deal->status?->name }}</span>
+                                <a href="{{ route('deal-detail', $deal) }}" class="btn btn-ghost btn-sm">פתיחת עסקה</a>
+                            </div>
+                        </div>
+                    @empty
+                        <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין עסקאות ללקוחה זו.</p>
+                    @endforelse
+                </div>
+            </div>
+
+            <div>
+                <div class="card">
+                    <h3>עסקה חדשה</h3>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">תוכנית אחת או מארז אחד בלבד לעסקה — רכישת כמה תוכניות יוצרת כמה עסקאות נפרדות (FR-3.3/FR-3.4).</p>
+                    <form wire:submit="createDeal" class="form-grid">
+                        <div class="full">
+                            <label for="dealItem">תוכנית / מארז</label>
+                            <select id="dealItem" wire:model="dealItem">
+                                <option value="">בחרו תוכנית או מארז</option>
+                                @if ($this->availablePrograms->isNotEmpty())
+                                    <optgroup label="תוכניות">
+                                        @foreach ($this->availablePrograms as $program)
+                                            <option value="program:{{ $program->id }}">{{ $program->name }} (₪{{ number_format((float) $program->price, 0) }})</option>
+                                        @endforeach
+                                    </optgroup>
+                                @endif
+                                @if ($this->availableBundles->isNotEmpty())
+                                    <optgroup label="מארזים">
+                                        @foreach ($this->availableBundles as $bundle)
+                                            <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }} (₪{{ number_format((float) $bundle->price, 0) }})</option>
+                                        @endforeach
+                                    </optgroup>
+                                @endif
+                            </select>
+                            @error('dealItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="dealAgreedAmount">סכום מוסכם (אופציונלי — ברירת מחדל: מחיר המחירון)</label>
+                            <input type="text" id="dealAgreedAmount" wire:model="dealAgreedAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                            @error('dealAgreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="dealPaymentMethodId">אמצעי תשלום</label>
+                            <select id="dealPaymentMethodId" wire:model="dealPaymentMethodId">
+                                <option value="">— ללא —</option>
+                                @foreach ($this->paymentMethods as $method)
+                                    <option value="{{ $method->id }}">{{ $method->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="full">
+                            <label for="dealSpecialRequest">בקשת התאמה מיוחדת (FR-3.7)</label>
+                            <textarea id="dealSpecialRequest" wire:model="dealSpecialRequest" rows="2"></textarea>
+                        </div>
+                        <div class="full"><button type="submit" class="btn btn-primary">יצירת עסקה</button></div>
+                    </form>
+                </div>
+            </div>
+        </div>
     @elseif ($activeTab === 'billing')
         <div class="card empty-state">מסמכים, תשלומים ויתרת חוב יוצגו כאן — יוצג בשלבים 7–8 (מסמכים, גבייה ותשלומים).</div>
     @elseif ($activeTab === 'materials')

@@ -26,6 +26,17 @@
         <env name="DB_CONNECTION" value="sqlite" force="true"/>
         <env name="DB_DATABASE" value=":memory:" force="true"/>
         <env name="DB_URL" value="" force="true"/>
+        <!--
+            Laravel's env() helper resolves DB_* from $_SERVER before $_ENV/getenv(),
+            but PHPUnit's <env force="true"> only forces $_ENV + putenv(), never
+            $_SERVER — so a real container-level DB_CONNECTION=pgsql (set by
+            docker-compose for the dev app container) silently won this override and
+            every test run migrated/wrote to the real dev Postgres DB instead of an
+            in-memory sqlite one. These <server> entries close that gap.
+        -->
+        <server name="DB_CONNECTION" value="sqlite" force="true"/>
+        <server name="DB_DATABASE" value=":memory:" force="true"/>
+        <server name="DB_URL" value="" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

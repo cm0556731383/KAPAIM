@@ -136,3 +136,8 @@ tr.row-link { cursor: pointer; }
 .tabs span { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); cursor: pointer; }
 .tabs span.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }
 .empty-state { color: var(--color-text-secondary); font-size: var(--fs-small); text-align: center; padding: var(--sp-xl) var(--sp-md); border: 1px dashed var(--color-border); border-radius: var(--radius-control); }
+
+/* ===== Deals tab (build-plan 06) — ported from docs/storyboard/customer-deal.html ===== */
+.deal-row { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
+.deal-row:last-child { border-bottom: none; }
+.deal-row .amount { font-weight: 700; direction: ltr; }

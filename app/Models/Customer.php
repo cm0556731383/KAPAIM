@@ -63,6 +63,15 @@ class Customer extends Model
         return $this->hasMany(Contact::class);
     }
 
+    /**
+     * Build-plan 06: every purchase for this customer is its own DEAL row —
+     * see Deal::createForCustomer(), the only place one is ever created.
+     */
+    public function deals(): HasMany
+    {
+        return $this->hasMany(Deal::class);
+    }
+
     public static function badgeClassForStatusName(?string $statusName): string
     {
         return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
