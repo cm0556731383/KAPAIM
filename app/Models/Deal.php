@@ -35,6 +35,9 @@ class Deal extends Model
 
     public const CANCELLED_STATUS_NAME = 'מבוטלת';
 
+    /** Build-plan 08 (FR-4.32/FR-4.33): a deal reaches this status only once fully paid. */
+    public const PAID_STATUS_NAME = 'שולמה';
+
     /** Terminal statuses (build-plan 06 judgment call) mark `completed_at`. */
     private const TERMINAL_STATUS_NAMES = ['שולמה', 'מבוטלת'];
 
@@ -89,6 +92,32 @@ class Deal extends Model
     public function documents(): HasMany
     {
         return $this->hasMany(Document::class)->orderBy('id');
+    }
+
+    /**
+     * Build-plan 08: every recorded payment against this deal — see
+     * recordPayment() below, the only place a Payment row is ever created.
+     */
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class)->orderBy('id');
+    }
+
+    /** FR-4.32/FR-4.33: always computed from recorded payments — never a stored column. */
+    public function totalPaid(): float
+    {
+        return (float) $this->payments()->sum('amount');
+    }
+
+    /** FR-4.33: the balance still owed — visible on the deal/customer card. */
+    public function outstandingBalance(): float
+    {
+        return max(0.0, (float) $this->agreed_amount - $this->totalPaid());
+    }
+
+    public function isFullyPaid(): bool
+    {
+        return $this->totalPaid() >= (float) $this->agreed_amount;
     }
 
     public static function badgeClassForStatusName(?string $statusName): string
@@ -208,5 +237,101 @@ class Deal extends Model
         }
 
         $this->refresh();
+    }
+
+    /**
+     * FR-4.30/FR-4.31: a deal's payment method may be changed freely only
+     * until an actual payment has been recorded against it — once any
+     * Payment row exists, further changes are blocked (the value itself is
+     * unaffected — passing the current value back is always a no-op).
+     *
+     * @throws RuntimeException when payments already exist and a real change is attempted.
+     */
+    public function updatePaymentMethod(?int $paymentMethodId): void
+    {
+        if ($paymentMethodId === $this->payment_method_id) {
+            return;
+        }
+
+        if ($this->payments()->exists()) {
+            throw new RuntimeException('לא ניתן לשנות את אמצעי התשלום לאחר שהתקבל תשלום בפועל עבור העסקה (FR-4.30/FR-4.31).');
+        }
+
+        $this->update(['payment_method_id' => $paymentMethodId]);
+    }
+
+    /**
+     * FR-8.19 (this stage's slice): the only place a Payment row is ever
+     * created, guarded by the exact same optimistic-locking pattern as
+     * updateStatusWithLock() above — the caller supplies the deal's
+     * `version`; the atomic `WHERE id = ? AND version = ?` update is what
+     * actually "reserves" this recording, so two users recording a payment
+     * on the same deal at the same time can never both succeed against a
+     * stale version (one gets the friendly conflict below and must reload).
+     *
+     * FR-4.32/FR-4.33: the deal only flips to PAID_STATUS_NAME once the sum
+     * of its payments (including this one) reaches agreed_amount — a
+     * partial payment leaves the deal's current status untouched.
+     *
+     * FR-4.39/FR-4.40: $amount is accepted as-is even when it differs from
+     * agreed_amount (e.g. a network-institution branch paying a
+     * network-negotiated amount) — never blocked here, only tracked.
+     *
+     * @throws RuntimeException on a version conflict, or when the deal has
+     *                          no payment method set yet (FR-4.30).
+     */
+    public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null): Payment
+    {
+        if (! $this->payment_method_id) {
+            throw new RuntimeException('יש לבחור אמצעי תשלום לעסקה לפני רישום תשלום (FR-4.30).');
+        }
+
+        if ($amount <= 0) {
+            throw new RuntimeException('סכום התשלום חייב להיות גדול מאפס.');
+        }
+
+        return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate) {
+            $prospectiveTotal = $this->totalPaid() + $amount;
+            $becomesFullyPaid = $prospectiveTotal >= (float) $this->agreed_amount;
+
+            $attributes = ['version' => DB::raw('version + 1')];
+
+            if ($becomesFullyPaid && $this->status?->name !== self::PAID_STATUS_NAME) {
+                $paidStatus = StatusDefinition::firstOrCreate(
+                    ['scope' => 'deal', 'name' => self::PAID_STATUS_NAME],
+                    ['is_active' => true, 'sort_order' => 3],
+                );
+                $attributes['status_id'] = $paidStatus->id;
+                $attributes['completed_at'] = $this->completed_at ?? now();
+            }
+
+            $affected = self::where('id', $this->id)
+                ->where('version', $expectedVersion)
+                ->update($attributes);
+
+            if ($affected === 0) {
+                throw new RuntimeException('העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+            }
+
+            $paymentStatus = StatusDefinition::firstOrCreate(
+                ['scope' => 'payment', 'name' => $becomesFullyPaid ? 'שולם' : 'חלקי'],
+                ['is_active' => true, 'sort_order' => $becomesFullyPaid ? 2 : 3],
+            );
+
+            $isCheck = $this->paymentMethod?->type === 'check';
+
+            $payment = $this->payments()->create([
+                'payment_method_id' => $this->payment_method_id,
+                'status_id' => $paymentStatus->id,
+                'amount' => $amount,
+                'check_status' => $isCheck ? Payment::CHECK_RECEIVED : null,
+                'payment_date' => $paymentDate ?? now(),
+                'cleared_date' => null,
+            ]);
+
+            $this->refresh();
+
+            return $payment;
+        });
     }
 }

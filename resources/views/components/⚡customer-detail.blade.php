@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\PaymentMethod;
 use App\Models\Program;
+use App\Models\Task;
 use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -17,9 +18,14 @@ use Livewire\Component;
  * Lead::convertToCustomer() (FR-8.2); this component never creates one.
  * Build-plan 06 fills in the "עסקאות" tab (a real deal list + "עסקה חדשה"
  * creation form — see createDeal() below, which is the only place this
- * screen ever creates a Deal, always scoped to $this->customer). מנוי,
- * מסמכים ותשלומים, and חומרים remain deliberately empty-state stubs — their
- * real data model arrives in build-plan stages 9/7+8/10.
+ * screen ever creates a Deal, always scoped to $this->customer). מנוי and
+ * חומרים remain deliberately empty-state stubs — their real data model
+ * arrives in build-plan stages 9/10.
+ *
+ * Build-plan 08 fills in the "מסמכים ותשלומים" tab with a real debt
+ * indicator (FR-2.15) and a direct link to an open collection task
+ * (FR-2.16) — per-deal document/payment detail still lives on each deal's
+ * own card (⚡deal-detail.blade.php).
  */
 new
 #[Layout('layouts.app', ['title' => 'כרטיס לקוחה — כפיים'])]
@@ -294,6 +300,33 @@ class extends Component
         return PaymentMethod::where('is_active', true)->orderBy('name')->get();
     }
 
+    /**
+     * FR-2.15: the customer card's debt indicator — sum of agreed_amount
+     * minus paid across every non-cancelled deal.
+     */
+    #[Computed]
+    public function outstandingBalance(): float
+    {
+        return (float) $this->customer->deals()->with('status')->get()
+            ->reject(fn (Deal $deal) => $deal->status?->name === Deal::CANCELLED_STATUS_NAME)
+            ->sum(fn (Deal $deal) => $deal->outstandingBalance());
+    }
+
+    /**
+     * FR-2.16: a direct link from the customer card into a still-open
+     * collection task (App\Console\Commands\ProcessCollectionTasks), if any.
+     */
+    #[Computed]
+    public function openCollectionTask(): ?Task
+    {
+        return Task::where('task_type', 'collection')
+            ->where('status', 'open')
+            ->whereIn('deal_id', $this->customer->deals()->pluck('id'))
+            ->with('deal')
+            ->latest('id')
+            ->first();
+    }
+
     private function hasOtherPrimaryContact(int $excludingContactId): bool
     {
         return Contact::where('customer_id', $this->customer->id)
@@ -416,6 +449,9 @@ class extends Component
     <div class="topbar">
         <div>
             <span class="badge {{ \App\Models\Customer::badgeClassForStatusName($customer->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $customer->status?->name }}</span>
+            @if ($this->outstandingBalance > 0)
+                <span class="badge badge-error" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">חוב פתוח: ₪{{ number_format($this->outstandingBalance, 0) }}</span>
+            @endif
             <h1>{{ $customer->school?->name ?? 'לקוחה #'.$customer->id }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">
                 לקוחה מאז <span class="ltr-num">{{ $customer->converted_at->format('d/m/Y') }}</span>
@@ -642,7 +678,44 @@ class extends Component
             </div>
         </div>
     @elseif ($activeTab === 'billing')
-        <div class="card empty-state">מסמכים, תשלומים ויתרת חוב יוצגו כאן — יוצג בשלבים 7–8 (מסמכים, גבייה ותשלומים).</div>
+        <div class="card">
+            <h3>מצב תשלומים ויתרת חוב</h3>
+
+            @if ($this->outstandingBalance > 0)
+                <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
+                    ללקוחה זו יתרת חוב פתוחה בסך <span class="ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</span> (FR-2.15).
+                </div>
+            @else
+                <div class="mb-8" style="background: var(--color-success-bg); color: var(--color-success); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
+                    אין יתרת חוב פתוחה ללקוחה זו.
+                </div>
+            @endif
+
+            @if ($this->openCollectionTask)
+                <div class="field">
+                    <div class="k">משימת גבייה פתוחה</div>
+                    <div class="v"><a href="{{ route('deal-detail', $this->openCollectionTask->deal) }}">{{ $this->openCollectionTask->title }} ←</a></div>
+                </div>
+            @endif
+
+            <table>
+                <thead><tr><th>עסקה</th><th>סכום עסקה</th><th>שולם</th><th>יתרה</th><th></th></tr></thead>
+                <tbody>
+                    @forelse ($this->deals as $deal)
+                        <tr>
+                            <td>#{{ $deal->id }} — {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
+                            <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
+                            <td class="ltr-num">₪{{ number_format($deal->totalPaid(), 0) }}</td>
+                            <td class="ltr-num" style="{{ $deal->outstandingBalance() > 0 ? 'color:var(--color-error); font-weight:700' : '' }}">₪{{ number_format($deal->outstandingBalance(), 0) }}</td>
+                            <td><a href="{{ route('deal-detail', $deal) }}" class="btn btn-ghost btn-sm">פתיחת עסקה</a></td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="5">אין עדיין עסקאות ללקוחה זו.</td></tr>
+                    @endforelse
+                </tbody>
+            </table>
+            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">מסמכים ותשלומים מפורטים לכל עסקה נמצאים בכרטיס העסקה עצמה.</p>
+        </div>
     @elseif ($activeTab === 'materials')
         <div class="card empty-state">חומרי הלימוד שנשלחו ורשימות תפוצה יוצגו כאן — יוצג בשלב 10 (חומרים ותפוצה).</div>
     @elseif ($activeTab === 'activity')

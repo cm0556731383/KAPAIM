@@ -116,8 +116,8 @@
                 @endforeach
                 <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
                 <a href="{{ route('customers') }}" class="{{ request()->routeIs('customers') || request()->routeIs('customer-detail') ? 'active' : '' }}"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
+                <a href="{{ route('collections') }}" class="{{ request()->routeIs('collections') ? 'active' : '' }}"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>
                 @foreach ([
-                    ['גבייה ותשלומים', 'icon-payments'],
                     ['חומרים ורשימות תפוצה', 'icon-mailing'],
                     ['ספקים והוצאות', 'icon-suppliers'],
                 ] as [$label, $icon])

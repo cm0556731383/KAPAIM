@@ -59,5 +59,6 @@ class DatabaseSeeder extends Seeder
         $this->call(CustomersDemoSeeder::class);
         $this->call(DealsDemoSeeder::class);
         $this->call(DocumentsDemoSeeder::class);
+        $this->call(PaymentsDemoSeeder::class);
     }
 }

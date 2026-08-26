@@ -25,6 +25,7 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/customers', 'customers')->name('customers');
     Route::livewire('/customers/{customer}', 'customer-detail')->name('customer-detail');
     Route::livewire('/deals/{deal}', 'deal-detail')->name('deal-detail');
+    Route::livewire('/collections', 'collections')->name('collections');
     Route::livewire('/document-templates', 'document-templates')->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {
