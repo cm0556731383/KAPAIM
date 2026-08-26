@@ -77,3 +77,53 @@ section > .section-head p { margin: 2px 0 0; color: var(--color-text-secondary);
 .actor-auto { color: var(--color-text-secondary); font-size: var(--fs-caption); margin-inline-start: 6px; }
 
 .scope-pill { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 2px 10px; }
+
+.btn-sm { padding: 6px 12px; font-size: var(--fs-caption); }
+
+/* ===== Leads (build-plan 04) — chip lists, quick-filter chips, traffic-light
+   status picker, activity timeline, contact rows — ported from
+   docs/storyboard/leads.html, lead-detail.html, lead-edit.html ===== */
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; font-size: var(--fs-caption); background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-pill); padding: 4px 10px; }
+
+.filters { display: flex; gap: var(--sp-sm); margin-bottom: var(--sp-lg); flex-wrap: wrap; }
+.filters .chip { font-size: var(--fs-small); padding: 6px 14px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-primary); cursor: pointer; }
+.filters .chip.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+tr.row-link { cursor: pointer; }
+
+.status-picker { display: flex; gap: var(--sp-sm); flex-wrap: wrap; }
+.status-option {
+  flex: 1; min-width: 140px; display: flex; align-items: center; gap: 10px;
+  border: 1.5px solid var(--color-border); border-radius: var(--radius-control);
+  padding: 10px 14px; cursor: pointer; background: var(--color-surface);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.status-option .dot { flex-shrink: 0; }
+.status-option .label { font-size: var(--fs-small); font-weight: 600; }
+.status-option .hint { font-size: 11px; color: var(--color-text-secondary); display: block; }
+.status-option.selected-green { border-color: var(--color-success); background: var(--color-success-bg); }
+.status-option.selected-green .dot { background: var(--color-success); }
+.status-option.selected-yellow { border-color: var(--color-warning); background: var(--color-warning-bg); }
+.status-option.selected-yellow .dot { background: var(--color-warning); }
+.status-option.selected-red { border-color: var(--color-error); background: var(--color-error-bg); }
+.status-option.selected-red .dot { background: var(--color-error); }
+.dot.green { background: var(--color-success); }
+.dot.yellow { background: var(--color-warning); }
+.dot.red { background: var(--color-error); }
+.sub-status { margin-top: var(--sp-md); }
+
+.timeline { border-right: 2px solid var(--color-border); padding-right: var(--sp-md); }
+.t-item { position: relative; padding-bottom: var(--sp-lg); }
+.t-item::before { content: ''; position: absolute; right: -25px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--color-primary); }
+.t-item .t-date { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+.t-item .t-title { font-weight: 600; margin: 2px 0; }
+.t-item .t-body { font-size: var(--fs-small); color: var(--color-text-secondary); }
+
+.contact-row, .contact-item { border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--sp-md); margin-bottom: var(--sp-sm); }
+.contact-view { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-md); }
+.contact-view .who { font-weight: 600; }
+.contact-view .role { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+.contact-view .actions { display: flex; gap: 6px; flex-shrink: 0; }
+.contact-edit-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-md); }
+.contact-edit-head .tag { font-size: var(--fs-caption); font-weight: 700; color: var(--color-primary-hover); text-transform: uppercase; letter-spacing: .04em; }

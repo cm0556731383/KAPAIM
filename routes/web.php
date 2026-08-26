@@ -20,4 +20,6 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/activity-log', 'activity-log')->name('activity-log');
     Route::livewire('/settings', 'settings')->name('settings');
     Route::livewire('/programs-catalog', 'programs-catalog')->name('programs-catalog');
+    Route::livewire('/leads', 'leads')->name('leads');
+    Route::livewire('/leads/{lead}', 'lead-detail')->name('lead-detail');
 });

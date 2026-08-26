@@ -111,7 +111,11 @@
                 <a href="{{ url('/') }}" class="{{ request()->is('/') ? 'active' : '' }}"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
                 @foreach ([
                     ['חיפוש גלובלי', 'icon-search'],
-                    ['לידים', 'icon-leads'],
+                ] as [$label, $icon])
+                    <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>
+                @endforeach
+                <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
+                @foreach ([
                     ['לקוחות', 'icon-customers'],
                     ['גבייה ותשלומים', 'icon-payments'],
                     ['חומרים ורשימות תפוצה', 'icon-mailing'],
