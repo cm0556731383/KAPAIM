@@ -238,7 +238,34 @@ class Subscription extends Model
             'cancellation_credit' => $credit,
         ]);
 
+        $this->removeSubscriptionMailingListMemberships();
+
         return $this->refresh();
+    }
+
+    /**
+     * Build-plan 10 (FR-5.24/FR-5.25): cancellation removes the customer
+     * from the "subscribers" list and from every Program::scopeMonthlyCatalog()
+     * program's list NOT already delivered under THIS subscription's own
+     * delivery log — a program already marked supplied
+     * (Subscription::markDeliverySupplied()) keeps its membership, and the
+     * primary list is never touched here at all (FR-5.25). See
+     * Program::scopeMonthlyCatalog()'s docblock for the fixed "every program
+     * included in the subscription" set this reads against.
+     *
+     * TODO(stage 12 — Smove): also push this removal to Smove — for now it
+     * is 100% real and local only, same stub boundary as
+     * ExternalIntegrationSetting elsewhere in this codebase.
+     */
+    private function removeSubscriptionMailingListMemberships(): void
+    {
+        MailingMembership::removeCustomer(MailingList::subscribersList(), $this->customer);
+
+        $deliveredProgramIds = $this->deliveries()->where('is_supplied', true)->pluck('program_id')->all();
+
+        Program::monthlyCatalog()->get()
+            ->reject(fn (Program $program) => in_array($program->id, $deliveredProgramIds, true))
+            ->each(fn (Program $program) => MailingMembership::removeCustomer(MailingList::forProgram($program), $this->customer));
     }
 
     /**

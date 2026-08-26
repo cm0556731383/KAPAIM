@@ -13,3 +13,8 @@ Artisan::command('inspire', function () {
 // collection tasks for unpaid invoiced deals. See
 // App\Console\Commands\ProcessCollectionTasks.
 Schedule::command('collections:process')->daily();
+
+// Build-plan 10 (FR-5.16/FR-5.17) — logs a (stubbed) reminder for material
+// deliveries not opened within the configured window. See
+// App\Console\Commands\ProcessMaterialReminders.
+Schedule::command('materials:process-reminders')->daily();

@@ -200,9 +200,40 @@ class Deal extends Model
 
         if ($program) {
             $deal->openSubscriptionIfApplicable($program);
+            $deal->assignMailingListsForProgramPurchase($program);
         }
 
         return $deal;
+    }
+
+    /**
+     * Build-plan 10 (FR-5.22/FR-5.23): purchasing a plain program joins the
+     * customer to that program's own mailing list. Purchasing the
+     * subscription-type program additionally joins the "subscribers" list
+     * plus every list in Program::scopeMonthlyCatalog() — see that scope's
+     * docblock for exactly what "every program included in the subscription"
+     * means here (this stage's judgment call, independent of build-plan 09's
+     * per-slot delivery picks). Never touched for a bundle purchase — FR-5.22
+     * only ever concerns a program.
+     *
+     * TODO(stage 12 — Smove): this membership change should also be pushed
+     * to Smove (docs/erd.md: "קריאות ל-Smove, לא רק שינוי מקומי") — for now
+     * it is 100% real and local only, same stub boundary as
+     * ExternalIntegrationSetting elsewhere in this codebase.
+     */
+    private function assignMailingListsForProgramPurchase(Program $program): void
+    {
+        MailingMembership::addCustomer(MailingList::forProgram($program), $this->customer);
+
+        if (! $program->is_subscription_type) {
+            return;
+        }
+
+        MailingMembership::addCustomer(MailingList::subscribersList(), $this->customer);
+
+        Program::monthlyCatalog()->get()->each(
+            fn (Program $monthly) => MailingMembership::addCustomer(MailingList::forProgram($monthly), $this->customer)
+        );
     }
 
     /**

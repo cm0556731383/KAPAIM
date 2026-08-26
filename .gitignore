@@ -26,6 +26,7 @@ Thumbs.db
 !/storage/framework/views/.gitignore
 /storage/logs/*
 !/storage/logs/.gitignore
+/storage/app/private/livewire-tmp/*
 /bootstrap/cache/*.php
 *.log
 .phpactor.json

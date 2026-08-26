@@ -44,7 +44,7 @@ class LeadsDemoSeeder extends Seeder
         ]);
         Contact::create([
             'school_id' => $yuvalim->id, 'name' => 'מירב כהן', 'role' => 'רכזת',
-            'phone' => '052-1112223', 'is_primary' => true,
+            'phone' => '052-1112223', 'email' => 'merav@yuvalim.example', 'is_primary' => true,
         ]);
         Contact::create([
             'school_id' => $yuvalim->id, 'name' => 'דנה אורן', 'role' => 'מנהלת', 'phone' => '03-9876543',

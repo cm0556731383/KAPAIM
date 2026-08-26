@@ -5,6 +5,7 @@ use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
+use App\Models\MaterialDelivery;
 use App\Models\PaymentMethod;
 use App\Models\Program;
 use App\Models\Subscription;
@@ -13,6 +14,7 @@ use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use Livewire\WithFileUploads;
 
 /**
  * Build-plan 05 — כרטיס לקוחה. A Customer only ever exists via
@@ -36,11 +38,20 @@ use Livewire\Component;
  * (FR-2.17) and the FR-8.23 price-exceeded banner to the card header. Every
  * subscription action below is additionally gated on subscriptions.manage —
  * this whole page still requires customers.manage at mount, unchanged.
+ *
+ * Build-plan 10 fills in the "חומרים" tab for real: sending materials
+ * (MaterialDelivery::sendFor(), FR-5.1-FR-5.9/FR-8.13/FR-8.14) with a real
+ * Livewire file upload (WithFileUploads — the file is discarded right after
+ * "sending", FR-5.6/FR-5.20) and per-delivery open/ack status (FR-5.14).
+ * Every materials action below is additionally gated on materials.manage —
+ * same pattern as subscriptions.manage above.
  */
 new
 #[Layout('layouts.app', ['title' => 'כרטיס לקוחה — כפיים'])]
 class extends Component
 {
+    use WithFileUploads;
+
     public Customer $customer;
 
     public string $activeTab = 'info';
@@ -91,12 +102,36 @@ class extends Component
     /** Business-rule error from Subscription::markDeliverySupplied()/cancel()/generateCreditNote(). */
     public ?string $subscriptionError = null;
 
+    // ===== חומרים (MATERIAL_DELIVERY) =====
+    public string $materialsProgramId = '';
+
+    /** [{contact_id: ?int, name: string, email: string}, ...] — this send's recipients (FR-5.4/FR-5.5). */
+    public array $materialsRecipients = [];
+
+    public string $materialsRecipientName = '';
+
+    public string $materialsRecipientEmail = '';
+
+    /** @var \Livewire\Features\SupportFileUploads\TemporaryUploadedFile[] */
+    public array $materialsFiles = [];
+
+    /** Business-rule error from MaterialDelivery::sendFor() (FR-5.2/FR-5.3/FR-8.13/FR-8.14). */
+    public ?string $materialsError = null;
+
     public function mount(Customer $customer): void
     {
         abort_unless(auth()->user()->can('customers.manage'), 403);
 
         $this->customer = $customer->load(['school', 'lead']);
         $this->syncSchoolFields();
+
+        // FR-5.4: defaults the send form to the customer's primary contacts
+        // with a real email — the user may freely add/remove for this one
+        // send afterwards without ever touching contacts.is_primary (FR-5.5).
+        $this->materialsRecipients = MaterialDelivery::defaultRecipients($this->customer)
+            ->map(fn (Contact $contact) => ['contact_id' => $contact->id, 'name' => $contact->name, 'email' => $contact->email])
+            ->values()
+            ->all();
     }
 
     private function syncSchoolFields(): void
@@ -498,6 +533,107 @@ class extends Component
     {
         $this->editingMonthlyPaymentForSubscriptionId = null;
         $this->monthlyPaymentOverrideInput = '';
+    }
+
+    // ----- חומרים (MATERIAL_DELIVERY) -----
+
+    #[Computed]
+    public function materialDeliveries()
+    {
+        return MaterialDelivery::where('customer_id', $this->customer->id)
+            ->with(['program', 'status'])
+            ->orderByDesc('sent_at')
+            ->get();
+    }
+
+    /** FR-5.19: any active catalog program's materials may be sent, premium included. */
+    #[Computed]
+    public function materialsPrograms()
+    {
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    /** FR-5.5: adds an ad-hoc recipient for this send only — never touches contacts.is_primary. */
+    public function addMaterialsRecipient(): void
+    {
+        $email = trim($this->materialsRecipientEmail);
+
+        if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $this->materialsError = 'יש להזין כתובת דוא"ל תקינה עבור הנמען הנוסף.';
+
+            return;
+        }
+
+        $this->materialsError = null;
+        $this->materialsRecipients[] = [
+            'contact_id' => null,
+            'name' => $this->materialsRecipientName !== '' ? $this->materialsRecipientName : $email,
+            'email' => $email,
+        ];
+        $this->materialsRecipientName = '';
+        $this->materialsRecipientEmail = '';
+    }
+
+    /** FR-5.5: removes a recipient for this send only — never touches contacts.is_primary. */
+    public function removeMaterialsRecipient(int $index): void
+    {
+        unset($this->materialsRecipients[$index]);
+        $this->materialsRecipients = array_values($this->materialsRecipients);
+    }
+
+    /**
+     * FR-5.1/FR-5.7: the only place this screen sends materials —
+     * MaterialDelivery::sendFor() enforces the "at least one recipient with
+     * a valid email" / "at least one attachment" gates server-side
+     * (FR-5.2/FR-5.3/FR-8.13/FR-8.14). FR-5.6/FR-5.20: the uploaded file(s)
+     * are forwarded to Smove at send time (stage 12) and explicitly deleted
+     * from Livewire's temporary storage right after — never copied into
+     * permanent storage/app.
+     */
+    public function sendMaterials(ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('materials.manage'), 403);
+
+        $this->materialsError = null;
+
+        if (! $this->materialsProgramId) {
+            $this->materialsError = 'יש לבחור תוכנית לפני שליחת חומרי הלימוד.';
+
+            return;
+        }
+
+        $program = Program::find($this->materialsProgramId);
+        $attachments = array_map(
+            fn ($file) => ['file_reference' => $file->getFilename(), 'file_name' => $file->getClientOriginalName()],
+            $this->materialsFiles,
+        );
+
+        try {
+            MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->materialsError = $e->getMessage();
+
+            return;
+        }
+
+        // FR-5.6/FR-5.20: discard the temp upload now that the (stubbed)
+        // Smove send is done — it is never persisted anywhere in this app.
+        foreach ($this->materialsFiles as $file) {
+            $file->delete();
+        }
+
+        $this->materialsFiles = [];
+        $this->materialsProgramId = '';
+        unset($this->materialDeliveries);
+    }
+
+    /** FR-5.17's manual half — dismisses a stale "needs attention" item with no dashboard yet to do it from. */
+    public function markMaterialHandled(int $materialDeliveryId): void
+    {
+        abort_unless(auth()->user()->can('materials.manage'), 403);
+
+        MaterialDelivery::findOrFail($materialDeliveryId)->markHandled();
+        unset($this->materialDeliveries);
     }
 
     /**
@@ -1040,7 +1176,100 @@ class extends Component
             <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">מסמכים ותשלומים מפורטים לכל עסקה נמצאים בכרטיס העסקה עצמה.</p>
         </div>
     @elseif ($activeTab === 'materials')
-        <div class="card empty-state">חומרי הלימוד שנשלחו ורשימות תפוצה יוצגו כאן — יוצג בשלב 10 (חומרים ותפוצה).</div>
+        @if ($materialsError)
+            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
+                {{ $materialsError }}
+            </div>
+        @endif
+        <div class="cols2">
+            <div class="card">
+                <h3>שליחת חומרים</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">השליחה מתבצעת באמצעות Smove — הקבצים אינם נשמרים במערכת לאחר השליחה (FR-5.6).</p>
+
+                <form wire:submit="sendMaterials" class="form-grid">
+                    <div class="full">
+                        <label for="materialsProgramId">תוכנית</label>
+                        <select id="materialsProgramId" wire:model="materialsProgramId">
+                            <option value="">בחרו תוכנית</option>
+                            @foreach ($this->materialsPrograms as $program)
+                                <option value="{{ $program->id }}">{{ $program->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="full">
+                        <label for="materialsFiles">קובץ מצורף</label>
+                        <input type="file" id="materialsFiles" wire:model="materialsFiles" multiple>
+                        @error('materialsFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        @if (! empty($materialsFiles))
+                            <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-top:var(--sp-sm)">
+                                @foreach ($materialsFiles as $file)
+                                    <span class="badge badge-neutral">{{ $file->getClientOriginalName() }}</span>
+                                @endforeach
+                            </div>
+                        @endif
+                    </div>
+
+                    <div class="full">
+                        <label>נמענים</label>
+                        <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-bottom:var(--sp-sm)">
+                            @forelse ($materialsRecipients as $index => $recipient)
+                                <span class="badge badge-primary" style="display:inline-flex; align-items:center; gap:6px">
+                                    {{ $recipient['name'] }}
+                                    <button type="button" wire:click="removeMaterialsRecipient({{ $index }})" title="הסרה" aria-label="הסרת נמען" style="background:none; border:none; cursor:pointer; color:inherit; font-weight:700;">×</button>
+                                </span>
+                            @empty
+                                <span class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין נמענים — הוסיפו לפחות אחד לפני השליחה.</span>
+                            @endforelse
+                        </div>
+                        <div class="field-row" style="display:flex; gap:var(--sp-sm)">
+                            <input type="text" wire:model="materialsRecipientName" placeholder="שם הנמען (אופציונלי)">
+                            <input type="email" wire:model="materialsRecipientEmail" placeholder="הוספת נמען לפי כתובת דוא&quot;ל" class="ltr-num" dir="ltr">
+                            <button type="button" class="btn btn-secondary" wire:click="addMaterialsRecipient">הוספה</button>
+                        </div>
+                    </div>
+
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה (FR-5.2/FR-5.3/FR-8.13/FR-8.14).</p>
+
+                    <div class="full"><button type="submit" class="btn btn-primary">שליחה באמצעות Smove</button></div>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>היסטוריית משלוחים</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שליחה חוזרת מתועדת כמשלוח חדש (FR-5.9).</p>
+                @if ($this->materialDeliveries->isEmpty())
+                    <div class="empty-state">אין עדיין משלוחי חומרי לימוד ללקוחה זו.</div>
+                @else
+                    <table>
+                        <thead><tr><th>תאריך</th><th>תוכנית</th><th>סטטוס</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach ($this->materialDeliveries as $delivery)
+                                <tr>
+                                    <td class="ltr-num">{{ $delivery->sent_at->format('d/m/Y') }}</td>
+                                    <td>{{ $delivery->program?->name }}</td>
+                                    <td>
+                                        @if ($delivery->acknowledged_at)
+                                            <span class="badge badge-success">התקבל, תודה</span>
+                                            <div style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px" class="ltr-num">{{ $delivery->acknowledged_at->format('d/m/Y H:i') }}</div>
+                                        @else
+                                            <span class="badge {{ \App\Models\MaterialDelivery::badgeClassForStatusName($delivery->status?->name) }}">ממתין לאישור</span>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if (! $delivery->acknowledged_at && ! $delivery->handled_at)
+                                            <button type="button" class="btn btn-ghost btn-sm" wire:click="markMaterialHandled({{ $delivery->id }})">סימון כטופל</button>
+                                        @elseif ($delivery->handled_at)
+                                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">טופל ידנית</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                @endif
+            </div>
+        </div>
     @elseif ($activeTab === 'activity')
         <div class="card">
             <h3>היסטוריית פעילות</h3>

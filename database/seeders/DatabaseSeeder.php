@@ -54,6 +54,7 @@ class DatabaseSeeder extends Seeder
 
         $this->call(ReferenceDataSeeder::class);
         $this->call(ProgramsCatalogSeeder::class);
+        $this->call(MailingListsSeeder::class);
         $this->call(DocumentTemplatesSeeder::class);
         $this->call(LeadsDemoSeeder::class);
         $this->call(CustomersDemoSeeder::class);
@@ -61,5 +62,6 @@ class DatabaseSeeder extends Seeder
         $this->call(DocumentsDemoSeeder::class);
         $this->call(PaymentsDemoSeeder::class);
         $this->call(SubscriptionsDemoSeeder::class);
+        $this->call(MaterialsDemoSeeder::class);
     }
 }

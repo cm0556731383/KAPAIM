@@ -186,16 +186,20 @@ class Lead extends Model
     }
 
     /**
-     * FR-1.17 stub: a new lead should auto-join the "primary mailing list",
-     * but that list (MAILING_MEMBERSHIP / mailing lists module) is
-     * build-plan stage 10, which doesn't exist yet. Deliberately a no-op —
-     * not a fake mailing-list schema — so stage 10 has an obvious place to
-     * wire the real behavior in.
+     * Build-plan 10 (FR-1.17/FR-5.21): a brand-new lead joins the primary
+     * mailing list immediately — before any Customer exists at all, hence
+     * MailingMembership::addLead() rather than addCustomer() (see that
+     * table's migration docblock for why lead_id exists). Once this lead
+     * converts, convertToCustomer() below backfills this same row with
+     * customer_id so it becomes a real "customer joins mailing list" row.
+     *
+     * TODO(stage 12 — Smove): this membership should also be pushed to
+     * Smove — for now it is 100% real and local only, same stub boundary as
+     * ExternalIntegrationSetting elsewhere in this codebase.
      */
     public function joinPrimaryMailingList(): void
     {
-        // TODO(stage 10 — mailing lists): attach $this to the primary
-        // mailing list here once MAILING_MEMBERSHIP exists (FR-1.17).
+        MailingMembership::addLead(MailingList::primaryList(), $this);
     }
 
     /**
@@ -252,6 +256,23 @@ class Lead extends Model
         }
 
         $this->update(['converted_at' => $customer->converted_at]);
+
+        // Build-plan 10 (FR-5.21): the lead's own primary-list membership (if
+        // any — see joinPrimaryMailingList() above) becomes the customer's
+        // membership on conversion, same backfill spirit as the contacts
+        // backfill above. A lead that never actually joined one (e.g.
+        // created directly, bypassing ⚡leads.blade.php's createLead()) still
+        // leaves the resulting customer on the primary list — every customer
+        // belongs on it regardless of how its lead got there.
+        $existingMembership = MailingMembership::where('mailing_list_id', MailingList::primaryList()->id)
+            ->where('lead_id', $this->id)
+            ->first();
+
+        if ($existingMembership) {
+            $existingMembership->update(['customer_id' => $customer->id]);
+        } else {
+            MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+        }
 
         $activityLogger->log('customer.created', "לקוחה נוצרה מהמרת ליד #{$this->id}: {$this->school->name}", [
             'lead_id' => $this->id, 'customer_id' => $customer->id, 'school_id' => $this->school_id,
