@@ -27,6 +27,10 @@ Thumbs.db
 /storage/logs/*
 !/storage/logs/.gitignore
 /storage/app/private/livewire-tmp/*
+
+# Build-plan 18 — per-run reports from `php artisan legacy:import`; the
+# sample fixture (storage/app/legacy-import-sample.csv) stays tracked.
+/storage/app/legacy-import-reports/*
 /bootstrap/cache/*.php
 *.log
 .phpactor.json

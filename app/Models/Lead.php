@@ -216,11 +216,20 @@ class Lead extends Model
      * school, so each branch (its own School/Lead row) converts to its own
      * Customer regardless of centralized network billing.
      *
+     * @param  ?\DateTimeInterface  $convertedAt  Build-plan 18 (FR-8.21): lets the
+     *                                            legacy-data importer backdate an
+     *                                            already-converted historical
+     *                                            customer's conversion moment
+     *                                            (also backdates the two activity-log
+     *                                            entries below via occurred_at) —
+     *                                            every other caller omits this and
+     *                                            gets "now", exactly as before.
+     *
      * @throws RuntimeException on a business-rule violation (already
      *                          converted, or no school attached yet) — the
      *                          caller shows the message as a friendly error.
      */
-    public function convertToCustomer(ActivityLogger $activityLogger): Customer
+    public function convertToCustomer(ActivityLogger $activityLogger, ?\DateTimeInterface $convertedAt = null): Customer
     {
         if ($this->customer()->exists()) {
             throw new RuntimeException('ליד זה כבר הומר ללקוחה — לא ניתן להמיר אותו ללקוחה פעם נוספת.');
@@ -229,6 +238,8 @@ class Lead extends Model
         if (! $this->school_id) {
             throw new RuntimeException('יש להשלים פרטי בית ספר עבור הליד לפני המרתו ללקוחה.');
         }
+
+        $convertedAt ??= now();
 
         $activeStatus = StatusDefinition::firstOrCreate(
             ['scope' => 'customer', 'name' => Customer::DEFAULT_STATUS_NAME],
@@ -239,7 +250,7 @@ class Lead extends Model
             'school_id' => $this->school_id,
             'lead_id' => $this->id,
             'status_id' => $activeStatus->id,
-            'converted_at' => now(),
+            'converted_at' => $convertedAt,
         ]);
 
         // FR-2.5..FR-2.13: contacts move conceptually to the customer —
@@ -275,10 +286,10 @@ class Lead extends Model
         }
 
         $activityLogger->log('customer.created', "לקוחה נוצרה מהמרת ליד #{$this->id}: {$this->school->name}", [
-            'lead_id' => $this->id, 'customer_id' => $customer->id, 'school_id' => $this->school_id,
+            'lead_id' => $this->id, 'customer_id' => $customer->id, 'school_id' => $this->school_id, 'occurred_at' => $convertedAt,
         ]);
         $activityLogger->log('lead.converted', "ליד #{$this->id} הומר ללקוחה #{$customer->id}", [
-            'lead_id' => $this->id, 'customer_id' => $customer->id,
+            'lead_id' => $this->id, 'customer_id' => $customer->id, 'occurred_at' => $convertedAt,
         ]);
 
         return $customer;

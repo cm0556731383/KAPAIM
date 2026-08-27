@@ -146,6 +146,12 @@ class Deal extends Model
      * an active subscription, the default instead becomes 10% off that
      * price — still fully overridable by an explicit $agreedAmount.
      *
+     * @param  ?\DateTimeInterface  $purchasedAt  Build-plan 18 (FR-8.21): lets the
+     *                                            legacy-data importer backdate a
+     *                                            historical deal's purchase date —
+     *                                            every other caller omits this and
+     *                                            gets today, exactly as before.
+     *
      * @throws RuntimeException on a business-rule violation — the caller
      *                          shows the message as a friendly error.
      */
@@ -156,6 +162,7 @@ class Deal extends Model
         ?float $agreedAmount = null,
         ?string $specialRequest = null,
         ?int $paymentMethodId = null,
+        ?\DateTimeInterface $purchasedAt = null,
     ): self {
         if (($program === null) === ($bundle === null)) {
             throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד (FR-3.3).');
@@ -194,7 +201,7 @@ class Deal extends Model
             'bundle_name_snapshot' => $bundle?->name,
             'payment_method_id' => $paymentMethodId,
             'special_request' => $specialRequest,
-            'purchased_at' => now(),
+            'purchased_at' => $purchasedAt ?? now(),
             'version' => 0,
         ]);
 
