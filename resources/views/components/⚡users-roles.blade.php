@@ -21,8 +21,17 @@ class extends Component
     public ?string $generatedPassword = null;
     public ?string $generatedPasswordForName = null;
 
+    /**
+     * Stage 19 hardening (FR-7.1-7.6 permission-gate exhaustiveness audit):
+     * this screen creates users and assigns roles/permissions — genuinely
+     * sensitive, and previously had no gate at all (harmless only because
+     * MVP's one real role is full-access; a future limited role like
+     * "עובדת מכירות" would otherwise reach it unrestricted).
+     */
     public function mount(): void
     {
+        abort_unless(auth()->user()->can('users.manage'), 403);
+
         $this->roleId = Role::where('is_active', true)->value('id');
     }
 

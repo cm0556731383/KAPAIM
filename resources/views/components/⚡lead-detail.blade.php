@@ -387,8 +387,24 @@ class extends Component
         }
 
         unset($this->contacts);
+        unset($this->recentlyRemovedContacts);
 
         $this->notifySuccess("איש קשר \"{$name}\" הוסר.");
+    }
+
+    /**
+     * FR-8.22: restores a contact removed within the last 30 days (see
+     * recentlyRemovedContacts() below) via Contact::restore().
+     */
+    public function restoreContact(int $id, ActivityLogger $activityLogger): void
+    {
+        $contact = Contact::onlyTrashed()->findOrFail($id);
+        $contact->restore($activityLogger);
+
+        unset($this->contacts);
+        unset($this->recentlyRemovedContacts);
+
+        $this->notifySuccess("איש קשר \"{$contact->name}\" שוחזר.");
     }
 
     private function validateContact(): array
@@ -524,6 +540,22 @@ class extends Component
         $activityLogger->log('task.cancelled', "בוטלה תזכורת \"{$title}\" (מחיקה לוגית)", ['lead_id' => $this->lead->id, 'task_id' => $id]);
 
         unset($this->tasks);
+        unset($this->recentlyRemovedTasks);
+    }
+
+    /**
+     * FR-8.22: restores a task cancelled within the last 30 days (see
+     * recentlyRemovedTasks() below) via Task::restore().
+     */
+    public function restoreTask(int $id, ActivityLogger $activityLogger): void
+    {
+        $task = Task::onlyTrashed()->findOrFail($id);
+        $task->restore($activityLogger);
+
+        unset($this->tasks);
+        unset($this->recentlyRemovedTasks);
+
+        $this->notifySuccess("התזכורת \"{$task->title}\" שוחזרה.");
     }
 
     #[Computed]
@@ -548,6 +580,36 @@ class extends Component
     public function tasks()
     {
         return $this->lead->tasks()->orderByDesc('created_at')->get();
+    }
+
+    /**
+     * FR-8.22 recovery panel — contacts removed for this lead's school in
+     * roughly the last 30 days (recovery window judgment call — see the
+     * "פריטים שהוסרו לאחרונה" panel below).
+     */
+    #[Computed]
+    public function recentlyRemovedContacts()
+    {
+        if (! $this->lead->school_id) {
+            return collect();
+        }
+
+        return Contact::onlyTrashed()
+            ->where('school_id', $this->lead->school_id)
+            ->where('deleted_at', '>=', now()->subDays(30))
+            ->orderByDesc('deleted_at')
+            ->get();
+    }
+
+    /** FR-8.22 recovery panel — this lead's own reminders cancelled in roughly the last 30 days. */
+    #[Computed]
+    public function recentlyRemovedTasks()
+    {
+        return Task::onlyTrashed()
+            ->where('lead_id', $this->lead->id)
+            ->where('deleted_at', '>=', now()->subDays(30))
+            ->orderByDesc('deleted_at')
+            ->get();
     }
 
     #[Computed]
@@ -901,6 +963,34 @@ class extends Component
                     <div class="full"><button type="submit" class="btn btn-secondary">+ הוספת תזכורת</button></div>
                 </form>
             </div>
+
+            @if ($this->recentlyRemovedContacts->isNotEmpty() || $this->recentlyRemovedTasks->isNotEmpty())
+                {{-- ===== פריטים שהוסרו לאחרונה (FR-8.22) ===== --}}
+                <div class="card" style="margin-top:var(--sp-lg)">
+                    <h3>פריטים שהוסרו לאחרונה</h3>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר (FR-8.22).</p>
+
+                    @foreach ($this->recentlyRemovedContacts as $contact)
+                        <div class="list-item">
+                            <div>
+                                <div style="font-weight:600">{{ $contact->name }}</div>
+                                <div class="who">איש קשר · הוסר ב-{{ $contact->deleted_at->format('d/m/Y') }}</div>
+                            </div>
+                            <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreContact({{ $contact->id }})">שחזור</button>
+                        </div>
+                    @endforeach
+
+                    @foreach ($this->recentlyRemovedTasks as $task)
+                        <div class="list-item">
+                            <div>
+                                <div style="font-weight:600">{{ $task->title }}</div>
+                                <div class="who">תזכורת · בוטלה ב-{{ $task->deleted_at->format('d/m/Y') }}</div>
+                            </div>
+                            <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreTask({{ $task->id }})">שחזור</button>
+                        </div>
+                    @endforeach
+                </div>
+            @endif
         </div>
     </div>
 </div>

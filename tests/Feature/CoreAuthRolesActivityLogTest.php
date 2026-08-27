@@ -132,6 +132,40 @@ class CoreAuthRolesActivityLogTest extends TestCase
         $this->assertFalse($limitedUser->hasPermission('customers', 'view'));
     }
 
+    /**
+     * Stage 19 hardening: ⚡users-roles.blade.php previously had no
+     * permission gate at all — harmless only because MVP's single real role
+     * is full-access. A future limited role (e.g. "עובדת מכירות") must not
+     * be able to reach user/role administration.
+     */
+    public function test_users_roles_page_is_blocked_without_the_users_permission(): void
+    {
+        $limited = Role::create(['name' => 'עובדת מכירות', 'is_active' => true]);
+        $limitedUser = User::create([
+            'name' => 'שרית לוי', 'email' => 'sarit@kapaim.test', 'password' => 'password',
+            'role_id' => $limited->id, 'is_active' => true,
+        ]);
+
+        $this->actingAs($limitedUser)->get('/users-roles')->assertStatus(403);
+    }
+
+    /**
+     * Stage 19 hardening: ⚡activity-log.blade.php previously had no
+     * permission gate at all — the log surfaces every business event
+     * (leads, customers, deals, payments, ...), so a future limited role
+     * must not be able to read the whole business's history through it.
+     */
+    public function test_activity_log_page_is_blocked_without_the_activity_log_permission(): void
+    {
+        $limited = Role::create(['name' => 'עובדת מכירות', 'is_active' => true]);
+        $limitedUser = User::create([
+            'name' => 'שרית לוי', 'email' => 'sarit@kapaim.test', 'password' => 'password',
+            'role_id' => $limited->id, 'is_active' => true,
+        ]);
+
+        $this->actingAs($limitedUser)->get('/activity-log')->assertStatus(403);
+    }
+
     public function test_users_roles_page_renders_real_seeded_users(): void
     {
         $response = $this->actingAs($this->owner)->get('/users-roles');

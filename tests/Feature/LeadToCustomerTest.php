@@ -8,6 +8,7 @@ use App\Models\Lead;
 use App\Models\Role;
 use App\Models\School;
 use App\Models\StatusDefinition;
+use App\Models\Task;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -273,6 +274,97 @@ class LeadToCustomerTest extends TestCase
             ->assertSet('contactError', null);
 
         $this->assertFalse($first->fresh()->is_primary);
+    }
+
+    /**
+     * FR-8.22: a contact removed from the customer card can be restored via
+     * the "פריטים שהוסרו לאחרונה" panel, and reappears in the normal contact
+     * list — logged to ACTIVITY_LOG.
+     */
+    public function test_a_removed_customer_contact_can_be_restored(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר לשחזור');
+        $customer = $this->convertLead($lead);
+        $contact = Contact::create(['school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'איש קשר לשחזור']);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer]);
+        $component->call('removeContact', $contact->id);
+
+        $this->assertNotNull($contact->fresh()->deleted_at);
+        $this->assertTrue($component->instance()->recentlyRemovedContacts->contains('id', $contact->id));
+
+        $component->call('restoreContact', $contact->id);
+
+        $this->assertNull($contact->fresh()->deleted_at);
+        $this->assertTrue($component->instance()->contacts->contains('id', $contact->id));
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'contact.restored']);
+    }
+
+    /**
+     * FR-8.22: restoring a primary contact correctly feeds back into
+     * FR-2.9's "at least one primary contact" bookkeeping — before the
+     * restore, the remaining primary is the customer's only one (unmarking
+     * it is blocked); after restoring the second one, unmarking either is
+     * allowed again since "another primary remains".
+     */
+    public function test_restoring_a_primary_contact_updates_the_last_primary_bookkeeping(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר עם שני ראשיים לשחזור');
+        $first = Contact::create(['school_id' => $lead->school_id, 'name' => 'ראשי א', 'is_primary' => true]);
+        $second = Contact::create(['school_id' => $lead->school_id, 'name' => 'ראשי ב', 'is_primary' => true]);
+        $customer = $this->convertLead($lead);
+        $second->delete();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer]);
+
+        // Only one (non-trashed) primary left — unmarking it is blocked.
+        $component->call('editContact', $first->id)->set('contactIsPrimary', false)->call('updateContact')
+            ->assertSet('contactError', fn ($message) => ! empty($message));
+        $this->assertTrue($first->fresh()->is_primary);
+
+        $component->call('restoreContact', $second->id);
+
+        // The restored contact now counts again — unmarking the first is allowed.
+        $component->call('editContact', $first->id)->set('contactIsPrimary', false)->call('updateContact')
+            ->assertSet('contactError', null);
+        $this->assertFalse($first->fresh()->is_primary);
+    }
+
+    /**
+     * FR-8.22: a personal task tied to this customer, cancelled within the
+     * recovery window, can be restored via the same panel.
+     */
+    public function test_a_cancelled_customer_task_can_be_restored(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר עם משימה');
+        $customer = $this->convertLead($lead);
+        $task = Task::create([
+            'user_id' => $this->owner->id, 'customer_id' => $customer->id,
+            'task_type' => 'reminder', 'status' => 'open', 'title' => 'משימה לשחזור',
+        ]);
+        $task->delete();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer]);
+        $this->assertTrue($component->instance()->recentlyRemovedTasks->contains('id', $task->id));
+
+        $component->call('restoreTask', $task->id);
+
+        $this->assertNull($task->fresh()->deleted_at);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'task.restored', 'task_id' => $task->id]);
+    }
+
+    /** FR-8.22: a contact removed more than 30 days ago no longer appears in the recovery panel. */
+    public function test_the_recovery_panel_excludes_contacts_removed_more_than_thirty_days_ago(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר עם הסרה ישנה');
+        $customer = $this->convertLead($lead);
+        $contact = Contact::create(['school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'הסרה ישנה']);
+        $contact->delete();
+        $contact->forceFill(['deleted_at' => now()->subDays(45)])->saveQuietly();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer]);
+
+        $this->assertFalse($component->instance()->recentlyRemovedContacts->contains('id', $contact->id));
     }
 
     public function test_customers_list_page_renders_real_seeded_data(): void

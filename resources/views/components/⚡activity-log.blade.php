@@ -22,6 +22,19 @@ class extends Component
     public string $fromDate = '';
     public string $toDate = '';
 
+    /**
+     * Stage 19 hardening (FR-7.1-7.6 permission-gate exhaustiveness audit):
+     * the activity log surfaces every business event across leads,
+     * customers, deals, payments, etc. — genuinely sensitive, and
+     * previously had no gate at all (harmless only because MVP's one real
+     * role is full-access; a future limited role like "עובדת מכירות" would
+     * otherwise be able to read the whole business's history through it).
+     */
+    public function mount(): void
+    {
+        abort_unless(auth()->user()->can('activity-log.manage'), 403);
+    }
+
     public function updatedUserFilter(): void
     {
         $this->resetPage();

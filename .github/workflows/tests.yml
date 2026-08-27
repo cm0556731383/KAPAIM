@@ -1,0 +1,55 @@
+name: Tests
+
+# Build-plan 19 (FR-8.x rundown, "make sure the mandatory tests actually run
+# automatically, not just exist"): no external services are configured here
+# on purpose — phpunit.xml already forces DB_CONNECTION/DB_DATABASE to an
+# in-memory sqlite database (plus array cache/session/mail and a sync queue)
+# for every test run regardless of what .env says, which is exactly what
+# lets `php artisan test` run standalone with no Postgres/Redis service.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: mbstring, xml, ctype, json, bcmath, pdo, pdo_sqlite, sqlite3, fileinfo, tokenizer, curl, dom, intl
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build front-end assets
+        # `⚡*.blade.php` layouts render through @vite() — a real
+        # public/build/manifest.json must exist even for pure Livewire/HTTP
+        # feature tests that render a full page, or Laravel throws instead
+        # of returning the response under test.
+        run: npm run build
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Run test suite
+        run: php artisan test

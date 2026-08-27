@@ -170,6 +170,43 @@ class MaterialsMailingTest extends TestCase
         $this->assertSame(1, MaterialDelivery::where('customer_id', $customer->id)->count());
     }
 
+    /**
+     * Stage 19 hardening: an oversized attachment (over the 25MB cap from
+     * docs/storyboard/materials-send.html) is rejected by real Livewire
+     * validation before anything is sent, and no delivery is created.
+     */
+    public function test_an_oversized_attachment_is_rejected(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $file = UploadedFile::fake()->create('huge.pdf', 25601);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [$file])
+            ->assertHasErrors(['materialsFiles.*']);
+
+        $this->assertSame(0, MaterialDelivery::where('customer_id', $customer->id)->count());
+    }
+
+    /**
+     * Stage 19 hardening: a disallowed file type (outside the pdf/office/
+     * image/media whitelist) is rejected by real Livewire validation.
+     */
+    public function test_an_attachment_with_a_disallowed_mime_type_is_rejected(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $file = UploadedFile::fake()->create('script.exe', 10);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [$file])
+            ->assertHasErrors(['materialsFiles.*']);
+
+        $this->assertSame(0, MaterialDelivery::where('customer_id', $customer->id)->count());
+    }
+
     public function test_a_deal_id_is_attached_to_the_activity_log_when_a_matching_deal_exists(): void
     {
         $customer = $this->createCustomer();

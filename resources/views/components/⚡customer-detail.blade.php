@@ -120,6 +120,24 @@ class extends Component
     /** Business-rule error from MaterialDelivery::sendFor() (FR-5.2/FR-5.3/FR-8.13/FR-8.14). */
     public ?string $materialsError = null;
 
+    /**
+     * Stage 19 hardening: real Livewire validation on the material-send
+     * attachment upload. Per docs/storyboard/materials-send.html ("PDF,
+     * PPTX או קובץ מדיה — עד 25MB") — a 25MB per-file cap and a whitelist
+     * covering documents/presentations and common media/image types a
+     * school could receive. Applied both on selection (immediate feedback,
+     * see updatedMaterialsFiles()) and again in sendMaterials() as a
+     * server-side safety net before anything is forwarded.
+     *
+     * Deliberately `extensions` (checked against the original client
+     * filename) rather than `mimes` (content-sniffed): the attachment is
+     * never persisted to real disk (FR-5.6/FR-5.20 — discarded right after
+     * the stubbed Smove send), so there's no stored file for a later
+     * content-based scan to matter, and `extensions` is what Livewire's own
+     * temporary-upload test doubles reliably report.
+     */
+    private const MATERIALS_FILE_RULES = ['file', 'max:25600', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mp3'];
+
     public function mount(Customer $customer): void
     {
         abort_unless(auth()->user()->can('customers.manage'), 403);
@@ -283,8 +301,39 @@ class extends Component
         }
 
         unset($this->contacts);
+        unset($this->recentlyRemovedContacts);
 
         $this->notifySuccess("איש קשר \"{$name}\" הוסר.");
+    }
+
+    /**
+     * FR-8.22: restores a contact removed within the last 30 days (see
+     * recentlyRemovedContacts() below) via Contact::restore().
+     */
+    public function restoreContact(int $id, ActivityLogger $activityLogger): void
+    {
+        $contact = Contact::onlyTrashed()->findOrFail($id);
+        $contact->restore($activityLogger);
+
+        unset($this->contacts);
+        unset($this->recentlyRemovedContacts);
+
+        $this->notifySuccess("איש קשר \"{$contact->name}\" שוחזר.");
+    }
+
+    /**
+     * FR-8.22: restores a personal/collection task tied to this customer
+     * and cancelled within the last 30 days (see recentlyRemovedTasks()
+     * below) via Task::restore().
+     */
+    public function restoreTask(int $id, ActivityLogger $activityLogger): void
+    {
+        $task = Task::onlyTrashed()->findOrFail($id);
+        $task->restore($activityLogger);
+
+        unset($this->recentlyRemovedTasks);
+
+        $this->notifySuccess("המשימה \"{$task->title}\" שוחזרה.");
     }
 
     // ----- עסקאות (DEAL) -----
@@ -596,6 +645,17 @@ class extends Component
     }
 
     /**
+     * Stage 19 hardening: validates each newly-selected attachment the
+     * moment Livewire finishes uploading it to temp storage, so an
+     * oversized/wrong-type file is rejected immediately rather than only
+     * at submit time.
+     */
+    public function updatedMaterialsFiles(): void
+    {
+        $this->validate(['materialsFiles.*' => self::MATERIALS_FILE_RULES]);
+    }
+
+    /**
      * FR-5.1/FR-5.7: the only place this screen sends materials —
      * MaterialDelivery::sendFor() enforces the "at least one recipient with
      * a valid email" / "at least one attachment" gates server-side
@@ -615,6 +675,8 @@ class extends Component
 
             return;
         }
+
+        $this->validate(['materialsFiles.*' => self::MATERIALS_FILE_RULES]);
 
         $program = Program::find($this->materialsProgramId);
         $attachments = array_map(
@@ -725,6 +787,28 @@ class extends Component
     public function contacts()
     {
         return $this->customer->contacts()->orderByDesc('is_primary')->orderBy('name')->get();
+    }
+
+    /** FR-8.22 recovery panel — this customer's contacts removed in roughly the last 30 days. */
+    #[Computed]
+    public function recentlyRemovedContacts()
+    {
+        return Contact::onlyTrashed()
+            ->where('customer_id', $this->customer->id)
+            ->where('deleted_at', '>=', now()->subDays(30))
+            ->orderByDesc('deleted_at')
+            ->get();
+    }
+
+    /** FR-8.22 recovery panel — personal/collection tasks tied to this customer, cancelled in roughly the last 30 days. */
+    #[Computed]
+    public function recentlyRemovedTasks()
+    {
+        return Task::onlyTrashed()
+            ->where('customer_id', $this->customer->id)
+            ->where('deleted_at', '>=', now()->subDays(30))
+            ->orderByDesc('deleted_at')
+            ->get();
     }
 
     /**
@@ -953,6 +1037,34 @@ class extends Component
                     @endif
                     <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון (FR-2.8, FR-2.9).</p>
                 </div>
+
+                @if ($this->recentlyRemovedContacts->isNotEmpty() || $this->recentlyRemovedTasks->isNotEmpty())
+                    {{-- ===== פריטים שהוסרו לאחרונה (FR-8.22) ===== --}}
+                    <div class="card" style="margin-top:var(--sp-lg)">
+                        <h3>פריטים שהוסרו לאחרונה</h3>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר (FR-8.22).</p>
+
+                        @foreach ($this->recentlyRemovedContacts as $contact)
+                            <div class="list-item">
+                                <div>
+                                    <div style="font-weight:600">{{ $contact->name }}</div>
+                                    <div class="who">איש קשר · הוסר ב-{{ $contact->deleted_at->format('d/m/Y') }}</div>
+                                </div>
+                                <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreContact({{ $contact->id }})">שחזור</button>
+                            </div>
+                        @endforeach
+
+                        @foreach ($this->recentlyRemovedTasks as $task)
+                            <div class="list-item">
+                                <div>
+                                    <div style="font-weight:600">{{ $task->title }}</div>
+                                    <div class="who">משימה · בוטלה ב-{{ $task->deleted_at->format('d/m/Y') }}</div>
+                                </div>
+                                <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreTask({{ $task->id }})">שחזור</button>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
             </div>
         </div>
     @elseif ($activeTab === 'subscription')
@@ -1205,6 +1317,7 @@ class extends Component
                     <div class="full">
                         <label for="materialsFiles">קובץ מצורף</label>
                         <input type="file" id="materialsFiles" wire:model="materialsFiles" multiple>
+                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint או קובץ מדיה — עד 25MB לקובץ</div>
                         @error('materialsFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         @if (! empty($materialsFiles))
                             <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-top:var(--sp-sm)">

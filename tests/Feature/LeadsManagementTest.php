@@ -290,6 +290,28 @@ class LeadsManagementTest extends TestCase
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'contact.removed']);
     }
 
+    /**
+     * FR-8.22: a contact removed from a lead's school can be restored via
+     * the "פריטים שהוסרו לאחרונה" panel, reappears in the normal contact
+     * list, and the restoration is logged.
+     */
+    public function test_a_removed_lead_contact_can_be_restored(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר הדקל');
+        $contact = Contact::create(['school_id' => $lead->school_id, 'name' => 'איש קשר להסרה']);
+
+        $component = Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead]);
+        $component->call('removeContact', $contact->id);
+
+        $this->assertTrue($component->instance()->recentlyRemovedContacts->contains('id', $contact->id));
+
+        $component->call('restoreContact', $contact->id);
+
+        $this->assertNull($contact->fresh()->deleted_at);
+        $this->assertTrue($component->instance()->contacts->contains('id', $contact->id));
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'contact.restored']);
+    }
+
     public function test_owner_can_log_an_interaction_and_a_follow_up(): void
     {
         $lead = $this->createLead();
@@ -325,6 +347,38 @@ class LeadsManagementTest extends TestCase
 
         $this->assertDatabaseHas('tasks', ['id' => $task->id]); // logical delete only
         $this->assertNotNull($task->fresh()->deleted_at);
+    }
+
+    /** FR-8.22: a cancelled personal task can be restored via the recovery panel. */
+    public function test_a_cancelled_task_can_be_restored(): void
+    {
+        $lead = $this->createLead();
+
+        $component = Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead]);
+        $component->set('taskTitle', 'להתקשר לבירור')->call('addTask');
+        $task = Task::where('title', 'להתקשר לבירור')->firstOrFail();
+
+        $component->call('cancelTask', $task->id);
+        $this->assertTrue($component->instance()->recentlyRemovedTasks->contains('id', $task->id));
+
+        $component->call('restoreTask', $task->id);
+
+        $this->assertNull($task->fresh()->deleted_at);
+        $this->assertTrue($component->instance()->tasks->contains('id', $task->id));
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'task.restored', 'task_id' => $task->id]);
+    }
+
+    /** FR-8.22: the recovery window is roughly 30 days — older removals stay hidden. */
+    public function test_the_recovery_panel_excludes_items_removed_more_than_thirty_days_ago(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר עם הסרה ישנה');
+        $contact = Contact::create(['school_id' => $lead->school_id, 'name' => 'הסרה ישנה']);
+        $contact->delete();
+        $contact->forceFill(['deleted_at' => now()->subDays(45)])->saveQuietly();
+
+        $component = Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead]);
+
+        $this->assertFalse($component->instance()->recentlyRemovedContacts->contains('id', $contact->id));
     }
 
     public function test_owner_can_attach_and_remove_a_program_of_interest(): void
