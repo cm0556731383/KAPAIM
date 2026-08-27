@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\BusinessEntity;
 use App\Models\Deal;
 use App\Models\Document;
@@ -33,6 +34,8 @@ new
 #[Layout('layouts.app', ['title' => 'כרטיס עסקה — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     public Deal $deal;
 
     /** The `version` this component loaded the deal with — see Deal::updateStatusWithLock(). */
@@ -150,6 +153,19 @@ class extends Component
 
         $this->deal->load('status');
         $this->syncFields();
+
+        $this->notifySuccess("סטטוס העסקה עודכן ל\"{$newStatus->name}\".");
+    }
+
+    /**
+     * FR-7.24: the "עדכון סטטוס" submit button only needs a confirmation
+     * when the selected status is the terminal/irreversible one — routine
+     * status progression (quote -> paid, etc.) isn't warned. The select
+     * uses wire:model.live so this re-evaluates server-side on every change.
+     */
+    public function isSelectedStatusCancellation(): bool
+    {
+        return optional($this->dealStatuses->firstWhere('id', (int) $this->selectedStatusId))->name === Deal::CANCELLED_STATUS_NAME;
     }
 
     #[Computed]
@@ -259,6 +275,8 @@ class extends Component
         $this->deal->load('status');
         $this->syncFields();
         unset($this->payments);
+
+        $this->notifySuccess("התשלום נרשם בהצלחה (₪{$data['paymentAmount']}).");
     }
 
     /** FR-4.28: a separate explicit action from "received" — never inferred. */
@@ -309,6 +327,8 @@ class extends Component
         ]);
 
         unset($this->payments);
+
+        $this->notifySuccess('הקבלה הופקה בהצלחה.');
     }
 
     #[Computed]
@@ -350,17 +370,8 @@ class extends Component
         </div>
     </div>
 
-    @if ($statusError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $statusError }}
-        </div>
-    @endif
-
-    @if ($detailsError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $detailsError }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$statusError" />
+    <x-business-error-banner :message="$detailsError" />
 
     <div class="cols2">
         <div>
@@ -414,14 +425,20 @@ class extends Component
                 <form wire:submit="updateStatus" class="form-grid">
                     <div class="full">
                         <label for="selectedStatusId">סטטוס</label>
-                        <select id="selectedStatusId" wire:model="selectedStatusId">
+                        <select id="selectedStatusId" wire:model.live="selectedStatusId">
                             @foreach ($this->dealStatuses as $status)
                                 <option value="{{ $status->id }}">{{ $status->name }}</option>
                             @endforeach
                         </select>
                         @error('selectedStatusId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">עדכון סטטוס</button></div>
+                    <div class="full">
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                            @if ($this->isSelectedStatusCancellation()) wire:confirm="ביטול העסקה אינו הפיך — האם להמשיך?" @endif
+                        >עדכון סטטוס</button>
+                    </div>
                 </form>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
                     ביטול עסקה הוא שינוי סטטוס בלבד — עסקה לעולם אינה נמחקת (FR-3.5). עדכון סטטוס במקביל משתי משתמשות אינו דורס בשקט (FR-8.19).
@@ -440,11 +457,7 @@ class extends Component
             רצף עסקי מחייב: הצעת מחיר (אופציונלי) ← טופס הזמנה ← חוזה ← חשבונית. לא ניתן לדלג על שלב (FR-4.1, FR-4.3, FR-4.4).
         </p>
 
-        @if ($documentError)
-            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-                {{ $documentError }}
-            </div>
-        @endif
+        <x-business-error-banner :message="$documentError" />
 
         <div class="doc-stepper">
             @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
@@ -500,11 +513,7 @@ class extends Component
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>תשלומים</h3>
 
-        @if ($paymentError)
-            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-                {{ $paymentError }}
-            </div>
-        @endif
+        <x-business-error-banner :message="$paymentError" />
 
         <div class="cols2" style="margin-bottom:var(--sp-lg)">
             <div class="field"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Contact;
 use App\Models\FollowUp;
 use App\Models\Lead;
@@ -20,6 +21,8 @@ new
 #[Layout('layouts.app', ['title' => 'כרטיס ליד — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     public Lead $lead;
 
     // ===== פרטי בית ספר (עריכה) =====
@@ -157,6 +160,8 @@ class extends Component
 
                 if ($fuzzy) {
                     $this->duplicateWarning = "כפילות אפשרית: קיים כבר בית ספר בשם דומה — \"{$fuzzy->name}\". נא לוודא שאין כפילות.";
+                    // FR-7.23 — non-blocking, doesn't stop the school update below.
+                    $this->notifyInfo($this->duplicateWarning);
                 }
 
                 $school = School::create(['name' => $data['schoolName']]);
@@ -269,6 +274,8 @@ class extends Component
 
         $this->lead->refresh();
         $this->selectedSubStatus = (string) $this->lead->sub_status;
+
+        $this->notifySuccess("סטטוס הליד עודכן ל\"{$newStatus->name}\".");
     }
 
     // ----- תוכניות מבוקשות (LEAD }o--o{ PROGRAM) -----
@@ -322,6 +329,8 @@ class extends Component
 
         $this->resetContactForm();
         unset($this->contacts);
+
+        $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה.");
     }
 
     public function editContact(int $id): void
@@ -378,6 +387,8 @@ class extends Component
         }
 
         unset($this->contacts);
+
+        $this->notifySuccess("איש קשר \"{$name}\" הוסר.");
     }
 
     private function validateContact(): array
@@ -619,17 +630,8 @@ class extends Component
         </div>
     @endif
 
-    @if ($conversionError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $conversionError }}
-        </div>
-    @endif
-
-    @if ($duplicateWarning)
-        <div class="mb-8" style="background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $duplicateWarning }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$conversionError" />
+    <x-business-error-banner :message="$duplicateWarning" type="warning" />
 
     <div class="cols2">
         <div>
@@ -766,7 +768,7 @@ class extends Component
                         <div class="contact-item" style="border-color:var(--color-primary); box-shadow:0 0 0 3px var(--color-primary-lighter)">
                             <div class="contact-edit-head">
                                 <span class="tag">עריכת איש קשר</span>
-                                <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="removeContact({{ $contact->id }})">הסרה</button>
+                                <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="removeContact({{ $contact->id }})" wire:confirm="הסרת איש קשר זה היא מחיקה לוגית — האם להמשיך?">הסרה</button>
                             </div>
                             <form wire:submit="updateContact" class="form-grid">
                                 <div><label>שם מלא</label><input type="text" wire:model="contactName"></div>
@@ -882,7 +884,7 @@ class extends Component
                         @if ($task->status !== 'done')
                             <div style="display:flex; gap:6px">
                                 <button type="button" class="btn btn-ghost btn-sm" wire:click="completeTask({{ $task->id }})">הושלם</button>
-                                <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="cancelTask({{ $task->id }})">ביטול</button>
+                                <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="cancelTask({{ $task->id }})" wire:confirm="ביטול התזכורת הוא מחיקה לוגית — האם להמשיך?">ביטול</button>
                             </div>
                         @else
                             <span class="badge badge-success">הושלם</span>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Contact;
 use App\Models\Document;
 use App\Services\ActivityLogger;
@@ -24,6 +25,8 @@ new
 #[Layout('layouts.app', ['title' => 'מסמך — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     public Document $document;
 
     /** document_template_field_id => string value, editable while the document hasn't been sent yet. */
@@ -183,6 +186,8 @@ class extends Component
         }
 
         $this->document->refresh()->load('recipients');
+
+        $this->notifySuccess('המסמך נשלח בהצלחה.');
     }
 
     #[Computed]
@@ -236,9 +241,7 @@ class extends Component
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">
                         אין עדיין פורטל לקוחות חיצוני — השדות מתועדים כאן על ידי הצוות בהתאם למה שנמסר בפועל (FR-4.10-FR-4.12).
                     </p>
-                    @if ($fieldsError)
-                        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">{{ $fieldsError }}</div>
-                    @endif
+                    <x-business-error-banner :message="$fieldsError" />
                     <div class="form-grid">
                         @foreach ($document->documentTemplate->fields as $field)
                             <div class="full">
@@ -255,9 +258,7 @@ class extends Component
             @if ($document->document_type === 'invoice')
                 <div class="card" style="margin-bottom:var(--sp-lg); padding:0; overflow:hidden">
                     <div style="padding: var(--sp-lg) var(--sp-lg) 0"><h3>פירוט</h3></div>
-                    @if ($lineError)
-                        <div class="mb-8" style="margin:0 var(--sp-lg); background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">{{ $lineError }}</div>
-                    @endif
+                    <x-business-error-banner :message="$lineError" style="margin:0 var(--sp-lg)" />
                     <table>
                         <thead><tr><th>תיאור</th><th>כמות</th><th>מחיר יחידה</th><th>סכום</th><th></th></tr></thead>
                         <tbody>
@@ -298,9 +299,7 @@ class extends Component
             {{-- ===== נמענים ושליחה ===== --}}
             <div class="card">
                 <h3>נמענים</h3>
-                @if ($sendError)
-                    <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">{{ $sendError }}</div>
-                @endif
+                <x-business-error-banner :message="$sendError" />
 
                 @if ($document->sent_at)
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->format === 'pdf' ? 'קובץ PDF' : 'טופס דיגיטלי' }}.</p>

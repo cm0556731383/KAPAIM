@@ -198,3 +198,15 @@ tr.row-link { cursor: pointer; }
 .list-item { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
 .list-item:last-child { border-bottom: none; }
 .list-item .who { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+
+/* Build-plan 16 — shared toast stack (FR-7.21-FR-7.23). Fixed to the
+   top-start corner (RTL: visually top-right); the layout stays LTR-agnostic
+   since `top`/`inset-inline-start` follow html[dir=rtl] automatically. */
+.toast-stack { position: fixed; top: var(--sp-lg); inset-inline-start: var(--sp-lg); z-index: 100; display: flex; flex-direction: column; gap: var(--sp-sm); max-width: 380px; }
+.toast { display: flex; align-items: flex-start; gap: var(--sp-sm); padding: var(--sp-sm) var(--sp-md); border-radius: var(--radius-control); font-size: var(--fs-small); font-weight: 500; box-shadow: var(--shadow-card-hover); }
+.toast-success { background: var(--color-success-bg); color: var(--color-success); }
+.toast-info { background: var(--color-info-bg); color: var(--color-info); }
+.toast-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.toast-message { flex: 1; }
+.toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 0 0 6px; opacity: .7; }
+.toast-close:hover { opacity: 1; }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\ActivityLog;
 use App\Models\Bundle;
 use App\Models\Contact;
@@ -51,6 +52,7 @@ new
 class extends Component
 {
     use WithFileUploads;
+    use Notifies;
 
     public Customer $customer;
 
@@ -202,6 +204,8 @@ class extends Component
         $this->contactError = null;
         $this->resetContactForm();
         unset($this->contacts);
+
+        $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה.");
     }
 
     public function editContact(int $id): void
@@ -279,6 +283,8 @@ class extends Component
         }
 
         unset($this->contacts);
+
+        $this->notifySuccess("איש קשר \"{$name}\" הוסר.");
     }
 
     // ----- עסקאות (DEAL) -----
@@ -423,10 +429,16 @@ class extends Component
             'metadata' => ['delivery_id' => $delivery->id, 'program_id' => $delivery->program_id],
         ]);
 
+        $this->notifySuccess("תוכנית מס' {$delivery->sequence_number} סומנה כסופקה.");
+
         if ($subscription->fresh()->status?->name === Subscription::ENDED_STATUS_NAME) {
             $activityLogger->log('subscription.ended', "מנוי #{$subscription->id} הסתיים אוטומטית לאחר סימון התוכנית העשירית (FR-3.16/FR-3.17)", [
                 'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
             ]);
+
+            // FR-7.23 — a genuinely informational outcome distinct from the
+            // plain "marked as supplied" success above.
+            $this->notifyInfo('המנוי הסתיים אוטומטית לאחר סימון התוכנית העשירית (FR-3.16/FR-3.17).');
         }
 
         unset($this->deliveryProgramSelections[$deliveryId]);
@@ -461,6 +473,8 @@ class extends Component
         ]);
 
         unset($this->subscriptions, $this->hasActiveSubscription);
+
+        $this->notifySuccess('המנוי בוטל בהצלחה.');
     }
 
     /**
@@ -625,6 +639,8 @@ class extends Component
         $this->materialsFiles = [];
         $this->materialsProgramId = '';
         unset($this->materialDeliveries);
+
+        $this->notifySuccess("חומרי הלימוד עבור \"{$program?->name}\" נשלחו בהצלחה.");
     }
 
     /** FR-5.17's manual half — dismisses a stale "needs attention" item with no dashboard yet to do it from. */
@@ -813,11 +829,7 @@ class extends Component
         </div>
     @endif
 
-    @if ($contactError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $contactError }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$contactError" />
 
     <div class="tabs">
         <span class="{{ $activeTab === 'info' ? 'active' : '' }}" wire:click="$set('activeTab', 'info')">בית ספר ואנשי קשר</span>
@@ -883,7 +895,7 @@ class extends Component
                             <div class="contact-item" style="border-color:var(--color-primary); box-shadow:0 0 0 3px var(--color-primary-lighter)">
                                 <div class="contact-edit-head">
                                     <span class="tag">עריכת איש קשר</span>
-                                    <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="removeContact({{ $contact->id }})">הסרה</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="removeContact({{ $contact->id }})" wire:confirm="הסרת איש קשר זה היא מחיקה לוגית — האם להמשיך?">הסרה</button>
                                 </div>
                                 <form wire:submit="updateContact" class="form-grid">
                                     <div><label>שם מלא</label><input type="text" wire:model="contactName"></div>
@@ -944,11 +956,7 @@ class extends Component
             </div>
         </div>
     @elseif ($activeTab === 'subscription')
-        @if ($subscriptionError)
-            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-                {{ $subscriptionError }}
-            </div>
-        @endif
+        <x-business-error-banner :message="$subscriptionError" />
 
         @forelse ($this->subscriptions as $subscription)
             <div class="card" style="margin-bottom:var(--sp-lg)">
@@ -1048,6 +1056,7 @@ class extends Component
                             type="button"
                             class="btn btn-secondary"
                             wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
+                            wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
                             @disabled(! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
                         >הפקת חשבונית זיכוי</button>
                     </div>
@@ -1060,11 +1069,7 @@ class extends Component
             <div class="card empty-state">אין ללקוחה זו מנוי — מנוי נפתח אוטומטית עם יצירת עסקה עבור תוכנית המנוי השנתי (FR-3.12).</div>
         @endforelse
     @elseif ($activeTab === 'deals')
-        @if ($dealError)
-            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-                {{ $dealError }}
-            </div>
-        @endif
+        <x-business-error-banner :message="$dealError" />
         <div class="cols2">
             <div>
                 <div class="card">
@@ -1176,11 +1181,7 @@ class extends Component
             <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">מסמכים ותשלומים מפורטים לכל עסקה נמצאים בכרטיס העסקה עצמה.</p>
         </div>
     @elseif ($activeTab === 'materials')
-        @if ($materialsError)
-            <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-                {{ $materialsError }}
-            </div>
-        @endif
+        <x-business-error-banner :message="$materialsError" />
         <div class="cols2">
             <div class="card">
                 <h3>שליחת חומרים</h3>

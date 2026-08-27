@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Expense;
 use App\Models\Program;
 use App\Models\Supplier;
@@ -20,6 +21,8 @@ new
 #[Layout('layouts.app', ['title' => 'הוצאות ותזרים — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     public string $supplierId = '';
     public string $programId = '';
     public string $amount = '';
@@ -64,6 +67,8 @@ class extends Component
 
         $this->reset(['supplierId', 'programId', 'amount', 'expenseDate', 'notes']);
         unset($this->expenses);
+
+        $this->notifySuccess('ההוצאה נוצרה בהצלחה.');
     }
 
     /**
@@ -126,11 +131,7 @@ class extends Component
         <a href="{{ route('cashflow-report') }}">דוח הכנסות ורווח</a>
     </div>
 
-    @if ($expenseError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $expenseError }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$expenseError" />
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">
         <table>

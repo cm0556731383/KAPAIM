@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Lead;
 use App\Models\LeadSource;
 use App\Models\School;
@@ -13,6 +14,8 @@ new
 #[Layout('layouts.app', ['title' => 'לידים — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     // ===== סינון =====
     public string $filterSchoolId = '';
     public string $filterCity = '';
@@ -102,6 +105,8 @@ class extends Component
 
                 if ($fuzzySchool) {
                     $this->duplicateWarning = "כפילות אפשרית: קיים כבר בית ספר בשם דומה — \"{$fuzzySchool->name}\". נא לוודא שאין כפילות לפני יצירת ליד חדש.";
+                    // FR-7.23 — non-blocking, doesn't stop lead creation below.
+                    $this->notifyInfo($this->duplicateWarning);
                 }
 
                 $school = School::create(['name' => $schoolName, 'phone' => $schoolPhone]);
@@ -133,6 +138,8 @@ class extends Component
 
         $this->reset(['newSchoolName', 'newSchoolPhone', 'newEmail', 'newPhone', 'newSourceId', 'newNotes']);
         unset($this->leads);
+
+        $this->notifySuccess('ליד חדש נוצר בהצלחה.');
     }
 
     #[Computed]
@@ -230,17 +237,8 @@ class extends Component
         </div>
     </div>
 
-    @if ($leadError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $leadError }}
-        </div>
-    @endif
-
-    @if ($duplicateWarning)
-        <div class="mb-8" style="background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $duplicateWarning }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$leadError" />
+    <x-business-error-banner :message="$duplicateWarning" type="warning" />
 
     {{-- ===== סינון ===== --}}
     <div class="filter-row">

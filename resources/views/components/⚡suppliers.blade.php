@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Supplier;
 use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
@@ -16,6 +17,8 @@ new
 #[Layout('layouts.app', ['title' => 'ספקים — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     /** Set while editing an existing supplier; null while creating a new one. */
     public ?int $editingSupplierId = null;
 
@@ -56,6 +59,8 @@ class extends Component
             $supplier->update($attributes);
 
             $activityLogger->log('supplier.updated', "עודכן ספק: {$supplier->name}", ['metadata' => ['supplier_id' => $supplier->id]]);
+
+            $this->notifySuccess("הספק \"{$supplier->name}\" עודכן בהצלחה.");
         } else {
             $supplier = Supplier::create($attributes);
 
@@ -63,6 +68,8 @@ class extends Component
             $supplier->joinSuppliersMailingList();
 
             $activityLogger->log('supplier.created', "נוצר ספק חדש: {$supplier->name}", ['metadata' => ['supplier_id' => $supplier->id]]);
+
+            $this->notifySuccess("הספק \"{$supplier->name}\" נוצר בהצלחה.");
         }
 
         $this->cancelEdit();

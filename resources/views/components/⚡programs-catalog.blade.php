@@ -226,11 +226,7 @@ class extends Component
         השבתת תוכנית חוסמת <strong>רכישה חדשה</strong> שלה בלבד — היא ממשיכה להופיע בעסקאות עבר כפי שהייתה (FR-3.6, FR-8.25).
     </div>
 
-    @if ($catalogError)
-        <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            {{ $catalogError }}
-        </div>
-    @endif
+    <x-business-error-banner :message="$catalogError" />
 
     {{-- ===== תוכניות ===== --}}
     <section class="settings-section">

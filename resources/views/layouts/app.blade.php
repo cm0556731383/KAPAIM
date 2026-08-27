@@ -117,6 +117,39 @@
     </g>
 </svg>
 
+{{--
+    Build-plan 16 — shared toast listener (FR-7.21/FR-7.22/FR-7.23). Any
+    component fires `$this->dispatch('notify', type: 'success'|'info'|
+    'warning', message: '...')` (see App\Concerns\Notifies); Livewire turns
+    that into a `notify` browser event this single Alpine listener catches,
+    queues, and auto-dismisses. The 4th message type ("business-error",
+    FR-7.25) is deliberately NOT here — see <x-business-error-banner>, which
+    stays visible inline until the blocking condition is resolved.
+--}}
+<div
+    x-data="{
+        toasts: [],
+        add(toast) {
+            const id = Date.now() + Math.random();
+            this.toasts.push({ id, type: toast.type ?? 'info', message: toast.message ?? '' });
+            setTimeout(() => this.remove(id), 5000);
+        },
+        remove(id) {
+            this.toasts = this.toasts.filter(t => t.id !== id);
+        },
+    }"
+    @notify.window="add($event.detail)"
+    class="toast-stack"
+    aria-live="polite"
+>
+    <template x-for="toast in toasts" :key="toast.id">
+        <div class="toast" :class="'toast-' + toast.type">
+            <span class="toast-message" x-text="toast.message"></span>
+            <button type="button" class="toast-close" @click="remove(toast.id)" aria-label="סגירה">×</button>
+        </div>
+    </template>
+</div>
+
 <div class="app">
     <aside class="sidebar">
         <div class="brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</div>
