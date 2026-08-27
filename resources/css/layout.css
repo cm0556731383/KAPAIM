@@ -161,3 +161,26 @@ tr.row-link { cursor: pointer; }
 .recipients-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: var(--sp-md); }
 .mono { font-family: var(--font-mono); font-size: var(--fs-caption); direction: ltr; unicode-bidi: isolate; display: inline-block; }
 .template-editor textarea { min-height: 180px; line-height: 1.9; resize: vertical; }
+
+/* ===== Global search (build-plan 14) — ported from
+   docs/storyboard/global-search.html ===== */
+.search-box {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-control); padding: 14px 16px;
+  box-shadow: var(--shadow-card); margin-bottom: var(--sp-sm);
+}
+.search-box svg { width: 20px; height: 20px; color: var(--color-text-secondary); flex-shrink: 0; }
+.search-box input { border: none; padding: 0; font-size: var(--fs-h3); }
+.search-box input:focus { box-shadow: none; }
+.search-caption { color: var(--color-text-secondary); font-size: var(--fs-caption); margin: 0 0 var(--sp-xl) 2px; }
+.result-row {
+  display: flex; align-items: center; gap: var(--sp-md);
+  padding: var(--sp-md) var(--sp-sm); border-bottom: 1px solid var(--color-border);
+  text-decoration: none; color: inherit;
+}
+.result-row:last-child { border-bottom: none; }
+.result-row:hover { background: var(--color-primary-lighter); border-radius: var(--radius-control); }
+.result-row .result-main { flex: 1; min-width: 0; }
+.result-row .result-title { font-weight: 600; }
+.result-row .result-sub { color: var(--color-text-secondary); font-size: var(--fs-small); margin-top: 2px; }

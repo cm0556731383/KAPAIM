@@ -109,11 +109,7 @@
             <nav>
                 <div class="nav-group-label">עבודה יומית</div>
                 <a href="{{ url('/') }}" class="{{ request()->is('/') ? 'active' : '' }}"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
-                @foreach ([
-                    ['חיפוש גלובלי', 'icon-search'],
-                ] as [$label, $icon])
-                    <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#{{ $icon }}"></use></svg>{{ $label }}</span>
-                @endforeach
+                <a href="{{ route('search') }}" class="{{ request()->routeIs('search') ? 'active' : '' }}"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
                 <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
                 <a href="{{ route('customers') }}" class="{{ request()->routeIs('customers') || request()->routeIs('customer-detail') ? 'active' : '' }}"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
                 <a href="{{ route('collections') }}" class="{{ request()->routeIs('collections') ? 'active' : '' }}"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>

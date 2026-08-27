@@ -40,6 +40,7 @@ Route::get('/materials/{material}/acknowledge', function (
 
 Route::middleware('auth')->group(function () {
     Route::livewire('/', 'home');
+    Route::livewire('/search', 'global-search')->name('search');
     Route::livewire('/users-roles', 'users-roles')->name('users-roles');
     Route::livewire('/activity-log', 'activity-log')->name('activity-log');
     Route::livewire('/settings', 'settings')->name('settings');
