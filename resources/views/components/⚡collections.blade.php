@@ -79,6 +79,7 @@ class extends Component
         @if ($this->openCollectionTasks->isEmpty())
             <div class="empty-state">אין כרגע משימות גבייה פתוחות.</div>
         @else
+            <div class="table-scroll">
             <table>
                 <thead>
                     <tr>
@@ -101,6 +102,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         @endif
     </div>
 
@@ -110,6 +112,7 @@ class extends Component
         @if ($this->pendingChecks->isEmpty())
             <div class="empty-state">אין כרגע צ'קים הממתינים לפירעון.</div>
         @else
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>לקוחה</th><th>עסקה</th><th>סכום</th><th>תאריך קבלה</th><th>סטטוס</th></tr></thead>
                 <tbody>
@@ -124,6 +127,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         @endif
     </div>
 </div>

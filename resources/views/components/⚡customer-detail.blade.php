@@ -997,6 +997,7 @@ class extends Component
 
                 {{-- ===== יומן אספקה (FR-3.13-FR-3.15) ===== --}}
                 <h3 style="font-size:var(--fs-h3)">יומן אספקה</h3>
+                <div class="table-scroll">
                 <table>
                     <thead><tr><th>#</th><th>תוכנית</th><th>תאריך אספקה</th><th>סומן ע"י</th><th></th></tr></thead>
                     <tbody>
@@ -1032,6 +1033,7 @@ class extends Component
                         @endforeach
                     </tbody>
                 </table>
+                </div>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
                     סימון "סופקה" הוא פעולה ידנית בלבד ואינה נגזרת משליחת חומרי לימוד (FR-3.15). לאחר סימון התוכנית העשירית המנוי מסתיים אוטומטית ואינו מתחדש (FR-3.16/FR-3.17) — חידוש מתבצע ביצירת עסקה חדשה (FR-3.18).
                 </p>
@@ -1162,6 +1164,7 @@ class extends Component
                 </div>
             @endif
 
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>עסקה</th><th>סכום עסקה</th><th>שולם</th><th>יתרה</th><th></th></tr></thead>
                 <tbody>
@@ -1178,6 +1181,7 @@ class extends Component
                     @endforelse
                 </tbody>
             </table>
+            </div>
             <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">מסמכים ותשלומים מפורטים לכל עסקה נמצאים בכרטיס העסקה עצמה.</p>
         </div>
     @elseif ($activeTab === 'materials')
@@ -1242,6 +1246,7 @@ class extends Component
                 @if ($this->materialDeliveries->isEmpty())
                     <div class="empty-state">אין עדיין משלוחי חומרי לימוד ללקוחה זו.</div>
                 @else
+                    <div class="table-scroll">
                     <table>
                         <thead><tr><th>תאריך</th><th>תוכנית</th><th>סטטוס</th><th></th></tr></thead>
                         <tbody>
@@ -1268,6 +1273,7 @@ class extends Component
                             @endforeach
                         </tbody>
                     </table>
+                    </div>
                 @endif
             </div>
         </div>

@@ -150,8 +150,23 @@
     </template>
 </div>
 
-<div class="app">
-    <aside class="sidebar">
+{{--
+    Build-plan 17 — mobile sidebar toggle (FR-8.20). Below the 768px
+    breakpoint the sidebar is hidden off-canvas (see .sidebar / .sidebar.is-open
+    in layout.css) and this hamburger bar takes its place; above it, both the
+    toggle bar and the backdrop stay hidden and `sidebarOpen` is simply
+    unused. Same lightweight x-data pattern as the build-plan 16 toast
+    listener above — no new JS file needed.
+--}}
+<div class="app" x-data="{ sidebarOpen: false }">
+    <button type="button" class="mobile-topbar-toggle" @click="sidebarOpen = ! sidebarOpen" aria-label="פתיחת/סגירת תפריט">
+        <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+        <span class="mobile-topbar-brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</span>
+    </button>
+
+    <div class="sidebar-backdrop" :class="{ 'is-visible': sidebarOpen }" @click="sidebarOpen = false"></div>
+
+    <aside class="sidebar" :class="{ 'is-open': sidebarOpen }">
         <div class="brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</div>
 
         <div class="sidebar-scroll">
