@@ -667,6 +667,7 @@ storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
+storage/framework/testing/*
 backups
 docker-compose.override.yml
 Dockerfile
