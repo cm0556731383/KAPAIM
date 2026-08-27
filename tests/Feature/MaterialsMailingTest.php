@@ -18,6 +18,8 @@ use App\Models\StatusDefinition;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Mail;
@@ -87,7 +89,7 @@ class MaterialsMailingTest extends TestCase
         $program = $this->createProgram();
 
         $this->expectException(RuntimeException::class);
-        MaterialDelivery::sendFor($customer, $program, [], [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']], app(ActivityLogger::class));
+        MaterialDelivery::sendFor($customer, $program, [], [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']], app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class));
     }
 
     public function test_sending_materials_is_blocked_with_no_attachment(): void
@@ -96,7 +98,7 @@ class MaterialsMailingTest extends TestCase
         $program = $this->createProgram();
 
         $this->expectException(RuntimeException::class);
-        MaterialDelivery::sendFor($customer, $program, [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']], [], app(ActivityLogger::class));
+        MaterialDelivery::sendFor($customer, $program, [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']], [], app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class));
     }
 
     public function test_sending_materials_succeeds_with_a_recipient_and_an_attachment(): void
@@ -110,6 +112,8 @@ class MaterialsMailingTest extends TestCase
             [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
             [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']],
             app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
 
         $this->assertSame(1, MaterialDelivery::count());
@@ -138,6 +142,8 @@ class MaterialsMailingTest extends TestCase
             $defaults->map(fn (Contact $c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(),
             [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']],
             app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
 
         $this->assertTrue($contact->fresh()->is_primary);
@@ -149,8 +155,8 @@ class MaterialsMailingTest extends TestCase
         $program = $this->createProgram();
         $recipients = [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']];
 
-        MaterialDelivery::sendFor($customer, $program, $recipients, [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']], app(ActivityLogger::class));
-        MaterialDelivery::sendFor($customer, $program, $recipients, [['file_reference' => 'tmp2', 'file_name' => 'b.pdf']], app(ActivityLogger::class));
+        MaterialDelivery::sendFor($customer, $program, $recipients, [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']], app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class));
+        MaterialDelivery::sendFor($customer, $program, $recipients, [['file_reference' => 'tmp2', 'file_name' => 'b.pdf']], app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class));
 
         $this->assertSame(2, MaterialDelivery::where('customer_id', $customer->id)->where('program_id', $program->id)->count());
     }
@@ -218,6 +224,8 @@ class MaterialsMailingTest extends TestCase
             [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
             [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']],
             app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
 
         $log = ActivityLog::where('activity_type', 'material_delivery.sent')->where('material_delivery_id', $delivery->id)->first();
@@ -234,6 +242,8 @@ class MaterialsMailingTest extends TestCase
             [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
             [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']],
             app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
 
         $log = ActivityLog::where('activity_type', 'material_delivery.sent')->where('material_delivery_id', $delivery->id)->first();
@@ -515,6 +525,8 @@ class MaterialsMailingTest extends TestCase
             [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
             [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']],
             app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
     }
 

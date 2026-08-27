@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -149,6 +151,11 @@ class MaterialDelivery extends Model
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      * @param  array<int, array{file_reference: string, file_name: string}>  $attachments
      *
+     * Build-plan 12: the actual outbound Smove send now happens here too,
+     * via $runner/$smove — non-blocking (see ExternalOperationRunner's
+     * docblock): the delivery row above it is created and returned
+     * regardless of whether Smove succeeds, since staff can always resend.
+     *
      * @throws RuntimeException when no recipient has a valid email
      *                          (FR-5.2/FR-8.13), or no attachment is given
      *                          (FR-5.3/FR-8.14).
@@ -159,6 +166,8 @@ class MaterialDelivery extends Model
         array $recipients,
         array $attachments,
         ActivityLogger $activityLogger,
+        ExternalOperationRunner $runner,
+        SmoveClient $smove,
     ): self {
         $validRecipients = array_values(array_filter(
             $recipients,
@@ -219,16 +228,32 @@ class MaterialDelivery extends Model
             ],
         );
 
+        $runner->run(
+            'smove',
+            'materials_send',
+            'app_action',
+            fn () => $smove->sendMaterialsEmail(
+                array_map(fn (array $r) => ['email' => $r['email'], 'name' => $r['name']], $validRecipients),
+                array_column($attachments, 'file_reference'),
+                "חומרי לימוד: {$program->name}",
+            ),
+            [
+                'material_delivery_id' => $delivery->id,
+                'customer_id' => $customer->id,
+                'description' => "שליחת חומרי לימוד \"{$program->name}\" ללקוחה \"{$customer->school?->name}\"",
+            ],
+        );
+
         return $delivery->refresh();
     }
 
     /**
-     * FR-5.10/FR-5.11: not called from anywhere in this stage — a real email
-     * open requires an actual outbound Smove send plus a tracking pixel or
-     * polling webhook, neither of which exists until build-plan 12. Exposed
-     * now purely so stage 12 has a real, tested method to wire a webhook
-     * into, rather than inventing a fake one here. Idempotent — opening
-     * twice, or opening an already-acknowledged delivery, is a no-op.
+     * FR-5.10/FR-5.11: a real email open requires an actual outbound Smove
+     * send (now real, see sendFor() above) plus Smove's own tracking
+     * pixel/webhook telling us about it — see the
+     * /webhooks/smove/material-opened route (routes/web.php), the only
+     * caller. Idempotent — opening twice, or opening an already-acknowledged
+     * delivery, is a no-op.
      */
     public function markOpened(): void
     {

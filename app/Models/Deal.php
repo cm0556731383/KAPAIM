@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -223,10 +225,10 @@ class Deal extends Model
      * per-slot delivery picks). Never touched for a bundle purchase — FR-5.22
      * only ever concerns a program.
      *
-     * TODO(stage 12 — Smove): this membership change should also be pushed
-     * to Smove (docs/erd.md: "קריאות ל-Smove, לא רק שינוי מקומי") — for now
-     * it is 100% real and local only, same stub boundary as
-     * ExternalIntegrationSetting elsewhere in this codebase.
+     * Build-plan 12: MailingMembership::addCustomer() below now also pushes
+     * each membership change to Smove for real (docs/erd.md: "קריאות
+     * ל-Smove, לא רק שינוי מקומי") — nothing to change here, the push lives
+     * entirely inside MailingMembership.
      */
     private function assignMailingListsForProgramPurchase(Program $program): void
     {
@@ -416,5 +418,102 @@ class Deal extends Model
 
             return $payment;
         });
+    }
+
+    /**
+     * Build-plan 12 — PRD §1.4 "סליקת אשראי": an explicit, user-triggered
+     * action (never automatic on recordPayment() — the secretary decides
+     * when to actually run the card) that charges via Summit FIRST, and only
+     * records the local Payment once Summit confirms it (unlike every other
+     * payment method, where the money already changed hands before the
+     * secretary opens this screen). recordPayment() still enforces every one
+     * of its own rules (FR-4.30 payment method, FR-8.19 lock) exactly as for
+     * any other payment.
+     *
+     * @throws RuntimeException when the deal's payment method isn't a card,
+     *                          or Summit declines/fails the charge.
+     */
+    public function chargeCardViaSummit(int $expectedVersion, float $amount, ExternalOperationRunner $runner, SummitClient $summit): Payment
+    {
+        if ($this->paymentMethod?->type !== 'card') {
+            throw new RuntimeException('סליקת אשראי מול Summit זמינה רק כאשר אמצעי התשלום של העסקה הוא אשראי.');
+        }
+
+        $operation = $runner->run(
+            'summit',
+            'card_charge',
+            'user_action',
+            fn () => $summit->chargeCard($this, $amount),
+            [
+                'deal_id' => $this->id,
+                'description' => "סליקת אשראי בסך ₪{$amount} עבור עסקה #{$this->id}",
+            ],
+        );
+
+        if ($operation->failed()) {
+            throw new RuntimeException("הסליקה מול Summit נכשלה: {$operation->error_message}");
+        }
+
+        return $this->recordPayment($expectedVersion, $amount);
+    }
+
+    /**
+     * Build-plan 12 — PRD §1.4 "ניהול הוראות קבע": registers the standing
+     * order with Summit, passing this deal's own id as Summit's merchant
+     * reference (see SummitClient::registerStandingOrder()'s docblock) so
+     * the later standing-order-collected webhook (routes/web.php) can find
+     * its way back to this exact deal. A local-only action — no Payment/
+     * Deal column changes here; the actual monthly collections arrive later,
+     * one webhook call at a time.
+     *
+     * @throws RuntimeException when the deal's payment method isn't a
+     *                          standing order, or Summit fails the request.
+     */
+    public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit): void
+    {
+        if ($this->paymentMethod?->type !== 'recurring') {
+            throw new RuntimeException('רישום הוראת קבע מול Summit זמין רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
+        }
+
+        $operation = $runner->run(
+            'summit',
+            'standing_order_registered',
+            'user_action',
+            fn () => $summit->registerStandingOrder($this),
+            [
+                'deal_id' => $this->id,
+                'description' => "רישום הוראת קבע מול Summit עבור עסקה #{$this->id}",
+            ],
+        );
+
+        if ($operation->failed()) {
+            throw new RuntimeException("רישום הוראת הקבע מול Summit נכשל: {$operation->error_message}");
+        }
+    }
+
+    /**
+     * Build-plan 12 — FR-4.27: the automatic half, called only from the
+     * /webhooks/summit/standing-order-collected route once Summit confirms a
+     * month's direct-debit collection actually cleared. Records the payment
+     * (reusing recordPayment()'s own FR-4.30-FR-4.34 rules — a standing order
+     * is never a check, so no expectedVersion contention beyond the ordinary
+     * concurrent-edit case) and immediately auto-issues the receipt, exactly
+     * as FR-4.27 requires — unlike every other payment method, where issuing
+     * a receipt is always a separate explicit staff action.
+     *
+     * @throws RuntimeException when the deal's payment method isn't a
+     *                          standing order, or on a version conflict.
+     */
+    public function collectStandingOrderPayment(float $amount, ExternalOperationRunner $runner, SummitClient $summit): Payment
+    {
+        if ($this->paymentMethod?->type !== 'recurring') {
+            throw new RuntimeException('גבייה אוטומטית בהוראת קבע זמינה רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
+        }
+
+        $payment = $this->recordPayment($this->version, $amount);
+
+        Receipt::issueFor($this, $payment, $runner, $summit);
+
+        return $payment;
     }
 }

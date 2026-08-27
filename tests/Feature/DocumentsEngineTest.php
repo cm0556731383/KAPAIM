@@ -329,7 +329,7 @@ class DocumentsEngineTest extends TestCase
         $document->sendTo([
             ['contact_id' => $primary->id, 'name' => $primary->name, 'email' => $primary->email],
             ['contact_id' => null, 'name' => 'נמען נקודתי', 'email' => 'ad-hoc@example.com'],
-        ], 'digital', app(\App\Services\ActivityLogger::class));
+        ], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
 
         $this->assertCount(2, $document->recipients);
         $primary->refresh();
@@ -351,6 +351,8 @@ class DocumentsEngineTest extends TestCase
             [['contact_id' => $original->id, 'name' => $original->name, 'email' => $original->email]],
             'digital',
             app(\App\Services\ActivityLogger::class),
+            app(\App\Services\Integrations\ExternalOperationRunner::class),
+            app(\App\Services\Integrations\SummitClient::class),
         );
 
         // Primary contact changes after the send.
@@ -367,7 +369,7 @@ class DocumentsEngineTest extends TestCase
         $document = $this->generateQuote($this->createDeal());
 
         $this->expectException(RuntimeException::class);
-        $document->sendTo([], 'digital', app(\App\Services\ActivityLogger::class));
+        $document->sendTo([], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
     }
 
     // ----- FR-4.7: sending is always logged -----
@@ -378,7 +380,7 @@ class DocumentsEngineTest extends TestCase
         Contact::create(['customer_id' => $deal->customer_id, 'name' => 'איש קשר', 'email' => 'contact@example.com', 'is_primary' => true]);
         $document = $this->generateQuote($deal);
 
-        $document->sendTo($document->defaultRecipients()->map(fn ($c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(), 'pdf', app(\App\Services\ActivityLogger::class));
+        $document->sendTo($document->defaultRecipients()->map(fn ($c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(), 'pdf', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
 
         $this->assertDatabaseHas('activity_logs', [
             'activity_type' => 'document.sent', 'document_id' => $document->id, 'deal_id' => $deal->id,

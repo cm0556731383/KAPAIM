@@ -22,6 +22,8 @@ use App\Services\ActivityLogger;
 use App\Services\DashboardSummary;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Tests\TestCase;
 
 /**
@@ -218,7 +220,7 @@ class DashboardSummaryTest extends TestCase
     {
         $deal = $this->fullyPaidDealWithInvoice(agreedAmount: 500, schoolName: 'בית ספר עם קבלה');
         $payment = $deal->payments()->first();
-        Receipt::issueFor($deal, $payment);
+        Receipt::issueFor($deal, $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
 
         $items = $this->dashboard->attentionItems($this->owner);
 

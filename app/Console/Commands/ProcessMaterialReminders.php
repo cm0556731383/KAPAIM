@@ -5,10 +5,12 @@ namespace App\Console\Commands;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\MaterialDelivery;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Console\Command;
 
 /**
- * Build-plan 10 — FR-5.16/FR-5.17: mirrors ProcessCollectionTasks's shape
+ * Build-plan 10/12 — FR-5.16/FR-5.17: mirrors ProcessCollectionTasks's shape
  * (build-plan 08) and registration via Schedule::command(...)->daily() in
  * routes/console.php.
  *
@@ -18,11 +20,11 @@ use Illuminate\Console\Command;
  * DEFAULT_REMINDER_HOURS when unset.
  *
  * The eligibility query (MaterialDelivery::overdueForReminder()) is fully
- * real and exercised by tests. Actually SENDING the reminder is itself an
- * outbound Smove email — exactly like every other Smove-dependent action in
- * this stage, that half is a deliberate stub (sendReminder() below never
- * calls Mail::send() or any HTTP client) until build-plan 12 wires Smove up
- * for real.
+ * real and exercised by tests. Build-plan 12: sendReminder() now really does
+ * push the email via SmoveClient, wrapped in ExternalOperationRunner so a
+ * failure (including Smove not being configured yet) is recorded and never
+ * crashes the scheduled run — there's no live user session here to alert
+ * synchronously (FR-8.16), so the activity-log entry IS the alert.
  */
 class ProcessMaterialReminders extends Command
 {
@@ -30,16 +32,16 @@ class ProcessMaterialReminders extends Command
 
     protected $signature = 'materials:process-reminders';
 
-    protected $description = 'Log a (stubbed) reminder for material deliveries not opened within the configured window (FR-5.16/FR-5.17)';
+    protected $description = 'Send a reminder for material deliveries not opened within the configured window (FR-5.16/FR-5.17)';
 
-    public function handle(ActivityLogger $activityLogger): int
+    public function handle(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): int
     {
         $hours = $this->reminderWindowHours();
 
         MaterialDelivery::overdueForReminder($hours)
             ->with(['customer.school', 'program'])
             ->get()
-            ->each(fn (MaterialDelivery $delivery) => $this->sendReminder($delivery, $activityLogger));
+            ->each(fn (MaterialDelivery $delivery) => $this->sendReminder($delivery, $activityLogger, $runner, $smove));
 
         return self::SUCCESS;
     }
@@ -51,12 +53,7 @@ class ProcessMaterialReminders extends Command
         return (int) ($settings['material_reminder_hours'] ?? self::DEFAULT_REMINDER_HOURS);
     }
 
-    /**
-     * TODO(stage 12 — Smove): send the actual reminder email via Smove here.
-     * Deliberately does nothing else beyond logging that a reminder was due
-     * — no Mail::send()/HTTP call anywhere in this method.
-     */
-    private function sendReminder(MaterialDelivery $delivery, ActivityLogger $activityLogger): void
+    private function sendReminder(MaterialDelivery $delivery, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): void
     {
         $activityLogger->log(
             'material_delivery.reminder_due',
@@ -65,6 +62,30 @@ class ProcessMaterialReminders extends Command
                 'customer_id' => $delivery->customer_id,
                 'material_delivery_id' => $delivery->id,
                 'user' => null,
+            ],
+        );
+
+        $recipientEmail = $delivery->recipients()->value('recipient_email');
+
+        if (! $recipientEmail) {
+            return;
+        }
+
+        $runner->run(
+            'smove',
+            'material_reminder',
+            'scheduled_job',
+            fn () => $smove->sendReminderEmail(
+                $recipientEmail,
+                $delivery->recipients()->value('recipient_name') ?? $recipientEmail,
+                'תזכורת: חומרי לימוד ממתינים',
+                "שלום,\n\nחומרי הלימוד \"{$delivery->program?->name}\" עדיין לא נפתחו. נשמח אם תאשרו קבלתם.\n\nבברכה, כפיים",
+            ),
+            [
+                'material_delivery_id' => $delivery->id,
+                'customer_id' => $delivery->customer_id,
+                'user' => null,
+                'description' => "שליחת תזכורת חומרי לימוד למשלוח #{$delivery->id}",
             ],
         );
     }

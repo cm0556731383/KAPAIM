@@ -69,16 +69,23 @@ class ReferenceDataSeeder extends Seeder
             ['name' => 'פתיח חופשי', 'field_type' => 'free_text', 'linked_field' => null, 'is_required' => false, 'sort_order' => 3],
         ]);
 
-        // ----- שלד אינטגרציות (שלב 12) -----
+        // ----- אינטגרציות חיצוניות (שלב 12) -----
+        // Real wiring exists (App\Services\Integrations\*), but every system
+        // starts inactive with empty settings — deliberately left for the
+        // business owner to fill in real base_url/api_key/webhook_secret
+        // values via ⚡settings.blade.php before anything actually fires.
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => false, 'settings' => []]);
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+        ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => false, 'settings' => []]);
 
         // ----- תפקיד עתידי: עובדת מכירות (שלב 13, FR-7.2) -----
         // Not activated/assigned to a real user for MVP (build-plan 13's own
         // note) — the role and its single narrow permission row exist so the
         // record-level LeadPolicy mechanism is real, queryable, demo/test-able
         // data now, with zero refactor needed when it's actually turned on.
-        $salesRep = Role::create(['name' => 'עובדת מכירות', 'is_active' => true]);
+        // Build-plan 12: this exact role is also who Lead::createFromLandingPage()
+        // auto-assigns among (FR-7.5) once a real user actually holds it.
+        $salesRep = Role::create(['name' => Role::SALES_REP_ROLE_NAME, 'is_active' => true]);
         $salesRep->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
     }
 

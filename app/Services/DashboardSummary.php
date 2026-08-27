@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Deal;
+use App\Models\ExternalOperation;
 use App\Models\FollowUp;
 use App\Models\Lead;
 use App\Models\MaterialDelivery;
@@ -14,6 +15,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 /**
  * Build-plan 15 — US-019/FR-2.16. Home-screen aggregation over everything
@@ -140,6 +142,7 @@ class DashboardSummary
             ->merge($this->overdueCollectionItems($user))
             ->merge($this->awaitingReceiptItems($user))
             ->merge($this->materialsNotSentItems($user))
+            ->merge($this->failedIntegrationItems($user))
             ->values();
     }
 
@@ -333,6 +336,38 @@ class DashboardSummary
                 'badge' => 'לשליחה',
                 'badgeClass' => 'badge-primary',
                 'url' => route('customer-detail', $deal->customer),
+            ])
+            ->values();
+    }
+
+    /**
+     * Build-plan 12 — FR-8.16's stand-in for every trigger_source that has
+     * no live user session to toast synchronously (a scheduled_job/webhook
+     * failure — an app_action failure already gets a same-request banner
+     * from the component that triggered it, see e.g. ⚡deal-detail.blade.php's
+     * issueReceipt()). Gated on settings.manage (today: owner/secretary) —
+     * this is business-system health, not a sales-rep concern. A 3-day
+     * window keeps this list from growing unbounded; a resolved-then-retried
+     * failure still shows until it ages out, since there's no "dismiss" here.
+     */
+    private function failedIntegrationItems(User $user): Collection
+    {
+        if (! $user->hasPermission('settings', 'manage')) {
+            return collect();
+        }
+
+        return ExternalOperation::where('status', ExternalOperation::STATUS_FAILED)
+            ->where('trigger_source', '!=', 'app_action')
+            ->where('completed_at', '>=', Carbon::now()->subDays(3))
+            ->orderByDesc('completed_at')
+            ->limit(10)
+            ->get()
+            ->map(fn (ExternalOperation $operation) => [
+                'label' => "כשל אינטגרציה: {$operation->system} — {$operation->operation_type}",
+                'subtitle' => Str::limit((string) $operation->error_message, 70) ?: '—',
+                'badge' => 'כשל',
+                'badgeClass' => 'badge-error',
+                'url' => route('activity-log'),
             ])
             ->values();
     }

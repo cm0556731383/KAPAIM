@@ -22,6 +22,8 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Livewire\Livewire;
 use RuntimeException;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Tests\TestCase;
 
 class PaymentsCollectionsTest extends TestCase
@@ -214,7 +216,7 @@ class PaymentsCollectionsTest extends TestCase
         $deal = $this->createDeal();
 
         $this->expectException(RuntimeException::class);
-        Receipt::issueFor($deal, null);
+        Receipt::issueFor($deal, null, app(ExternalOperationRunner::class), app(SummitClient::class));
     }
 
     // ----- FR-4.24-FR-4.26: receipt before payment -----
@@ -223,7 +225,7 @@ class PaymentsCollectionsTest extends TestCase
     {
         $deal = $this->dealWithInvoice(agreedAmount: 1000);
 
-        $receipt = Receipt::issueFor($deal, null);
+        $receipt = Receipt::issueFor($deal, null, app(ExternalOperationRunner::class), app(SummitClient::class));
 
         $this->assertTrue($receipt->issued_before_payment);
         $deal->refresh();
@@ -239,7 +241,7 @@ class PaymentsCollectionsTest extends TestCase
         $deal->updatePaymentMethod($method->id);
         $payment = $deal->recordPayment($deal->version, 1000);
 
-        $receipt = Receipt::issueFor($deal, $payment);
+        $receipt = Receipt::issueFor($deal, $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
 
         $this->assertFalse($receipt->issued_before_payment);
         $this->assertSame($payment->id, $receipt->payment_id);
@@ -258,7 +260,7 @@ class PaymentsCollectionsTest extends TestCase
         $this->assertNull($payment->cleared_date);
 
         $this->expectException(RuntimeException::class);
-        Receipt::issueFor($deal, $payment);
+        Receipt::issueFor($deal, $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
     }
 
     public function test_check_payment_receipt_succeeds_once_cleared(): void
@@ -270,7 +272,7 @@ class PaymentsCollectionsTest extends TestCase
 
         $payment->markCleared();
 
-        $receipt = Receipt::issueFor($deal, $payment->fresh());
+        $receipt = Receipt::issueFor($deal, $payment->fresh(), app(ExternalOperationRunner::class), app(SummitClient::class));
 
         $this->assertNotNull($receipt->id);
         $this->assertNotNull($payment->fresh()->cleared_date);
@@ -284,10 +286,10 @@ class PaymentsCollectionsTest extends TestCase
         $payment = $deal->recordPayment($deal->version, 500);
         $payment->markCleared();
 
-        Receipt::issueFor($deal, $payment->fresh());
+        Receipt::issueFor($deal, $payment->fresh(), app(ExternalOperationRunner::class), app(SummitClient::class));
 
         $this->expectException(RuntimeException::class);
-        Receipt::issueFor($deal, $payment->fresh());
+        Receipt::issueFor($deal, $payment->fresh(), app(ExternalOperationRunner::class), app(SummitClient::class));
     }
 
     public function test_marking_a_non_check_payment_as_cleared_is_blocked(): void

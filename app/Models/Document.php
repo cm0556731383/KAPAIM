@@ -4,6 +4,8 @@ namespace App\Models;
 
 use App\Services\ActivityLogger;
 use App\Services\DocumentLinkedFields;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -467,11 +469,21 @@ class Document extends Model
      * created here are a permanent snapshot of who this specific send went
      * to — a later change to contacts.is_primary can never alter them.
      *
+     * Build-plan 12: an invoice or credit note is issued to Summit at the
+     * moment it's sent here — this codebase's existing "sent_at is the
+     * final/official moment" convention (addLine()/removeLine() already
+     * block editing invoice lines once sent_at is set) made this the
+     * natural single wiring point, rather than at generateFor() (still just
+     * a local draft) or as a separate explicit action. Non-blocking — see
+     * ExternalOperationRunner's docblock: the document is sent locally
+     * either way; the caller can inspect the returned ExternalOperation to
+     * decide whether to also warn the user (FR-8.16).
+     *
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      *
      * @throws RuntimeException when no recipient is supplied.
      */
-    public function sendTo(array $recipients, string $format, ActivityLogger $logger): void
+    public function sendTo(array $recipients, string $format, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit): ?ExternalOperation
     {
         if (empty($recipients)) {
             throw new RuntimeException('יש לבחור לפחות נמען אחד לפני השליחה (FR-4.8/FR-4.9).');
@@ -497,5 +509,21 @@ class Document extends Model
             'deal_id' => $this->deal_id,
             'metadata' => ['format' => $format, 'recipient_count' => count($recipients)],
         ]);
+
+        if (! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            return null;
+        }
+
+        return $runner->run(
+            'summit',
+            $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
+            'app_action',
+            fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
+            [
+                'document_id' => $this->id,
+                'deal_id' => $this->deal_id,
+                'description' => "הפקת {$typeLabel} מול Summit עבור עסקה #{$this->deal_id}",
+            ],
+        );
     }
 }

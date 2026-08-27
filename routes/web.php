@@ -1,5 +1,13 @@
 <?php
 
+use App\Models\Deal;
+use App\Models\ExternalIntegrationSetting;
+use App\Models\Lead;
+use App\Models\MaterialDelivery;
+use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -37,6 +45,83 @@ Route::get('/materials/{material}/acknowledge', function (
 
     return view('materials.acknowledged', ['materialDelivery' => $material->load('program')]);
 })->middleware('signed')->name('materials.acknowledge');
+
+/**
+ * Build-plan 12 — three public, unauthenticated-by-Laravel-auth webhook
+ * endpoints (landing page, Smove, Summit). Each is gated instead by
+ * ExternalIntegrationSetting::verifyWebhookSecret() against an
+ * X-Webhook-Secret header — see that method's docblock for why a blank
+ * configured secret (the seeded default) always 403s rather than ever
+ * silently accepting an unauthenticated request. All business logic lives
+ * on the relevant model (Lead::createFromLandingPage(), MaterialDelivery::
+ * markOpened(), Deal::collectStandingOrderPayment()) — these closures are
+ * thin, matching the materials.acknowledge route above.
+ */
+Route::post('/webhooks/landing-page/lead', function (Request $request, ActivityLogger $activityLogger) {
+    abort_unless(ExternalIntegrationSetting::verifyWebhookSecret('landing_page', $request->header('X-Webhook-Secret')), 403);
+
+    $data = $request->validate([
+        'contact_name' => ['nullable', 'string', 'max:255'],
+        'school_name' => ['nullable', 'string', 'max:255'],
+        'school_phone' => ['nullable', 'string', 'max:50'],
+        'email' => ['required', 'email', 'max:255'],
+        'phone' => ['required', 'string', 'max:50'],
+    ]);
+
+    $lead = Lead::createFromLandingPage($data, $activityLogger);
+
+    return response()->json(['lead_id' => $lead->id], 201);
+})->name('webhooks.landing-page.lead');
+
+/**
+ * FR-5.10/FR-5.11: Smove's own open-tracking callback for a specific
+ * delivery — {material} bound the same way as the materials.acknowledge
+ * route above, but via the shared secret instead of a per-link signature
+ * (Smove calls this once per open, from its own server, not from a link a
+ * customer clicked).
+ */
+Route::post('/webhooks/smove/material-opened/{material}', function (Request $request, MaterialDelivery $material) {
+    abort_unless(ExternalIntegrationSetting::verifyWebhookSecret('smove', $request->header('X-Webhook-Secret')), 403);
+
+    $material->markOpened();
+
+    return response()->json(['status' => 'ok']);
+})->name('webhooks.smove.material-opened');
+
+/**
+ * FR-4.27: Summit's confirmation that a month's standing-order collection
+ * actually cleared. $data['deal_id'] is expected to be exactly the id
+ * Deal::registerStandingOrderWithSummit() sent Summit as its own merchant
+ * reference — see that method's docblock. A business-rule failure (wrong
+ * payment method, version conflict) or an unknown deal_id both come back as
+ * a normal failed EXTERNAL_OPERATION (logged, visible in the activity log)
+ * rather than a non-200 response, so Summit doesn't endlessly retry a
+ * request that will never succeed differently — only an auth failure 403s.
+ */
+Route::post('/webhooks/summit/standing-order-collected', function (Request $request, ExternalOperationRunner $runner, SummitClient $summit) {
+    abort_unless(ExternalIntegrationSetting::verifyWebhookSecret('summit', $request->header('X-Webhook-Secret')), 403);
+
+    $data = $request->validate([
+        'deal_id' => ['required', 'integer'],
+        'amount' => ['required', 'numeric', 'gt:0'],
+        'reference' => ['nullable', 'string'],
+    ]);
+
+    $operation = $runner->run(
+        'summit',
+        'standing_order_collected',
+        'webhook',
+        function () use ($data, $runner, $summit) {
+            $deal = Deal::findOrFail($data['deal_id']);
+            $deal->collectStandingOrderPayment((float) $data['amount'], $runner, $summit);
+
+            return $data['reference'] ?? (string) $deal->id;
+        },
+        ['deal_id' => $data['deal_id'], 'user' => null, 'description' => "גבייה אוטומטית בהוראת קבע עבור עסקה #{$data['deal_id']}"],
+    );
+
+    return response()->json(['status' => $operation->status]);
+})->name('webhooks.summit.standing-order-collected');
 
 Route::middleware('auth')->group(function () {
     Route::livewire('/', 'home');

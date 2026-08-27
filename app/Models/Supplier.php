@@ -46,9 +46,8 @@ class Supplier extends Model
      * mailing list automatically — mirrors Lead::joinPrimaryMailingList()'s
      * shape exactly (build-plan 10).
      *
-     * TODO(stage 12 — Smove): this membership should also be pushed to
-     * Smove — for now it is 100% real and local only, same stub boundary as
-     * ExternalIntegrationSetting elsewhere in this codebase.
+     * Build-plan 12: MailingMembership::addSupplier() below now also pushes
+     * this membership to Smove for real — nothing to change here.
      */
     public function joinSuppliersMailingList(): void
     {

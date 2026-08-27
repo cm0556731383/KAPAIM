@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -13,6 +15,13 @@ use RuntimeException;
  * ever created — same "sole creation point" convention as
  * Document::generateFor()/Deal::createForCustomer() — and enforces every
  * receipt-related business rule (FR-4.5, FR-4.23-FR-4.29) in one place.
+ *
+ * Build-plan 12: issueFor() also pushes the receipt to Summit right here —
+ * unlike an invoice/credit note (Document::sendTo(), pushed at "sent"),
+ * generating a receipt IS the single explicit action for this document type
+ * (there's no separate later send step), so this is its one wiring point.
+ * Non-blocking (see ExternalOperationRunner's docblock) — the local receipt
+ * row is created and returned regardless of whether Summit succeeds.
  */
 #[Fillable(['payment_id', 'document_id', 'status', 'issued_before_payment', 'issued_at'])]
 class Receipt extends Model
@@ -48,7 +57,7 @@ class Receipt extends Model
      *
      * @throws RuntimeException on a business-rule violation.
      */
-    public static function issueFor(Deal $deal, ?Payment $payment = null): self
+    public static function issueFor(Deal $deal, ?Payment $payment, ExternalOperationRunner $runner, SummitClient $summit): self
     {
         $invoice = $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
 
@@ -70,12 +79,27 @@ class Receipt extends Model
             }
         }
 
-        return self::create([
+        $receipt = self::create([
             'payment_id' => $payment?->id,
             'document_id' => $invoice->id,
             'status' => self::STATUS_ISSUED,
             'issued_before_payment' => $payment === null,
             'issued_at' => now(),
         ]);
+
+        $runner->run(
+            'summit',
+            'issue_receipt',
+            'app_action',
+            fn () => $summit->issueReceipt($receipt),
+            [
+                'document_id' => $invoice->id,
+                'payment_id' => $payment?->id,
+                'deal_id' => $deal->id,
+                'description' => "הפקת קבלה מול Summit עבור עסקה #{$deal->id}",
+            ],
+        );
+
+        return $receipt;
     }
 }

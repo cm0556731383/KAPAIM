@@ -12,6 +12,14 @@ class Role extends Model
 {
     use HasFactory;
 
+    /**
+     * Build-plan 13's future-facing role, seeded (not yet assigned to any
+     * real user for MVP) by ReferenceDataSeeder — build-plan 12's landing-
+     * page lead intake (Lead::createFromLandingPage()) auto-assigns among
+     * active users holding exactly this role, per FR-7.5.
+     */
+    public const SALES_REP_ROLE_NAME = 'עובדת מכירות';
+
     protected function casts(): array
     {
         return [

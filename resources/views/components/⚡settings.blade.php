@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\ProcessMaterialReminders;
 use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
 use App\Models\EmailTemplateField;
@@ -68,12 +69,92 @@ class extends Component
     public string $fieldLinkedField = '';
     public bool $fieldIsRequired = false;
 
-    // ===== אינטגרציות חיצוניות (EXTERNAL_INTEGRATION_SETTING) =====
-    public string $integrationSystem = '';
+    // ===== אינטגרציות חיצוניות (EXTERNAL_INTEGRATION_SETTING, build-plan 12) =====
+    public string $smoveBaseUrl = '';
+    public string $smoveApiKey = '';
+    public string $smoveWebhookSecret = '';
+    public string $smoveMaterialReminderHours = '48';
+
+    public string $summitBaseUrl = '';
+    public string $summitApiKey = '';
+    public string $summitWebhookSecret = '';
+
+    public string $landingPageWebhookSecret = '';
 
     public function mount(): void
     {
         abort_unless(auth()->user()->can('settings.manage'), 403);
+
+        $smove = ExternalIntegrationSetting::where('system', 'smove')->first()?->settings ?? [];
+        $this->smoveBaseUrl = (string) ($smove['base_url'] ?? '');
+        $this->smoveApiKey = (string) ($smove['api_key'] ?? '');
+        $this->smoveWebhookSecret = (string) ($smove['webhook_secret'] ?? '');
+        $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
+
+        $summit = ExternalIntegrationSetting::where('system', 'summit')->first()?->settings ?? [];
+        $this->summitBaseUrl = (string) ($summit['base_url'] ?? '');
+        $this->summitApiKey = (string) ($summit['api_key'] ?? '');
+        $this->summitWebhookSecret = (string) ($summit['webhook_secret'] ?? '');
+
+        $landingPage = ExternalIntegrationSetting::where('system', 'landing_page')->first()?->settings ?? [];
+        $this->landingPageWebhookSecret = (string) ($landingPage['webhook_secret'] ?? '');
+    }
+
+    /**
+     * Build-plan 12: these three save methods are where the business owner
+     * actually fills in Smove/Summit/landing-page's real base_url/api_key/
+     * webhook_secret — the code paths that use them (App\Services\Integrations\*,
+     * the three webhook routes) are already fully real; only these values were
+     * ever left open, per this stage's own scope decision.
+     */
+    public function saveSmoveSettings(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate([
+            'smoveBaseUrl' => ['nullable', 'url', 'max:255'],
+            'smoveApiKey' => ['nullable', 'string', 'max:255'],
+            'smoveWebhookSecret' => ['nullable', 'string', 'max:255'],
+            'smoveMaterialReminderHours' => ['required', 'integer', 'min:1'],
+        ], [], ['smoveBaseUrl' => 'כתובת שרת']);
+
+        ExternalIntegrationSetting::firstOrCreate(['system' => 'smove'], ['is_active' => false, 'settings' => []])->update(['settings' => [
+            'base_url' => $data['smoveBaseUrl'] ?: null,
+            'api_key' => $data['smoveApiKey'] ?: null,
+            'webhook_secret' => $data['smoveWebhookSecret'] ?: null,
+            'material_reminder_hours' => (int) $data['smoveMaterialReminderHours'],
+        ]]);
+
+        $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור Smove');
+        unset($this->integrations);
+    }
+
+    public function saveSummitSettings(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate([
+            'summitBaseUrl' => ['nullable', 'url', 'max:255'],
+            'summitApiKey' => ['nullable', 'string', 'max:255'],
+            'summitWebhookSecret' => ['nullable', 'string', 'max:255'],
+        ], [], ['summitBaseUrl' => 'כתובת שרת']);
+
+        ExternalIntegrationSetting::firstOrCreate(['system' => 'summit'], ['is_active' => false, 'settings' => []])->update(['settings' => [
+            'base_url' => $data['summitBaseUrl'] ?: null,
+            'api_key' => $data['summitApiKey'] ?: null,
+            'webhook_secret' => $data['summitWebhookSecret'] ?: null,
+        ]]);
+
+        $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור Summit');
+        unset($this->integrations);
+    }
+
+    public function saveLandingPageSettings(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate(['landingPageWebhookSecret' => ['nullable', 'string', 'max:255']]);
+
+        ExternalIntegrationSetting::firstOrCreate(['system' => 'landing_page'], ['is_active' => false, 'settings' => []])->update(['settings' => [
+            'webhook_secret' => $data['landingPageWebhookSecret'] ?: null,
+        ]]);
+
+        $activityLogger->log('external_integration_setting.updated', 'עודכן סוד ה-Webhook של דף הנחיתה');
+        unset($this->integrations);
     }
 
     // ----- סטטוסים -----
@@ -673,9 +754,9 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>אינטגרציות חיצוניות</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">שלד קונפיגורציה ל-Smove ו-Summit — חיבור בפועל נבנה בשלב עתידי</p>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">חיבור אמיתי ל-Smove ו-Summit, וה-Webhook הנכנס מדף הנחיתה — כל עוד "מושבת" למטה, שום קריאה החוצה לא מתבצעת בפועל</p>
         </div>
-        <div class="card" style="padding:0; overflow:hidden">
+        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <table>
                 <thead><tr><th>מערכת</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -694,6 +775,65 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+        </div>
+
+        <div class="cols2">
+            <div class="card">
+                <h3>Smove — כתובת שרת ומפתח</h3>
+                <form wire:submit="saveSmoveSettings" class="form-grid">
+                    <div class="full">
+                        <label for="smoveBaseUrl">כתובת שרת (Base URL)</label>
+                        <input type="text" id="smoveBaseUrl" wire:model="smoveBaseUrl" class="ltr-num" dir="ltr" placeholder="https://api.smove.co.il">
+                        @error('smoveBaseUrl') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full">
+                        <label for="smoveApiKey">מפתח API</label>
+                        <input type="password" id="smoveApiKey" wire:model="smoveApiKey" class="ltr-num" dir="ltr">
+                    </div>
+                    <div class="full">
+                        <label for="smoveWebhookSecret">סוד Webhook (למעקב פתיחת חומרי לימוד)</label>
+                        <input type="password" id="smoveWebhookSecret" wire:model="smoveWebhookSecret" class="ltr-num" dir="ltr">
+                    </div>
+                    <div>
+                        <label for="smoveMaterialReminderHours">חלון תזכורת חומרי לימוד (שעות)</label>
+                        <input type="text" id="smoveMaterialReminderHours" wire:model="smoveMaterialReminderHours" class="ltr-num" dir="ltr">
+                        @error('smoveMaterialReminderHours') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">שמירת הגדרות Smove</button></div>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Summit — כתובת שרת ומפתח</h3>
+                <form wire:submit="saveSummitSettings" class="form-grid">
+                    <div class="full">
+                        <label for="summitBaseUrl">כתובת שרת (Base URL)</label>
+                        <input type="text" id="summitBaseUrl" wire:model="summitBaseUrl" class="ltr-num" dir="ltr" placeholder="https://api.summit.co.il">
+                        @error('summitBaseUrl') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full">
+                        <label for="summitApiKey">מפתח API</label>
+                        <input type="password" id="summitApiKey" wire:model="summitApiKey" class="ltr-num" dir="ltr">
+                    </div>
+                    <div class="full">
+                        <label for="summitWebhookSecret">סוד Webhook (לגבייה אוטומטית בהוראת קבע, FR-4.27)</label>
+                        <input type="password" id="summitWebhookSecret" wire:model="summitWebhookSecret" class="ltr-num" dir="ltr">
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">שמירת הגדרות Summit</button></div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:var(--sp-md); max-width:640px">
+            <h3>דף הנחיתה — סוד Webhook</h3>
+            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">יש להזין סוד זה גם בהגדרות דף הנחיתה עצמו, בכותרת X-Webhook-Secret (FR-1.18).</p>
+            <form wire:submit="saveLandingPageSettings" class="form-grid">
+                <div class="full">
+                    <label for="landingPageWebhookSecret">סוד Webhook</label>
+                    <input type="password" id="landingPageWebhookSecret" wire:model="landingPageWebhookSecret" class="ltr-num" dir="ltr">
+                </div>
+                <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
+            </form>
         </div>
     </section>
 </div>

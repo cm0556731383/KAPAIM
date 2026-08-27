@@ -253,9 +253,8 @@ class Subscription extends Model
      * Program::scopeMonthlyCatalog()'s docblock for the fixed "every program
      * included in the subscription" set this reads against.
      *
-     * TODO(stage 12 — Smove): also push this removal to Smove — for now it
-     * is 100% real and local only, same stub boundary as
-     * ExternalIntegrationSetting elsewhere in this codebase.
+     * Build-plan 12: MailingMembership::removeCustomer() below now also
+     * pushes this removal to Smove for real — nothing to change here.
      */
     private function removeSubscriptionMailingListMemberships(): void
     {

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Mail\LeadConfirmationMail;
 use App\Services\ActivityLogger;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use RuntimeException;
 
 /**
@@ -193,9 +196,8 @@ class Lead extends Model
      * converts, convertToCustomer() below backfills this same row with
      * customer_id so it becomes a real "customer joins mailing list" row.
      *
-     * TODO(stage 12 — Smove): this membership should also be pushed to
-     * Smove — for now it is 100% real and local only, same stub boundary as
-     * ExternalIntegrationSetting elsewhere in this codebase.
+     * Build-plan 12: MailingMembership::addLead() below now also pushes this
+     * membership to Smove for real — nothing to change here.
      */
     public function joinPrimaryMailingList(): void
     {
@@ -293,5 +295,124 @@ class Lead extends Model
         ]);
 
         return $customer;
+    }
+
+    /**
+     * Build-plan 12 — FR-1.18: the sole entry point for
+     * /webhooks/landing-page/lead (routes/web.php), the only caller. Mirrors
+     * ⚡leads.blade.php's addLead() dedup shape (FR-1.9) exactly, except: an
+     * exact-duplicate school never blocks here (there's no staff member to
+     * show an error to) — it logs the repeat inquiry against the existing
+     * lead and returns that lead, still sending the confirmation email
+     * below; a fuzzy-duplicate warning is skipped entirely (nobody to show
+     * it to either). FR-7.5: auto-assigns a sales rep when one exists
+     * (User::pickForAutoAssignment()) — leaving the lead unassigned when
+     * none does is this build-plan's own documented valid state.
+     *
+     * @param  array{contact_name: string, school_name: ?string, email: string, phone: string, school_phone: ?string}  $payload
+     */
+    public static function createFromLandingPage(array $payload, ActivityLogger $activityLogger): self
+    {
+        $schoolName = trim((string) ($payload['school_name'] ?? ''));
+        $schoolPhone = $payload['school_phone'] ?? null;
+        $school = null;
+
+        if ($schoolName !== '') {
+            $exactSchool = self::findExactDuplicateSchool($schoolName, $schoolPhone ?? $payload['phone']);
+
+            if ($exactSchool) {
+                $existingLead = self::where('school_id', $exactSchool->id)->latest()->first();
+
+                if ($existingLead) {
+                    $activityLogger->log('lead.repeat_inquiry', "פנייה חוזרת מדף הנחיתה עבור \"{$exactSchool->name}\" נרשמה על ליד קיים #{$existingLead->id}", [
+                        'lead_id' => $existingLead->id,
+                        'school_id' => $exactSchool->id,
+                        'user' => null,
+                    ]);
+
+                    self::sendLandingPageConfirmation($payload, $existingLead, $activityLogger);
+
+                    return $existingLead;
+                }
+
+                $school = $exactSchool;
+            } else {
+                $school = School::create(['name' => $schoolName, 'phone' => $schoolPhone]);
+            }
+        }
+
+        $source = LeadSource::firstOrCreate(['name' => 'דף נחיתה'], ['is_active' => true]);
+        $newStatus = StatusDefinition::firstOrCreate(
+            ['scope' => 'lead', 'name' => self::NEW_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 1],
+        );
+
+        $lead = self::create([
+            'school_id' => $school?->id,
+            'lead_source_id' => $source->id,
+            'status_id' => $newStatus->id,
+            'email' => $payload['email'],
+            'phone' => $payload['phone'],
+        ]);
+
+        $lead->joinPrimaryMailingList();
+
+        $salesRep = User::pickForAutoAssignment();
+
+        if ($salesRep) {
+            $lead->update(['assigned_user_id' => $salesRep->id]);
+        }
+
+        $activityLogger->log('lead.created', 'נוצר ליד חדש מדף הנחיתה: '.($school?->name ?? $lead->email).' (FR-1.18)', [
+            'lead_id' => $lead->id,
+            'school_id' => $school?->id,
+            'user' => null,
+            'metadata' => ['auto_assigned_user_id' => $salesRep?->id],
+        ]);
+
+        self::sendLandingPageConfirmation($payload, $lead, $activityLogger);
+
+        return $lead;
+    }
+
+    /**
+     * FR-1.18's "מייל אישור אוטומטי" half — direct SMTP via Laravel Mail
+     * (EMAIL_TEMPLATE, never Smove — see build-plan 02's own distinction),
+     * never blocking lead creation: a missing template or a mail failure is
+     * logged and swallowed, exactly like a failed Smove/Summit call
+     * (FR-8.16-FR-8.18's underlying principle, reused here even though those
+     * FRs name only Smove/Summit).
+     */
+    private static function sendLandingPageConfirmation(array $payload, self $lead, ActivityLogger $activityLogger): void
+    {
+        $template = EmailTemplate::where('template_type', 'lead_confirmation')->where('is_active', true)->first();
+
+        if (! $template) {
+            $activityLogger->log('lead.confirmation_email_skipped', "לא נשלח מייל אישור לליד #{$lead->id} — לא נמצאה תבנית 'lead_confirmation' פעילה", [
+                'lead_id' => $lead->id, 'user' => null,
+            ]);
+
+            return;
+        }
+
+        $rendered = $template->render([
+            'contact_name' => $payload['contact_name'] ?? $payload['email'],
+            'school_name' => $payload['school_name'] ?? '',
+        ]);
+
+        try {
+            Mail::to($payload['email'], $payload['contact_name'] ?? $payload['email'])
+                ->send(new LeadConfirmationMail($rendered['subject'], $rendered['content']));
+
+            $activityLogger->log('lead.confirmation_email_sent', "נשלח מייל אישור אוטומטי לליד #{$lead->id} (FR-1.18)", [
+                'lead_id' => $lead->id, 'user' => null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Lead confirmation email failed', ['lead_id' => $lead->id, 'error' => $e->getMessage()]);
+
+            $activityLogger->log('lead.confirmation_email_failed', "שליחת מייל אישור לליד #{$lead->id} נכשלה: {$e->getMessage()}", [
+                'lead_id' => $lead->id, 'user' => null,
+            ]);
+        }
     }
 }

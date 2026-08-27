@@ -3,7 +3,10 @@
 use App\Concerns\Notifies;
 use App\Models\Contact;
 use App\Models\Document;
+use App\Models\ExternalOperation;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -173,12 +176,12 @@ class extends Component
      * recipient rows created here are a permanent snapshot — never derived
      * live from contacts.is_primary again.
      */
-    public function send(string $format, ActivityLogger $activityLogger): void
+    public function send(string $format, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         $this->sendError = null;
 
         try {
-            $this->document->sendTo($this->workingRecipients, $format, $activityLogger);
+            $operation = $this->document->sendTo($this->workingRecipients, $format, $activityLogger, $runner, $summit);
         } catch (\RuntimeException $e) {
             $this->sendError = $e->getMessage();
 
@@ -186,6 +189,12 @@ class extends Component
         }
 
         $this->document->refresh()->load('recipients');
+
+        if ($operation?->status === ExternalOperation::STATUS_FAILED) {
+            $this->notifyWarning('המסמך נשלח, אך ההפקה מול Summit נכשלה — ראו יומן פעילות (FR-8.16).');
+
+            return;
+        }
 
         $this->notifySuccess('המסמך נשלח בהצלחה.');
     }

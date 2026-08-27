@@ -7,9 +7,12 @@ use App\Models\Document;
 use App\Models\DocumentTemplate;
 use App\Models\Payment;
 use App\Models\PaymentMethod;
+use App\Models\ExternalOperation;
 use App\Models\Receipt;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -279,6 +282,57 @@ class extends Component
         $this->notifySuccess("התשלום נרשם בהצלחה (₪{$data['paymentAmount']}).");
     }
 
+    /**
+     * Build-plan 12: charges via Summit first, then records the payment —
+     * see Deal::chargeCardViaSummit()'s docblock for why this is the one
+     * payment path where the external call happens before the local record.
+     */
+    public function chargeCard(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
+    {
+        $this->paymentError = null;
+
+        $data = $this->validate([
+            'paymentAmount' => ['required', 'numeric', 'gt:0'],
+        ], [], ['paymentAmount' => 'סכום לסליקה']);
+
+        try {
+            $payment = $this->deal->chargeCardViaSummit($this->loadedVersion, (float) $data['paymentAmount'], $runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('payment.recorded', "נסלק אשראי ונרשם תשלום בסך ₪{$data['paymentAmount']} עבור עסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id,
+            'customer_id' => $this->deal->customer_id,
+            'metadata' => ['amount' => $data['paymentAmount'], 'payment_id' => $payment->id],
+        ]);
+
+        $this->reset(['paymentAmount', 'paymentDate']);
+        $this->deal->load('status');
+        $this->syncFields();
+        unset($this->payments);
+
+        $this->notifySuccess("הסליקה הושלמה והתשלום נרשם בהצלחה (₪{$data['paymentAmount']}).");
+    }
+
+    /** Build-plan 12 — Deal::registerStandingOrderWithSummit(). */
+    public function registerStandingOrder(ExternalOperationRunner $runner, SummitClient $summit): void
+    {
+        $this->paymentError = null;
+
+        try {
+            $this->deal->registerStandingOrderWithSummit($runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $this->notifySuccess('הוראת הקבע נרשמה מול Summit בהצלחה.');
+    }
+
     /** FR-4.28: a separate explicit action from "received" — never inferred. */
     public function markCheckCleared(int $paymentId, ActivityLogger $activityLogger): void
     {
@@ -306,14 +360,14 @@ class extends Component
      * (FR-4.24/FR-4.25) — Receipt::issueFor() is the only place a receipt is
      * ever created and re-checks every gate server-side.
      */
-    public function issueReceipt(?int $paymentId, ActivityLogger $activityLogger): void
+    public function issueReceipt(?int $paymentId, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         $this->paymentError = null;
 
         $payment = $paymentId ? Payment::findOrFail($paymentId) : null;
 
         try {
-            $receipt = Receipt::issueFor($this->deal, $payment);
+            $receipt = Receipt::issueFor($this->deal, $payment, $runner, $summit);
         } catch (\RuntimeException $e) {
             $this->paymentError = $e->getMessage();
 
@@ -327,6 +381,18 @@ class extends Component
         ]);
 
         unset($this->payments);
+
+        $summitFailed = ExternalOperation::where('document_id', $receipt->document_id)
+            ->where('operation_type', 'issue_receipt')
+            ->where('status', ExternalOperation::STATUS_FAILED)
+            ->latest('id')
+            ->exists();
+
+        if ($summitFailed) {
+            $this->notifyWarning('הקבלה נרשמה במערכת, אך ההפקה מול Summit נכשלה — ראו יומן פעילות (FR-8.16).');
+
+            return;
+        }
 
         $this->notifySuccess('הקבלה הופקה בהצלחה.');
     }
@@ -524,21 +590,40 @@ class extends Component
             <div class="v ltr-num" style="{{ $this->outstandingBalance > 0 ? 'color:var(--color-error)' : 'color:var(--color-success)' }}">₪{{ number_format($this->outstandingBalance, 0) }}</div>
         </div>
 
-        <form wire:submit="recordPayment" class="form-grid" style="margin-bottom:var(--sp-lg)">
-            <div>
-                <label for="paymentAmount">סכום שהתקבל</label>
-                <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+        @if ($deal->paymentMethod?->type === 'card')
+            <form wire:submit="chargeCard" class="form-grid" style="margin-bottom:var(--sp-lg)">
+                <div>
+                    <label for="paymentAmount">סכום לסליקה</label>
+                    <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                    @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div class="full"><button type="submit" class="btn btn-primary">סליקת אשראי מול Summit</button></div>
+                <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">הסכום נסלק בפועל מול Summit, ורק לאחר אישור הסליקה נרשם תשלום מקומי (PRD §1.4).</p>
+            </form>
+        @else
+            <form wire:submit="recordPayment" class="form-grid" style="margin-bottom:var(--sp-lg)">
+                <div>
+                    <label for="paymentAmount">סכום שהתקבל</label>
+                    <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                    @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="paymentDate">תאריך קבלה (ברירת מחדל: היום)</label>
+                    <input type="date" id="paymentDate" wire:model="paymentDate">
+                </div>
+                <div class="full"><button type="submit" class="btn btn-primary" @disabled(! $deal->payment_method_id)>רישום תשלום</button></div>
+                @unless ($deal->payment_method_id)
+                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">יש לבחור אמצעי תשלום בפרטי העסקה לפני רישום תשלום (FR-4.30).</p>
+                @endunless
+            </form>
+        @endif
+
+        @if ($deal->paymentMethod?->type === 'recurring')
+            <div style="display:flex; gap:var(--sp-sm); align-items:center; margin-bottom:var(--sp-lg)">
+                <button type="button" wire:click="registerStandingOrder" class="btn btn-secondary">רישום הוראת קבע מול Summit</button>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">גבייה חודשית וקבלה אוטומטית לאחריה (FR-4.27) יתבצעו מרגע זה מול Summit.</p>
             </div>
-            <div>
-                <label for="paymentDate">תאריך קבלה (ברירת מחדל: היום)</label>
-                <input type="date" id="paymentDate" wire:model="paymentDate">
-            </div>
-            <div class="full"><button type="submit" class="btn btn-primary" @disabled(! $deal->payment_method_id)>רישום תשלום</button></div>
-            @unless ($deal->payment_method_id)
-                <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">יש לבחור אמצעי תשלום בפרטי העסקה לפני רישום תשלום (FR-4.30).</p>
-            @endunless
-        </form>
+        @endif
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg)">
             <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($this->documents->where('document_type', 'invoice')->isEmpty())>הפקת קבלה לפני תשלום (FR-4.24/FR-4.25)</button>

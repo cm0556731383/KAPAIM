@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -21,11 +23,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * yet a customer, joins the primary list" needs a real FK to hang that row
  * on) — Lead::convertToCustomer() backfills customer_id onto the same row.
  *
- * TODO(stage 12 — Smove): every join/removal here represents a real Smove
- * mailing-list API call per docs/erd.md's own note ("קריאות ל-Smove, לא רק
- * שינוי מקומי") — not implemented until build-plan 12 (same stub boundary as
- * ExternalIntegrationSetting throughout this codebase). The membership state
- * itself is 100% real and local today.
+ * Build-plan 12: every join/removal below also pushes to Smove via
+ * pushToSmove() — a real HTTP call, but never blocking or rolling back the
+ * local membership row above it, which is always written first and stays
+ * the source of truth (1.5) regardless of whether the push succeeds (see
+ * ExternalOperationRunner's docblock for why).
  */
 #[Fillable(['mailing_list_id', 'lead_id', 'customer_id', 'supplier_id', 'membership_status', 'joined_at', 'removed_at'])]
 class MailingMembership extends Model
@@ -77,6 +79,11 @@ class MailingMembership extends Model
         $membership->removed_at = null;
         $membership->save();
 
+        self::pushToSmove('join', $list->name, [
+            'email' => $lead->email,
+            'name' => $lead->school?->name ?? $lead->email,
+        ], ['lead_id' => $lead->id]);
+
         return $membership;
     }
 
@@ -96,6 +103,13 @@ class MailingMembership extends Model
         $membership->membership_status = self::STATUS_ACTIVE;
         $membership->removed_at = null;
         $membership->save();
+
+        $primaryContact = $customer->contacts()->where('is_primary', true)->first();
+
+        self::pushToSmove('join', $list->name, [
+            'email' => $primaryContact?->email,
+            'name' => $customer->school?->name ?? $primaryContact?->name,
+        ], ['customer_id' => $customer->id]);
 
         return $membership;
     }
@@ -117,6 +131,11 @@ class MailingMembership extends Model
         $membership->removed_at = null;
         $membership->save();
 
+        self::pushToSmove('join', $list->name, [
+            'email' => $supplier->email,
+            'name' => $supplier->name,
+        ], []);
+
         return $membership;
     }
 
@@ -127,9 +146,37 @@ class MailingMembership extends Model
      */
     public static function removeCustomer(MailingList $list, Customer $customer): void
     {
-        self::where('mailing_list_id', $list->id)
+        $affected = self::where('mailing_list_id', $list->id)
             ->where('customer_id', $customer->id)
             ->where('membership_status', self::STATUS_ACTIVE)
             ->update(['membership_status' => self::STATUS_REMOVED, 'removed_at' => now()]);
+
+        if ($affected > 0) {
+            $primaryContact = $customer->contacts()->where('is_primary', true)->first();
+
+            self::pushToSmove('remove', $list->name, [
+                'email' => $primaryContact?->email,
+                'name' => $customer->school?->name ?? $primaryContact?->name,
+            ], ['customer_id' => $customer->id]);
+        }
+    }
+
+    /**
+     * Build-plan 12: fire-and-forget best-effort Smove push, shared by every
+     * factory method above — never throws (ExternalOperationRunner swallows
+     * SmoveClient's RuntimeException, including "not configured yet", into a
+     * failed EXTERNAL_OPERATION + ACTIVITY_LOG row) and never returns
+     * anything the caller needs, since the local membership row above it is
+     * already the durable fact.
+     */
+    private static function pushToSmove(string $action, string $listName, array $contact, array $context): void
+    {
+        app(ExternalOperationRunner::class)->run(
+            'smove',
+            'mailing_list_'.$action,
+            'app_action',
+            fn () => app(SmoveClient::class)->syncMailingListMembership($listName, $action, $contact),
+            array_merge($context, ['description' => ($action === 'join' ? 'הצטרפות' : 'הסרה')." מרשימת תפוצה \"{$listName}\""]),
+        );
     }
 }

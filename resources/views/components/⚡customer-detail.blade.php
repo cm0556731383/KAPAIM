@@ -6,12 +6,15 @@ use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
+use App\Models\ExternalOperation;
 use App\Models\MaterialDelivery;
 use App\Models\PaymentMethod;
 use App\Models\Program;
 use App\Models\Subscription;
 use App\Models\Task;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -660,11 +663,11 @@ class extends Component
      * MaterialDelivery::sendFor() enforces the "at least one recipient with
      * a valid email" / "at least one attachment" gates server-side
      * (FR-5.2/FR-5.3/FR-8.13/FR-8.14). FR-5.6/FR-5.20: the uploaded file(s)
-     * are forwarded to Smove at send time (stage 12) and explicitly deleted
-     * from Livewire's temporary storage right after — never copied into
-     * permanent storage/app.
+     * are forwarded to Smove at send time (build-plan 12, real as of this
+     * stage) and explicitly deleted from Livewire's temporary storage right
+     * after — never copied into permanent storage/app.
      */
-    public function sendMaterials(ActivityLogger $activityLogger): void
+    public function sendMaterials(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): void
     {
         abort_unless(auth()->user()->can('materials.manage'), 403);
 
@@ -685,15 +688,19 @@ class extends Component
         );
 
         try {
-            MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger);
+            $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove);
         } catch (\RuntimeException $e) {
             $this->materialsError = $e->getMessage();
 
             return;
         }
 
-        // FR-5.6/FR-5.20: discard the temp upload now that the (stubbed)
-        // Smove send is done — it is never persisted anywhere in this app.
+        if (ExternalOperation::where('material_delivery_id', $delivery->id)->where('status', ExternalOperation::STATUS_FAILED)->exists()) {
+            $this->notifyWarning('חומרי הלימוד נרשמו במערכת, אך שליחתם בפועל דרך Smove נכשלה — ראו יומן פעילות (FR-8.16).');
+        }
+
+        // FR-5.6/FR-5.20: discard the temp upload now that the Smove send
+        // attempt is done — it is never persisted anywhere in this app.
         foreach ($this->materialsFiles as $file) {
             $file->delete();
         }
