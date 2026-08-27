@@ -41,7 +41,12 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('leads.manage'), 403);
+        // Build-plan 13: a "leads.view"-only role (future "עובדת מכירות") may
+        // also open this page — the leads() query below scopes what such a
+        // user actually sees to their own not-yet-converted assignments;
+        // leads.manage holders (owner/secretary) are unaffected, unfiltered.
+        $user = auth()->user();
+        abort_unless($user->can('leads.manage') || $user->can('leads.view'), 403);
     }
 
     /**
@@ -133,8 +138,15 @@ class extends Component
     #[Computed]
     public function leads()
     {
+        $user = auth()->user();
+
         return Lead::query()
             ->with(['school', 'status', 'source', 'assignedUser', 'interestedPrograms', 'followUps'])
+            // Build-plan 13 (FR-7.2): a leads.manage holder sees every lead,
+            // unfiltered — a leads.view-only holder (future "עובדת מכירות")
+            // only sees leads assigned to them that have not yet converted
+            // (FR-7.4), scoped directly in the query, not filtered in PHP.
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
             ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
             ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
@@ -146,13 +158,28 @@ class extends Component
     #[Computed]
     public function schools()
     {
-        return School::orderBy('name')->get();
+        $user = auth()->user();
+
+        return School::query()
+            // Build-plan 13: the filter dropdowns must not leak other reps'
+            // school names to a leads.view-only user — same scope as leads().
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->whereHas(
+                'leads', fn ($lq) => $lq->where('assigned_user_id', $user->id)->whereNull('converted_at')
+            ))
+            ->orderBy('name')
+            ->get();
     }
 
     #[Computed]
     public function cities()
     {
-        return School::whereNotNull('city')->where('city', '!=', '')->distinct()->orderBy('city')->pluck('city');
+        $user = auth()->user();
+
+        return School::whereNotNull('city')->where('city', '!=', '')
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->whereHas(
+                'leads', fn ($lq) => $lq->where('assigned_user_id', $user->id)->whereNull('converted_at')
+            ))
+            ->distinct()->orderBy('city')->pluck('city');
     }
 
     #[Computed]
@@ -170,7 +197,27 @@ class extends Component
     #[Computed]
     public function statusCounts()
     {
-        return Lead::query()->selectRaw('status_id, count(*) as aggregate')->groupBy('status_id')->pluck('aggregate', 'status_id');
+        $user = auth()->user();
+
+        return Lead::query()
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
+            ->selectRaw('status_id, count(*) as aggregate')
+            ->groupBy('status_id')
+            ->pluck('aggregate', 'status_id');
+    }
+
+    /**
+     * Same leads.manage/leads.view scope as leads()/statusCounts() above —
+     * backs the "הכל (N)" chip.
+     */
+    #[Computed]
+    public function totalLeadsCount()
+    {
+        $user = auth()->user();
+
+        return Lead::query()
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
+            ->count();
     }
 };
 ?>
@@ -236,7 +283,7 @@ class extends Component
     </div>
 
     <div class="filters">
-        <span class="chip {{ $filterStatusId === '' ? 'active' : '' }}" wire:click="$set('filterStatusId', '')">הכל ({{ Lead::count() }})</span>
+        <span class="chip {{ $filterStatusId === '' ? 'active' : '' }}" wire:click="$set('filterStatusId', '')">הכל ({{ $this->totalLeadsCount }})</span>
         @foreach ($this->statuses as $status)
             <span class="chip {{ (string) $filterStatusId === (string) $status->id ? 'active' : '' }}" wire:click="$set('filterStatusId', '{{ $status->id }}')">{{ $status->name }} ({{ $this->statusCounts[$status->id] ?? 0 }})</span>
         @endforeach

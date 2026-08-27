@@ -7,6 +7,7 @@ use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\LeadSource;
 use App\Models\PaymentMethod;
+use App\Models\Role;
 use App\Models\StatusDefinition;
 use Illuminate\Database\Seeder;
 
@@ -71,6 +72,14 @@ class ReferenceDataSeeder extends Seeder
         // ----- שלד אינטגרציות (שלב 12) -----
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => false, 'settings' => []]);
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+
+        // ----- תפקיד עתידי: עובדת מכירות (שלב 13, FR-7.2) -----
+        // Not activated/assigned to a real user for MVP (build-plan 13's own
+        // note) — the role and its single narrow permission row exist so the
+        // record-level LeadPolicy mechanism is real, queryable, demo/test-able
+        // data now, with zero refactor needed when it's actually turned on.
+        $salesRep = Role::create(['name' => 'עובדת מכירות', 'is_active' => true]);
+        $salesRep->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
     }
 
     private function statuses(string $scope, array $names): void

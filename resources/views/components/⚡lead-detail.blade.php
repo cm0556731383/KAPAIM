@@ -9,6 +9,7 @@ use App\Models\Program;
 use App\Models\School;
 use App\Models\StatusDefinition;
 use App\Models\Task;
+use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Computed;
@@ -32,6 +33,9 @@ class extends Component
     // ===== פרטי ליד =====
     public string $leadSourceId = '';
     public string $leadNotes = '';
+
+    // ===== שיוך ליד (FR-7.5 — הקצאה ידנית, leads.manage בלבד) =====
+    public string $assignedUserId = '';
 
     /** @see Lead::findFuzzyDuplicateSchool() */
     public ?string $duplicateWarning = null;
@@ -77,7 +81,15 @@ class extends Component
 
     public function mount(Lead $lead): void
     {
-        abort_unless(auth()->user()->can('leads.manage'), 403);
+        // Build-plan 13: resource-level gate first (leads.manage OR
+        // leads.view — a future "עובדת מכירות" holds only the latter), then
+        // the record-level LeadPolicy::view() check (a non-dotted ability,
+        // so it falls through Gate::before to the actual Policy) — this is
+        // what enforces "own assigned, not-yet-converted leads only" for a
+        // leads.view-only user, and revokes access the instant FR-7.4 fires.
+        $user = auth()->user();
+        abort_unless($user->can('leads.manage') || $user->can('leads.view'), 403);
+        abort_unless($user->can('view', $lead), 403);
 
         $this->lead = $lead->load('school');
         $this->syncSchoolFields();
@@ -85,6 +97,7 @@ class extends Component
         $this->leadNotes = (string) $lead->notes;
         $this->selectedStatusId = (string) $lead->status_id;
         $this->selectedSubStatus = (string) $lead->sub_status;
+        $this->assignedUserId = (string) ($lead->assigned_user_id ?? '');
     }
 
     /**
@@ -187,6 +200,40 @@ class extends Component
         $activityLogger->log('lead.updated', "עודכנו פרטי ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
 
         $this->lead->refresh();
+    }
+
+    // ----- שיוך ליד (FR-7.5) -----
+
+    /**
+     * Manual half of FR-7.5 (the landing-page-automatic half is stage 12's
+     * territory). Gated on leads.manage only — a "עובדת מכירות" holding just
+     * leads.view has no route to this method at all (no control rendered
+     * for her, and this check re-verifies it server-side regardless).
+     */
+    public function assignUser(ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('leads.manage'), 403);
+
+        $data = $this->validate(['assignedUserId' => ['nullable', 'exists:users,id']]);
+
+        $oldUser = $this->lead->assignedUser;
+        $newUserId = $data['assignedUserId'] ?: null;
+
+        $this->lead->update(['assigned_user_id' => $newUserId]);
+        $newUser = $newUserId ? User::find($newUserId) : null;
+
+        $activityLogger->log('lead.assigned', "ליד #{$this->lead->id} שויך מ\"{$oldUser?->name}\" ל\"{$newUser?->name}\"", [
+            'lead_id' => $this->lead->id,
+            'metadata' => ['old_user_id' => $oldUser?->id, 'new_user_id' => $newUserId],
+        ]);
+
+        $this->lead->refresh();
+    }
+
+    #[Computed]
+    public function activeUsers()
+    {
+        return User::where('is_active', true)->orderBy('name')->get();
     }
 
     // ----- סטטוס (FR-1.4, FR-1.5, FR-1.6, FR-1.8) -----
@@ -646,6 +693,23 @@ class extends Component
                     </div>
                     <div class="full"><button type="submit" class="btn btn-secondary">שמירת פרטי הפנייה</button></div>
                 </form>
+
+                @can('leads.manage')
+                    {{-- FR-7.5 — הקצאה ידנית של ליד; רק בעלת גישה מלאה יכולה
+                    לשייך/לשנות שיוך, לא עובדת מכירות עצמה. --}}
+                    <form wire:submit="assignUser" class="form-grid" style="margin-top:var(--sp-lg)">
+                        <div class="full">
+                            <label for="assignedUserId">מטפלת בליד</label>
+                            <select id="assignedUserId" wire:model="assignedUserId">
+                                <option value="">— ללא —</option>
+                                @foreach ($this->activeUsers as $activeUser)
+                                    <option value="{{ $activeUser->id }}">{{ $activeUser->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="full"><button type="submit" class="btn btn-secondary">עדכון שיוך</button></div>
+                    </form>
+                @endcan
 
                 <h3 style="margin-top:var(--sp-lg)">תוכניות מבוקשות</h3>
                 <div class="chip-list" style="margin-bottom:var(--sp-md)">
