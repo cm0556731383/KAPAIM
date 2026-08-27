@@ -98,6 +98,22 @@
             <path d="M15 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9"/>
             <path d="M10 12h11m0 0-3.5-3.5M21 12l-3.5 3.5"/>
         </symbol>
+        {{-- Build-plan 15 (dashboard) — ported from docs/storyboard/dashboard.html --}}
+        <symbol id="icon-phone" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 3h3l2 5-2.5 1.5a12 12 0 0 0 5 5L15 12l5 2v3a2 2 0 0 1-2 2C10.5 19 5 13.5 5 6a2 2 0 0 1 1-3Z"/>
+        </symbol>
+        <symbol id="icon-check" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="8.5"/>
+            <path d="M8.2 12.3l2.6 2.6 5-5.2"/>
+        </symbol>
+        <symbol id="icon-star" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4-6.5 4V4.5a1 1 0 0 1 1-1Z"/>
+        </symbol>
+        <symbol id="icon-deals" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="8" width="18" height="12" rx="2"/>
+            <path d="M8.5 8V6.5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2V8"/>
+            <line x1="3" y1="13.5" x2="21" y2="13.5"/>
+        </symbol>
     </g>
 </svg>
 

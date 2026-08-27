@@ -184,3 +184,17 @@ tr.row-link { cursor: pointer; }
 .result-row .result-main { flex: 1; min-width: 0; }
 .result-row .result-title { font-weight: 600; }
 .result-row .result-sub { color: var(--color-text-secondary); font-size: var(--fs-small); margin-top: 2px; }
+
+/* ===== Home / dashboard (build-plan 15) — ported from
+   docs/storyboard/dashboard.html ===== */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: var(--sp-md); margin-bottom: var(--sp-xl); }
+.kpi:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-2px); }
+.kpi-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-md); }
+.kpi .label { color: var(--color-text-secondary); font-size: var(--fs-small); font-weight: 500; }
+.kpi .num { font-family: var(--font-display); font-weight: 500; font-size: 34px; line-height: 1; }
+.kpi .delta { font-size: var(--fs-caption); font-weight: 600; margin-top: var(--sp-sm); display: flex; align-items: center; gap: 4px; }
+
+.cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-lg); align-items: start; }
+.list-item { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
+.list-item:last-child { border-bottom: none; }
+.list-item .who { font-size: var(--fs-caption); color: var(--color-text-secondary); }
