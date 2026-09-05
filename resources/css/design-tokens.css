@@ -99,7 +99,9 @@ h3 { font-family: var(--font-body); font-weight: 600; font-size: var(--fs-h3); }
 }
 
 /* Numbers/dates/currency stay LTR inside RTL flow */
-.ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; }
+.ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* display:inline-block above is for a <span> inside RTL prose — on a <td> (how every table uses this class) it breaks the row/column grid, so keep it a real cell. */
+td.ltr-num { display: table-cell; }
 
 /* ===== Components ===== */
 .btn {
@@ -199,6 +201,7 @@ th {
   font-size: var(--fs-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
   padding: var(--sp-sm) var(--sp-md);
   border-bottom: 1px solid var(--color-border);
 }

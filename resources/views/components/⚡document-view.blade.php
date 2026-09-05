@@ -268,6 +268,7 @@ class extends Component
                 <div class="card" style="margin-bottom:var(--sp-lg); padding:0; overflow:hidden">
                     <div style="padding: var(--sp-lg) var(--sp-lg) 0"><h3>פירוט</h3></div>
                     <x-business-error-banner :message="$lineError" style="margin:0 var(--sp-lg)" />
+                    <div class="table-scroll">
                     <table>
                         <thead><tr><th>תיאור</th><th>כמות</th><th>מחיר יחידה</th><th>סכום</th><th></th></tr></thead>
                         <tbody>
@@ -291,6 +292,7 @@ class extends Component
                             </tr>
                         </tbody>
                     </table>
+                    </div>
                     @unless ($document->sent_at)
                         <div style="padding: var(--sp-md) var(--sp-lg)">
                             <form wire:submit="addLine" class="form-grid">

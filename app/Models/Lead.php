@@ -2,8 +2,9 @@
 
 namespace App\Models;
 
-use App\Mail\LeadConfirmationMail;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -11,8 +12,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use RuntimeException;
 
 /**
@@ -311,7 +310,7 @@ class Lead extends Model
      *
      * @param  array{contact_name: string, school_name: ?string, email: string, phone: string, school_phone: ?string}  $payload
      */
-    public static function createFromLandingPage(array $payload, ActivityLogger $activityLogger): self
+    public static function createFromLandingPage(array $payload, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): self
     {
         $schoolName = trim((string) ($payload['school_name'] ?? ''));
         $schoolPhone = $payload['school_phone'] ?? null;
@@ -330,7 +329,7 @@ class Lead extends Model
                         'user' => null,
                     ]);
 
-                    self::sendLandingPageConfirmation($payload, $existingLead, $activityLogger);
+                    self::sendLandingPageConfirmation($payload, $existingLead, $activityLogger, $runner, $smove);
 
                     return $existingLead;
                 }
@@ -370,20 +369,20 @@ class Lead extends Model
             'metadata' => ['auto_assigned_user_id' => $salesRep?->id],
         ]);
 
-        self::sendLandingPageConfirmation($payload, $lead, $activityLogger);
+        self::sendLandingPageConfirmation($payload, $lead, $activityLogger, $runner, $smove);
 
         return $lead;
     }
 
     /**
-     * FR-1.18's "מייל אישור אוטומטי" half — direct SMTP via Laravel Mail
-     * (EMAIL_TEMPLATE, never Smove — see build-plan 02's own distinction),
-     * never blocking lead creation: a missing template or a mail failure is
-     * logged and swallowed, exactly like a failed Smove/Summit call
-     * (FR-8.16-FR-8.18's underlying principle, reused here even though those
-     * FRs name only Smove/Summit).
+     * FR-1.18's "מייל אישור אוטומטי" half — every business email goes
+     * through Smove, never Laravel Mail (the business owner's explicit
+     * instruction, 2026-09-03), via the same ExternalOperationRunner pattern
+     * as every other Smove call in this codebase (never blocks lead
+     * creation; success/failure is recorded to EXTERNAL_OPERATION +
+     * ACTIVITY_LOG automatically).
      */
-    private static function sendLandingPageConfirmation(array $payload, self $lead, ActivityLogger $activityLogger): void
+    private static function sendLandingPageConfirmation(array $payload, self $lead, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): void
     {
         $template = EmailTemplate::where('template_type', 'lead_confirmation')->where('is_active', true)->first();
 
@@ -400,19 +399,21 @@ class Lead extends Model
             'school_name' => $payload['school_name'] ?? '',
         ]);
 
-        try {
-            Mail::to($payload['email'], $payload['contact_name'] ?? $payload['email'])
-                ->send(new LeadConfirmationMail($rendered['subject'], $rendered['content']));
-
-            $activityLogger->log('lead.confirmation_email_sent', "נשלח מייל אישור אוטומטי לליד #{$lead->id} (FR-1.18)", [
-                'lead_id' => $lead->id, 'user' => null,
-            ]);
-        } catch (\Throwable $e) {
-            Log::warning('Lead confirmation email failed', ['lead_id' => $lead->id, 'error' => $e->getMessage()]);
-
-            $activityLogger->log('lead.confirmation_email_failed', "שליחת מייל אישור לליד #{$lead->id} נכשלה: {$e->getMessage()}", [
-                'lead_id' => $lead->id, 'user' => null,
-            ]);
-        }
+        $runner->run(
+            'smove',
+            'lead_confirmation',
+            'app_action',
+            fn () => $smove->sendTransactionalEmail(
+                $payload['email'],
+                $payload['contact_name'] ?? $payload['email'],
+                $rendered['subject'],
+                $rendered['content'],
+            ),
+            [
+                'lead_id' => $lead->id,
+                'user' => null,
+                'description' => "מייל אישור אוטומטי לליד #{$lead->id} (FR-1.18)",
+            ],
+        );
     }
 }

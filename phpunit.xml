@@ -18,7 +18,18 @@
         </include>
     </source>
     <php>
-        <env name="APP_ENV" value="testing"/>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <!--
+            Same gap as the DB_* entries below: a real container-level
+            APP_ENV=local (docker-compose) sits in $_SERVER and wins over
+            phpunit's <env>, which only forces $_ENV/putenv() — so
+            app()->environment() was silently 'local' during every test run,
+            runningUnitTests() was false, and the CSRF middleware was NOT
+            bypassed for unauthenticated webhook posts (discovered 2026-09-06
+            via 419s on the Smove/Summit webhook tests). This <server> entry
+            closes that gap for APP_ENV specifically.
+        -->
+        <server name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

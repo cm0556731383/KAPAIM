@@ -75,7 +75,7 @@ class ProcessMaterialReminders extends Command
             'smove',
             'material_reminder',
             'scheduled_job',
-            fn () => $smove->sendReminderEmail(
+            fn () => $smove->sendTransactionalEmail(
                 $recipientEmail,
                 $delivery->recipients()->value('recipient_name') ?? $recipientEmail,
                 'תזכורת: חומרי לימוד ממתינים',

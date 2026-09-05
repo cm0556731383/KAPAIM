@@ -139,8 +139,11 @@ class MaterialDelivery extends Model
      * MaterialDeliveryRecipient) — the caller is responsible for defaulting
      * it via defaultRecipients() above when the user hasn't overridden it.
      * $attachments is an array of ['file_reference' => string, 'file_name' =>
-     * string] rows — metadata only (FR-5.6/FR-5.20); the caller discards the
-     * actual uploaded file right after this call returns.
+     * string] rows (FR-5.6/FR-5.20) — file_reference is the file's real path
+     * on the 'local' disk; the caller is responsible for having already
+     * stored it there (Smove's real API has no attachment upload, so the
+     * file stays here permanently and a signed link is emailed instead —
+     * see MaterialDeliveryAttachment::downloadUrl()).
      *
      * FR-5.8: best-effort deal association — looked up by customer+program
      * and logged onto the ACTIVITY_LOG entry, never blocking the send when no
@@ -202,12 +205,13 @@ class MaterialDelivery extends Model
             ]);
         }
 
-        foreach ($attachments as $attachment) {
-            $delivery->attachments()->create([
+        $attachmentModels = array_map(
+            fn (array $attachment) => $delivery->attachments()->create([
                 'file_reference' => $attachment['file_reference'],
                 'file_name' => $attachment['file_name'],
-            ]);
-        }
+            ]),
+            $attachments,
+        );
 
         // FR-5.8: best-effort — attach the relevant deal's id if one exists
         // for this exact customer+program, but never require it.
@@ -234,7 +238,7 @@ class MaterialDelivery extends Model
             'app_action',
             fn () => $smove->sendMaterialsEmail(
                 array_map(fn (array $r) => ['email' => $r['email'], 'name' => $r['name']], $validRecipients),
-                array_column($attachments, 'file_reference'),
+                array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->downloadUrl()], $attachmentModels),
                 "חומרי לימוד: {$program->name}",
             ),
             [

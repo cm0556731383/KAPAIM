@@ -6,6 +6,8 @@ use App\Models\Customer;
 use App\Models\MaterialDelivery;
 use App\Models\Program;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Illuminate\Database\Seeder;
 
 /**
@@ -45,6 +47,8 @@ class MaterialsDemoSeeder extends Seeder
             $recipients,
             [['file_reference' => 'demo-seed-'.uniqid(), 'file_name' => 'חוברת-רימונים-בסתיו.pdf']],
             $activityLogger,
+            app(ExternalOperationRunner::class),
+            app(SmoveClient::class),
         );
     }
 }

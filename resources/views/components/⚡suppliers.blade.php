@@ -58,6 +58,10 @@ class extends Component
             $supplier = Supplier::findOrFail($this->editingSupplierId);
             $supplier->update($attributes);
 
+            // Keeps the Smove contact's email/name current after an edit —
+            // same idempotent re-push pattern as leads/customers.
+            $supplier->joinSuppliersMailingList();
+
             $activityLogger->log('supplier.updated', "עודכן ספק: {$supplier->name}", ['metadata' => ['supplier_id' => $supplier->id]]);
 
             $this->notifySuccess("הספק \"{$supplier->name}\" עודכן בהצלחה.");
@@ -129,6 +133,7 @@ class extends Component
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">
+        <div class="table-scroll">
         <table>
             <thead>
                 <tr>
@@ -157,6 +162,7 @@ class extends Component
                 @endforelse
             </tbody>
         </table>
+        </div>
     </div>
 
     <div class="card" style="max-width:640px">

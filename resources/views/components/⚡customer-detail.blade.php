@@ -7,6 +7,8 @@ use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\ExternalOperation;
+use App\Models\MailingList;
+use App\Models\MailingMembership;
 use App\Models\MaterialDelivery;
 use App\Models\PaymentMethod;
 use App\Models\Program;
@@ -193,6 +195,10 @@ class extends Component
             'school_id' => $this->customer->school_id,
         ]);
 
+        // School name feeds the Smove contact's display name — re-push so
+        // an edit here doesn't leave Smove showing a stale name.
+        MailingMembership::addCustomer(MailingList::primaryList(), $this->customer);
+
         $this->customer->refresh()->load('school');
         $this->syncSchoolFields();
         $this->editingSchool = false;
@@ -221,6 +227,14 @@ class extends Component
         $activityLogger->log('contact.created', "נוסף איש קשר \"{$contact->name}\" ללקוחה \"{$this->customer->school->name}\"", [
             'customer_id' => $this->customer->id, 'lead_id' => $this->customer->lead_id, 'school_id' => $this->customer->school_id,
         ]);
+
+        // A customer with no contacts yet had no email to sync to Smove at
+        // conversion time (see MailingMembership::pushToSmove()'s no-email
+        // skip) — the first (forced-primary) contact is often the first
+        // real chance to actually push them.
+        if ($contact->is_primary) {
+            MailingMembership::addCustomer(MailingList::primaryList(), $this->customer);
+        }
 
         $this->contactError = null;
         $this->resetContactForm();
@@ -263,6 +277,13 @@ class extends Component
         $activityLogger->log('contact.updated', "עודכן איש קשר \"{$contact->name}\"", [
             'customer_id' => $this->customer->id, 'lead_id' => $this->customer->lead_id, 'school_id' => $contact->school_id,
         ]);
+
+        // The synced Smove contact uses the PRIMARY contact's email/name
+        // (see MailingMembership::addCustomer()) — only that one's edits
+        // are relevant to re-push.
+        if ($data['is_primary']) {
+            MailingMembership::addCustomer(MailingList::primaryList(), $this->customer);
+        }
 
         $this->contactError = null;
         $this->resetContactForm();
@@ -662,10 +683,11 @@ class extends Component
      * FR-5.1/FR-5.7: the only place this screen sends materials —
      * MaterialDelivery::sendFor() enforces the "at least one recipient with
      * a valid email" / "at least one attachment" gates server-side
-     * (FR-5.2/FR-5.3/FR-8.13/FR-8.14). FR-5.6/FR-5.20: the uploaded file(s)
-     * are forwarded to Smove at send time (build-plan 12, real as of this
-     * stage) and explicitly deleted from Livewire's temporary storage right
-     * after — never copied into permanent storage/app.
+     * (FR-5.2/FR-5.3/FR-8.13/FR-8.14). FR-5.6/FR-5.20: Smove's real API
+     * (build-plan 12) has no attachment upload, so each file is moved from
+     * Livewire's temporary storage into the 'local' disk permanently here —
+     * MaterialDelivery::sendFor() emails a signed link to it instead of an
+     * attachment (see MaterialDeliveryAttachment::downloadUrl()).
      */
     public function sendMaterials(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SmoveClient $smove): void
     {
@@ -683,7 +705,10 @@ class extends Component
 
         $program = Program::find($this->materialsProgramId);
         $attachments = array_map(
-            fn ($file) => ['file_reference' => $file->getFilename(), 'file_name' => $file->getClientOriginalName()],
+            fn ($file) => [
+                'file_reference' => $file->storeAs('material-attachments', $file->getFilename(), 'local'),
+                'file_name' => $file->getClientOriginalName(),
+            ],
             $this->materialsFiles,
         );
 

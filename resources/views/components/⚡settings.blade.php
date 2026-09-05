@@ -70,7 +70,6 @@ class extends Component
     public bool $fieldIsRequired = false;
 
     // ===== אינטגרציות חיצוניות (EXTERNAL_INTEGRATION_SETTING, build-plan 12) =====
-    public string $smoveBaseUrl = '';
     public string $smoveApiKey = '';
     public string $smoveWebhookSecret = '';
     public string $smoveMaterialReminderHours = '48';
@@ -86,7 +85,6 @@ class extends Component
         abort_unless(auth()->user()->can('settings.manage'), 403);
 
         $smove = ExternalIntegrationSetting::where('system', 'smove')->first()?->settings ?? [];
-        $this->smoveBaseUrl = (string) ($smove['base_url'] ?? '');
         $this->smoveApiKey = (string) ($smove['api_key'] ?? '');
         $this->smoveWebhookSecret = (string) ($smove['webhook_secret'] ?? '');
         $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
@@ -102,22 +100,22 @@ class extends Component
 
     /**
      * Build-plan 12: these three save methods are where the business owner
-     * actually fills in Smove/Summit/landing-page's real base_url/api_key/
+     * actually fills in Smove/Summit/landing-page's real api_key/
      * webhook_secret — the code paths that use them (App\Services\Integrations\*,
      * the three webhook routes) are already fully real; only these values were
-     * ever left open, per this stage's own scope decision.
+     * ever left open, per this stage's own scope decision. Smove's base_url
+     * is no longer one of them — it's a fixed vendor address, hardcoded in
+     * SmoveClient — the business owner never had a "server address" to know.
      */
     public function saveSmoveSettings(ActivityLogger $activityLogger): void
     {
         $data = $this->validate([
-            'smoveBaseUrl' => ['nullable', 'url', 'max:255'],
             'smoveApiKey' => ['nullable', 'string', 'max:255'],
             'smoveWebhookSecret' => ['nullable', 'string', 'max:255'],
             'smoveMaterialReminderHours' => ['required', 'integer', 'min:1'],
-        ], [], ['smoveBaseUrl' => 'כתובת שרת']);
+        ]);
 
         ExternalIntegrationSetting::firstOrCreate(['system' => 'smove'], ['is_active' => false, 'settings' => []])->update(['settings' => [
-            'base_url' => $data['smoveBaseUrl'] ?: null,
             'api_key' => $data['smoveApiKey'] ?: null,
             'webhook_secret' => $data['smoveWebhookSecret'] ?: null,
             'material_reminder_hours' => (int) $data['smoveMaterialReminderHours'],
@@ -450,6 +448,7 @@ class extends Component
         @foreach ($this->statuses as $scope => $items)
             <h3 style="margin-top: var(--sp-lg)">{{ $this->statusScopes[$scope] ?? $scope }}</h3>
             <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+                <div class="table-scroll">
                 <table>
                     <thead><tr><th>שם</th><th>סדר</th><th>סטטוס</th><th></th></tr></thead>
                     <tbody>
@@ -469,6 +468,7 @@ class extends Component
                         @endforeach
                     </tbody>
                 </table>
+                </div>
             </div>
         @endforeach
 
@@ -499,6 +499,7 @@ class extends Component
             <h2>מקורות ליד</h2>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -517,6 +518,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
         <div class="card" style="max-width:640px">
             <form wire:submit="addLeadSource" class="form-grid">
@@ -536,6 +538,7 @@ class extends Component
             <h2>אמצעי תשלום</h2>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם</th><th>סוג</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -555,6 +558,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
         <div class="card" style="max-width:640px">
             <form wire:submit="addPaymentMethod" class="form-grid">
@@ -580,6 +584,7 @@ class extends Component
             <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">נבחר בכל הפקת חשבונית (FR-4.15)</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם</th><th>סיווג</th><th>ח.פ / ע.מ</th><th>אימייל</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -601,6 +606,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
         <div class="card" style="max-width:640px">
             <form wire:submit="addBusinessEntity" class="form-grid">
@@ -661,6 +667,7 @@ class extends Component
                     </div>
                 </div>
 
+                <div class="table-scroll">
                 <table style="margin-top: var(--sp-md)">
                     <thead><tr><th>שדה מיזוג</th><th>סוג</th><th>שדה מקושר</th><th>חובה</th><th></th></tr></thead>
                     <tbody>
@@ -677,6 +684,7 @@ class extends Component
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         @endforeach
 
@@ -757,6 +765,7 @@ class extends Component
             <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">חיבור אמיתי ל-Smove ו-Summit, וה-Webhook הנכנס מדף הנחיתה — כל עוד "מושבת" למטה, שום קריאה החוצה לא מתבצעת בפועל</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>מערכת</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -775,27 +784,33 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div class="cols2">
             <div class="card">
-                <h3>Smove — כתובת שרת ומפתח</h3>
+                <h3>Smove — חיבור החשבון שלך</h3>
                 <form wire:submit="saveSmoveSettings" class="form-grid">
                     <div class="full">
-                        <label for="smoveBaseUrl">כתובת שרת (Base URL)</label>
-                        <input type="text" id="smoveBaseUrl" wire:model="smoveBaseUrl" class="ltr-num" dir="ltr" placeholder="https://api.smove.co.il">
-                        @error('smoveBaseUrl') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div class="full">
-                        <label for="smoveApiKey">מפתח API</label>
+                        <label for="smoveApiKey">מפתח API (חובה)</label>
                         <input type="password" id="smoveApiKey" wire:model="smoveApiKey" class="ltr-num" dir="ltr">
+                        <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:6px 0 0">
+                            איפה מוצאים את זה: נכנסים לחשבון שלכם ב-<span class="ltr-num" dir="ltr">smoove.io</span> ←
+                            עוברים עם העכבר על שם החשבון (למעלה) ← בוחרים <b><span class="ltr-num" dir="ltr">API Keys &amp; pixels</span></b> ←
+                            <b><span class="ltr-num" dir="ltr">Add API Key</span></b> ← בוחרים הרשאה <b>Full Permission</b> ←
+                            שומרים, ומעתיקים את המפתח שנוצר לכאן.
+                        </p>
                     </div>
                     <div class="full">
-                        <label for="smoveWebhookSecret">סוד Webhook (למעקב פתיחת חומרי לימוד)</label>
+                        <label for="smoveWebhookSecret">סוד Webhook (רשות)</label>
                         <input type="password" id="smoveWebhookSecret" wire:model="smoveWebhookSecret" class="ltr-num" dir="ltr">
+                        <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:6px 0 0">
+                            זה לא מגיע מ-Smove — זו מילת סוד שאתם ממציאים בעצמכם (כמו סיסמה), ומזינים גם כאן וגם בממשק Smove
+                            אם מגדירים שם התראה על "מייל נפתח". אין לכם דבר כזה מוגדר? אפשר להשאיר ריק.
+                        </p>
                     </div>
                     <div>
-                        <label for="smoveMaterialReminderHours">חלון תזכורת חומרי לימוד (שעות)</label>
+                        <label for="smoveMaterialReminderHours">כמה שעות לחכות לפני תזכורת על חומרי לימוד שלא נפתחו</label>
                         <input type="text" id="smoveMaterialReminderHours" wire:model="smoveMaterialReminderHours" class="ltr-num" dir="ltr">
                         @error('smoveMaterialReminderHours') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>

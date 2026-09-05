@@ -57,7 +57,7 @@ class ProcessExpenseReminders extends Command
             'smove',
             'expense_invoice_reminder',
             'scheduled_job',
-            fn () => $smove->sendReminderEmail(
+            fn () => $smove->sendTransactionalEmail(
                 $expense->supplier->email,
                 $expense->supplier->name,
                 'תזכורת: חשבונית חסרה',

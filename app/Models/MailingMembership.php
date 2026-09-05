@@ -66,10 +66,26 @@ class MailingMembership extends Model
         return $this->belongsTo(Supplier::class);
     }
 
-    /** FR-1.17/FR-5.21: a brand-new lead joining the primary list, before any customer exists. */
+    /**
+     * FR-1.17/FR-5.21: a brand-new lead joining the primary list, before any
+     * customer exists.
+     *
+     * Only pushes to Smove when the membership is actually new/reactivated
+     * (never for an already-active one) — Smove's own /Contacts endpoint
+     * treats a repeated `lists_ToSubscribe` on an already-subscribed contact
+     * as a fresh subscription request, which resets `canReceiveEmails` back
+     * to false pending re-confirmation (confirmed empirically 2026-09-06:
+     * re-posting the exact same join payload for an already-confirmed real
+     * Smove contact flipped its canReceiveEmails from true to false). A
+     * caller that just wants Smove's display name refreshed (e.g. after a
+     * school rename) piggybacks on this method — that's a much smaller
+     * tradeoff (a stale name in Smove) than silently revoking a lead's
+     * mailing consent on every unrelated edit.
+     */
     public static function addLead(MailingList $list, Lead $lead): self
     {
         $membership = self::firstOrNew(['mailing_list_id' => $list->id, 'lead_id' => $lead->id]);
+        $wasActive = $membership->exists && $membership->membership_status === self::STATUS_ACTIVE;
 
         if (! $membership->exists) {
             $membership->joined_at = now();
@@ -79,22 +95,28 @@ class MailingMembership extends Model
         $membership->removed_at = null;
         $membership->save();
 
-        self::pushToSmove('join', $list->name, [
-            'email' => $lead->email,
-            'name' => $lead->school?->name ?? $lead->email,
-        ], ['lead_id' => $lead->id]);
+        if (! $wasActive) {
+            self::pushToSmove('join', $list, [
+                'email' => $lead->email,
+                'name' => $lead->school?->name ?? $lead->email,
+            ], ['lead_id' => $lead->id]);
+        }
 
         return $membership;
     }
 
     /**
      * FR-5.21-FR-5.23: joins (or re-activates a previously removed
-     * membership for) $customer on $list — idempotent, safe to call
-     * repeatedly for the same customer/list pair.
+     * membership for) $customer on $list — safe to call repeatedly for the
+     * same customer/list pair (see addLead()'s docblock above for why the
+     * Smove push itself is skipped when the membership was already active —
+     * same reasoning applies here for the several "re-push to refresh the
+     * Smove display name" callers in ⚡customer-detail.blade.php).
      */
     public static function addCustomer(MailingList $list, Customer $customer): self
     {
         $membership = self::firstOrNew(['mailing_list_id' => $list->id, 'customer_id' => $customer->id]);
+        $wasActive = $membership->exists && $membership->membership_status === self::STATUS_ACTIVE;
 
         if (! $membership->exists) {
             $membership->joined_at = now();
@@ -104,9 +126,13 @@ class MailingMembership extends Model
         $membership->removed_at = null;
         $membership->save();
 
+        if ($wasActive) {
+            return $membership;
+        }
+
         $primaryContact = $customer->contacts()->where('is_primary', true)->first();
 
-        self::pushToSmove('join', $list->name, [
+        self::pushToSmove('join', $list, [
             'email' => $primaryContact?->email,
             'name' => $customer->school?->name ?? $primaryContact?->name,
         ], ['customer_id' => $customer->id]);
@@ -122,6 +148,7 @@ class MailingMembership extends Model
     public static function addSupplier(MailingList $list, Supplier $supplier): self
     {
         $membership = self::firstOrNew(['mailing_list_id' => $list->id, 'supplier_id' => $supplier->id]);
+        $wasActive = $membership->exists && $membership->membership_status === self::STATUS_ACTIVE;
 
         if (! $membership->exists) {
             $membership->joined_at = now();
@@ -131,10 +158,12 @@ class MailingMembership extends Model
         $membership->removed_at = null;
         $membership->save();
 
-        self::pushToSmove('join', $list->name, [
-            'email' => $supplier->email,
-            'name' => $supplier->name,
-        ], []);
+        if (! $wasActive) {
+            self::pushToSmove('join', $list, [
+                'email' => $supplier->email,
+                'name' => $supplier->name,
+            ], []);
+        }
 
         return $membership;
     }
@@ -154,7 +183,7 @@ class MailingMembership extends Model
         if ($affected > 0) {
             $primaryContact = $customer->contacts()->where('is_primary', true)->first();
 
-            self::pushToSmove('remove', $list->name, [
+            self::pushToSmove('remove', $list, [
                 'email' => $primaryContact?->email,
                 'name' => $customer->school?->name ?? $primaryContact?->name,
             ], ['customer_id' => $customer->id]);
@@ -169,14 +198,53 @@ class MailingMembership extends Model
      * anything the caller needs, since the local membership row above it is
      * already the durable fact.
      */
-    private static function pushToSmove(string $action, string $listName, array $contact, array $context): void
+    /**
+     * A contact with no email yet (e.g. no primary Contact set on the
+     * customer) is a normal, unremarkable state — not a Smove failure worth
+     * recording — so it's skipped here entirely, same as ProcessMaterial
+     * Reminders/ProcessExpenseReminders skip a reminder for the same reason.
+     *
+     * 'join' additionally never touches Smove at all once the contact
+     * already shows confirmed consent there (SmoveClient::hasConfirmedConsent())
+     * — see that method's docblock for why. The local membership row is
+     * already saved by the caller before pushToSmove() runs (addLead()/
+     * addCustomer()/addSupplier() above), so skipping the network call here
+     * still leaves this list membership correctly recorded — it just isn't
+     * mirrored to Smove for an already-confirmed contact, on purpose.
+     *
+     * While NOT yet confirmed, a 'join' is broadened to include every
+     * mailing list this app currently has linked to Smove (not just $list)
+     * — confirmed empirically (2026-09-06) that every list included in the
+     * same request as a contact's first confirmation stays confirmed
+     * together, one click for all of them. This is what makes the guard
+     * above actually work in practice: a lead's very first join (still
+     * unconfirmed) pre-clears every future list a deal/subscription might
+     * add them to later, so those later joins hit the already-confirmed
+     * guard and never touch Smove again — instead of every single deal
+     * needing its own separate confirmation email.
+     */
+    private static function pushToSmove(string $action, MailingList $list, array $contact, array $context): void
     {
+        if (empty($contact['email'])) {
+            return;
+        }
+
+        $smove = app(SmoveClient::class);
+
+        if ($action === 'join' && $smove->isConfigured() && $smove->hasConfirmedConsent($contact['email'])) {
+            return;
+        }
+
+        $listIds = $action === 'join'
+            ? MailingList::query()->whereNotNull('smove_list_id')->pluck('smove_list_id')->push($list->smove_list_id)->filter()->unique()->values()->all()
+            : $list->smove_list_id;
+
         app(ExternalOperationRunner::class)->run(
             'smove',
             'mailing_list_'.$action,
             'app_action',
-            fn () => app(SmoveClient::class)->syncMailingListMembership($listName, $action, $contact),
-            array_merge($context, ['description' => ($action === 'join' ? 'הצטרפות' : 'הסרה')." מרשימת תפוצה \"{$listName}\""]),
+            fn () => $smove->syncMailingListMembership($listIds, $action, $contact),
+            array_merge($context, ['description' => ($action === 'join' ? 'הצטרפות' : 'הסרה')." מרשימת תפוצה \"{$list->name}\""]),
         );
     }
 }

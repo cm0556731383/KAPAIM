@@ -198,6 +198,7 @@ class extends Component
             <h2>כל התבניות</h2>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-lg)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם התבנית</th><th>סוג מסמך</th><th>סטטוס</th><th>פעולות</th></tr></thead>
                 <tbody>
@@ -212,10 +213,12 @@ class extends Component
                                     <span class="badge badge-neutral">לא פעילה</span>
                                 @endif
                             </td>
-                            <td style="display:flex; gap:6px">
-                                <button type="button" wire:click="editTemplate({{ $template->id }})" class="btn btn-ghost btn-sm">עריכה</button>
-                                <button type="button" wire:click="togglePreview({{ $template->id }})" class="btn btn-ghost btn-sm">תצוגה מקדימה</button>
-                                <button type="button" wire:click="toggleTemplate({{ $template->id }})" class="btn btn-ghost btn-sm">{{ $template->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                            <td>
+                                <div style="display:flex; gap:6px">
+                                    <button type="button" wire:click="editTemplate({{ $template->id }})" class="btn btn-ghost btn-sm">עריכה</button>
+                                    <button type="button" wire:click="togglePreview({{ $template->id }})" class="btn btn-ghost btn-sm">תצוגה מקדימה</button>
+                                    <button type="button" wire:click="toggleTemplate({{ $template->id }})" class="btn btn-ghost btn-sm">{{ $template->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                                </div>
                             </td>
                         </tr>
                         @if ($previewTemplateId === $template->id)
@@ -228,6 +231,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div class="cols2">
@@ -314,6 +318,7 @@ class extends Component
             <div class="card" style="margin-bottom:var(--sp-md)">
                 <h3 style="margin-bottom:4px">{{ $template->name }}</h3>
                 <p class="text-text-secondary" style="margin:0 0 var(--sp-sm); font-size:var(--fs-caption)">{{ DocumentTemplate::TYPES[$template->document_type] ?? $template->document_type }}</p>
+                <div class="table-scroll">
                 <table>
                     <thead><tr><th>שם שדה</th><th>סוג</th><th>שדה מקושר</th><th>חובה</th><th>סדר</th><th></th></tr></thead>
                     <tbody>
@@ -331,6 +336,7 @@ class extends Component
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         @endforeach
     </section>

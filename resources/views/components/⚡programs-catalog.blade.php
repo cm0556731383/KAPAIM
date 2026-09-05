@@ -235,6 +235,7 @@ class extends Component
             <p class="hint">חודשיות, פרימיום, ותוכנית המנוי השנתי</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>סוג</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -256,6 +257,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-bottom: var(--sp-md)">
             תוכניות פרימיום נמכרות <strong>לפי פנייה בלבד</strong> ואינן חלק משיווק חוזר אוטומטי (FR-3.10). ללקוחה עם מנוי פעיל — הנחה אוטומטית של 10% על פרימיום.
@@ -298,6 +300,7 @@ class extends Component
             <p class="hint">רכישה חד-פעמית עצמאית, לא נכללת בחישוב קיזוז מנוי (FR-3.8)</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>שם</th><th>מחיר</th><th>תוכניות כלולות</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
@@ -326,6 +329,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div class="cols2">

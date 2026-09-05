@@ -557,6 +557,7 @@ class extends Component
         @if ($this->documents->isEmpty())
             <div class="empty-state">טרם הופקו מסמכים לעסקה זו.</div>
         @else
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>סוג</th><th>סטטוס</th><th>נשלח</th><th>התקבל</th><th>נחתם</th><th></th></tr></thead>
                 <tbody>
@@ -572,6 +573,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         @endif
     </div>
 
@@ -632,6 +634,7 @@ class extends Component
         @if ($this->payments->isEmpty())
             <div class="empty-state">טרם נרשמו תשלומים לעסקה זו.</div>
         @else
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th><th></th></tr></thead>
                 <tbody>
@@ -664,6 +667,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         @endif
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
             תשלום חלקי אינו סוגר את העסקה — היא מסומנת "שולמה" רק כשמלוא הסכום התקבל (FR-4.32/FR-4.33). קבלה עבור צ'ק מופקת רק לאחר פירעון בפועל, ולא יותר מקבלה אחת לכל תשלום (FR-4.28/FR-4.29).

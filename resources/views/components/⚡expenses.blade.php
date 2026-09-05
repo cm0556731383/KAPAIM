@@ -134,6 +134,7 @@ class extends Component
     <x-business-error-banner :message="$expenseError" />
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">
+        <div class="table-scroll">
         <table>
             <thead>
                 <tr>
@@ -174,6 +175,7 @@ class extends Component
                 @endforelse
             </tbody>
         </table>
+        </div>
     </div>
 
     <div class="card" style="max-width:640px">

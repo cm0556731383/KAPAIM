@@ -111,6 +111,7 @@ class extends Component
             <h2>משתמשות</h2>
         </div>
         <div class="card" style="padding:0; overflow:hidden">
+            <div class="table-scroll">
             <table>
                 <thead>
                     <tr>
@@ -143,6 +144,7 @@ class extends Component
                     @endforeach
                 </tbody>
             </table>
+            </div>
         </div>
     </section>
 
@@ -154,6 +156,7 @@ class extends Component
             @foreach ($this->roles as $role)
                 <div class="card">
                     <h3>{{ $role->name }}</h3>
+                    <div class="table-scroll">
                     <table class="perm-table">
                         <thead><tr><th>משאב</th><th>צפייה</th><th>עריכה</th></tr></thead>
                         <tbody>
@@ -166,6 +169,7 @@ class extends Component
                             @endforeach
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @endforeach
         </div>

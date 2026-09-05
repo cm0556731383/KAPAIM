@@ -2,26 +2,58 @@
 
 use App\Models\MailingList;
 use App\Models\MailingMembership;
+use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
 /**
  * Build-plan 10 — מסך רשימות תפוצה (docs/storyboard/mailing-lists.html).
- * Read-only: every membership change in this app happens automatically as a
- * side effect of a real business event (new lead, program/subscription
- * purchase, subscription cancellation — see Lead::joinPrimaryMailingList(),
- * Deal::assignMailingListsForProgramPurchase(), Subscription::cancel()) —
- * the storyboard shows no manual add/remove control, matching FR-5.19-FR-5.26's
- * "no manual maintenance" framing (US-013).
+ * Membership itself is read-only here: every membership change in this app
+ * happens automatically as a side effect of a real business event (new lead,
+ * program/subscription purchase, subscription cancellation — see
+ * Lead::joinPrimaryMailingList(), Deal::assignMailingListsForProgramPurchase(),
+ * Subscription::cancel()) — the storyboard shows no manual add/remove
+ * control, matching FR-5.19-FR-5.26's "no manual maintenance" framing
+ * (US-013). The one thing this screen DOES let the business owner edit is
+ * each list's smove_list_id — Smove has no "find list by name" lookup, so
+ * this is the one-time link between a local list and its real Smove list
+ * (created directly in Smove's own dashboard).
  */
 new
 #[Layout('layouts.app', ['title' => 'רשימות תפוצה — כפיים'])]
 class extends Component
 {
+    /** @var array<int, string> keyed by mailing_list id, editable Smove list-id input */
+    public array $smoveListIds = [];
+
     public function mount(): void
     {
         abort_unless(auth()->user()->can('mailing-lists.manage'), 403);
+
+        $this->smoveListIds = MailingList::pluck('smove_list_id', 'id')
+            ->map(fn ($id) => $id === null ? '' : (string) $id)
+            ->all();
+    }
+
+    public function saveSmoveListId(int $listId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('mailing-lists.manage'), 403);
+
+        $raw = trim((string) ($this->smoveListIds[$listId] ?? ''));
+
+        if ($raw !== '' && ! ctype_digit($raw)) {
+            $this->addError("smoveListIds.{$listId}", 'מזהה רשימה ב-Smove חייב להיות מספר.');
+
+            return;
+        }
+
+        $list = MailingList::findOrFail($listId);
+        $list->update(['smove_list_id' => $raw === '' ? null : (int) $raw]);
+
+        $activityLogger->log('mailing_list.smove_id_updated', "עודכן מזהה Smove לרשימה \"{$list->name}\"");
+
+        unset($this->lists);
     }
 
     #[Computed]
@@ -72,9 +104,10 @@ class extends Component
     <div class="cols2">
         <div class="card">
             <h3>הרשימות במערכת</h3>
+            <div class="table-scroll">
             <table>
                 <thead>
-                    <tr><th>שם רשימה</th><th>סוג</th><th>חברים פעילים</th></tr>
+                    <tr><th>שם רשימה</th><th>סוג</th><th>חברים פעילים</th><th>מזהה רשימה ב-Smove</th></tr>
                 </thead>
                 <tbody>
                     @forelse ($this->lists as $list)
@@ -82,12 +115,20 @@ class extends Component
                             <td>{{ $list->name }}</td>
                             <td><span class="badge {{ $this->typeBadgeClass($list->list_type) }}">{{ $this->typeLabel($list->list_type) }}</span></td>
                             <td class="ltr-num">{{ $list->active_members_count }}</td>
+                            <td>
+                                <div style="display:flex; gap:6px; align-items:center">
+                                    <input type="text" wire:model="smoveListIds.{{ $list->id }}" class="ltr-num" dir="ltr" placeholder="—" style="width:90px">
+                                    <button type="button" wire:click="saveSmoveListId({{ $list->id }})" class="btn btn-ghost btn-sm">שמירה</button>
+                                </div>
+                                @error("smoveListIds.{$list->id}") <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </td>
                         </tr>
                     @empty
-                        <tr><td colspan="3">אין עדיין רשימות תפוצה במערכת.</td></tr>
+                        <tr><td colspan="4">אין עדיין רשימות תפוצה במערכת.</td></tr>
                     @endforelse
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div class="card">
@@ -101,7 +142,7 @@ class extends Component
                 <li><b>ספק חדש</b> ← רשימת ספקים (FR-5.26, שלב 11)</li>
             </ul>
             <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-lg); margin-bottom:0">
-                כל שיוך אמור להיות גם קריאה בפועל ל-Smove — לא ממומש עד שלב 12; היום השיוך המקומי בלבד הוא אמיתי ומלא.
+                כל שיוך מקומי דוחף גם קריאה אמיתית ל-Smove (שלב 12) — עבור רשימה שטרם קיבלה מזהה Smove בטבלה משמאל, הקריאה נכשלת בלי לחסום את השיוך המקומי (רואים זאת ביומן הפעילות).
             </p>
         </div>
     </div>

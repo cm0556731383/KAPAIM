@@ -183,6 +183,10 @@ class extends Component
             'school_id' => $school->id,
         ]);
 
+        // School name feeds the Smove contact's display name — re-push so
+        // an edit here doesn't leave Smove showing a stale name.
+        $this->lead->joinPrimaryMailingList();
+
         $this->lead->refresh()->load('school');
         $this->syncSchoolFields();
         $this->editingSchool = false;

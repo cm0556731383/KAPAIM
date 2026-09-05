@@ -3,12 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\BusinessEntity;
+use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
 use App\Models\ExternalIntegrationSetting;
-use App\Mail\LeadConfirmationMail;
 use App\Models\ExternalOperation;
 use App\Models\Lead;
 use App\Models\MailingList;
@@ -25,7 +25,6 @@ use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Mail;
 use Livewire\Livewire;
 use RuntimeException;
 use Tests\TestCase;
@@ -91,7 +90,6 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_landing_page_webhook_creates_a_lead_and_sends_a_confirmation_email(): void
     {
-        Mail::fake();
         ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
         $this->createLeadConfirmationTemplate();
 
@@ -107,10 +105,13 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertSame('בית ספר הדס', $lead->school->name);
         $this->assertSame('דף נחיתה', $lead->source->name);
 
-        Mail::assertSent(LeadConfirmationMail::class, fn (LeadConfirmationMail $mail) => $mail->hasTo('dana@example.com'));
-
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'lead.created', 'lead_id' => $lead->id]);
-        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'lead.confirmation_email_sent', 'lead_id' => $lead->id]);
+
+        // Confirmation email now goes through Smove (never Laravel Mail,
+        // per the business owner's 2026-09-03 instruction) — Smove isn't
+        // configured in this test, so the push is attempted and recorded as
+        // failed, same non-blocking pattern as every other Smove call.
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'smove.lead_confirmation.failed', 'lead_id' => $lead->id]);
 
         // FR-1.17: joins the primary mailing list, which also attempts (and
         // fails, since Smove itself isn't configured) a Smove push — but
@@ -120,7 +121,6 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_landing_page_webhook_logs_a_repeat_inquiry_instead_of_duplicating_the_lead(): void
     {
-        Mail::fake();
         ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
         $this->createLeadConfirmationTemplate();
 
@@ -135,12 +135,11 @@ class ExternalIntegrationsTest extends TestCase
 
         $this->assertSame(1, Lead::count());
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'lead.repeat_inquiry', 'lead_id' => $existingLead->id]);
-        Mail::assertSent(LeadConfirmationMail::class, fn (LeadConfirmationMail $mail) => $mail->hasTo('new@example.com'));
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'smove.lead_confirmation.failed', 'lead_id' => $existingLead->id]);
     }
 
     public function test_landing_page_webhook_auto_assigns_the_least_loaded_sales_rep(): void
     {
-        Mail::fake();
         ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
         $this->createLeadConfirmationTemplate();
 
@@ -157,7 +156,6 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_landing_page_webhook_leaves_the_lead_unassigned_when_no_sales_rep_exists(): void
     {
-        Mail::fake();
         ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
         $this->createLeadConfirmationTemplate();
 
@@ -237,8 +235,8 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_failed_smove_push_never_blocks_joining_the_mailing_list(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['base_url' => 'https://smove.test', 'api_key' => 'x']]);
-        Http::fake(['smove.test/*' => Http::response(['message' => 'nope'], 500)]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(['rest.smoove.io/*' => Http::response(['message' => 'nope'], 500)]);
 
         $customer = $this->createCustomer();
 
@@ -248,8 +246,10 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_successful_smove_push_is_recorded(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['base_url' => 'https://smove.test', 'api_key' => 'x']]);
-        Http::fake(['smove.test/*' => Http::response(['id' => 'ext-123'], 200)]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
+
+        MailingList::primaryList()->update(['smove_list_id' => 123]);
 
         $this->createCustomer();
 
@@ -257,6 +257,86 @@ class ExternalIntegrationsTest extends TestCase
             'system' => 'smove', 'operation_type' => 'mailing_list_join',
             'status' => ExternalOperation::STATUS_SUCCESS, 'external_reference' => 'ext-123',
         ]);
+    }
+
+    /**
+     * Regression test for the 2026-09-06 finding: Smove resets an
+     * already-confirmed contact's canReceiveEmails back to false whenever a
+     * POST /Contacts call includes lists_ToSubscribe — even for a list the
+     * contact was never on before. MailingMembership::pushToSmove() must
+     * therefore never issue a 'join' call at all once
+     * SmoveClient::hasConfirmedConsent() says the contact is already
+     * confirmed — joining a brand-new list is still recorded locally, just
+     * never mirrored to Smove.
+     */
+    public function test_an_already_confirmed_smove_contact_is_never_re_subscribed(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        MailingList::primaryList()->update(['smove_list_id' => 123]);
+
+        Http::fake(function ($request) {
+            return $request->method() === 'GET'
+                ? Http::response([['email' => 'confirmed@example.com', 'canReceiveEmails' => true]], 200)
+                : Http::response(['id' => 'ext-123'], 200);
+        });
+
+        $customer = $this->createCustomer();
+        $customer->contacts()->update(['email' => 'confirmed@example.com']);
+
+        $joinsBefore = ExternalOperation::where('operation_type', 'mailing_list_join')->count();
+
+        $program = Program::create(['name' => 'תוכנית לבדיקת רשימות', 'price' => 100, 'is_active' => true]);
+        $programList = MailingList::forProgram($program);
+        $programList->update(['smove_list_id' => 999]);
+
+        MailingMembership::addCustomer($programList, $customer);
+
+        // Recorded locally as a real, active membership on the new list...
+        $this->assertTrue(
+            MailingMembership::where('mailing_list_id', $programList->id)
+                ->where('customer_id', $customer->id)
+                ->where('membership_status', MailingMembership::STATUS_ACTIVE)
+                ->exists(),
+        );
+        // ...but no new Smove push was attempted (would have reset consent).
+        $this->assertSame($joinsBefore, ExternalOperation::where('operation_type', 'mailing_list_join')->count());
+    }
+
+    /**
+     * The other half of the 2026-09-06 fix: while a contact is NOT yet
+     * confirmed, a 'join' must broaden lists_ToSubscribe to every mailing
+     * list this app has linked to Smove — not just the one list the caller
+     * actually asked to join — so the contact's single confirmation click
+     * covers every list up front. Without this, every later deal/program
+     * purchase would need its own separate confirmation email.
+     */
+    public function test_a_not_yet_confirmed_contacts_first_join_is_broadened_to_every_linked_list(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        MailingList::primaryList()->update(['smove_list_id' => 111]);
+
+        $program = Program::create(['name' => 'תוכנית לבדיקת רשימות', 'price' => 100, 'is_active' => true]);
+        MailingList::forProgram($program)->update(['smove_list_id' => 222]);
+        MailingList::subscribersList()->update(['smove_list_id' => 333]);
+
+        Http::fake(function ($request) {
+            return $request->method() === 'GET'
+                ? Http::response([], 200) // not confirmed / not seen yet
+                : Http::response(['id' => 'ext-123'], 200);
+        });
+
+        $this->createCustomer(); // triggers the very first join, on the primary list only
+
+        Http::assertSent(function ($request) {
+            if ($request->method() !== 'POST' || ! str_contains($request->url(), '/Contacts')) {
+                return false;
+            }
+
+            $subscribed = $request->data()['lists_ToSubscribe'] ?? [];
+            sort($subscribed);
+
+            return $subscribed === [111, 222, 333];
+        });
     }
 
     // ----- invoice send pushes to Summit (Document::sendTo()) -----
@@ -369,14 +449,12 @@ class ExternalIntegrationsTest extends TestCase
         ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => false, 'settings' => []]);
 
         Livewire::actingAs($this->owner)->test('settings')
-            ->set('smoveBaseUrl', 'https://api.smove.co.il')
             ->set('smoveApiKey', 'secret-key')
             ->set('smoveWebhookSecret', 'whsecret')
             ->set('smoveMaterialReminderHours', '72')
             ->call('saveSmoveSettings');
 
         $settings = ExternalIntegrationSetting::where('system', 'smove')->first()->settings;
-        $this->assertSame('https://api.smove.co.il', $settings['base_url']);
         $this->assertSame('secret-key', $settings['api_key']);
         $this->assertSame(72, $settings['material_reminder_hours']);
     }
@@ -448,6 +526,13 @@ class ExternalIntegrationsTest extends TestCase
             'status_id' => $status->id,
             'email' => 'lead'.random_int(1, 999999).'@example.com',
             'phone' => '050-'.random_int(1000000, 9999999),
+        ]);
+
+        Contact::create([
+            'school_id' => $school->id,
+            'name' => 'איש קשר לבדיקה',
+            'email' => 'contact'.random_int(1, 999999).'@example.com',
+            'is_primary' => true,
         ]);
 
         return $lead->convertToCustomer(app(ActivityLogger::class));

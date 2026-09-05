@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * etc. See MailingListsSeeder for pre-seeding one row per currently-catalog
  * program plus the three singleton lists.
  */
-#[Fillable(['name', 'list_type', 'program_id', 'is_active'])]
+#[Fillable(['name', 'list_type', 'program_id', 'is_active', 'smove_list_id'])]
 class MailingList extends Model
 {
     use HasFactory;
@@ -39,6 +39,7 @@ class MailingList extends Model
     {
         return [
             'is_active' => 'boolean',
+            'smove_list_id' => 'integer',
         ];
     }
 

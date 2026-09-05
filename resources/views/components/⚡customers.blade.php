@@ -62,6 +62,7 @@ class extends Component
     </div>
 
     <div class="card" style="padding:0; overflow:hidden">
+        <div class="table-scroll">
         <table>
             <thead>
                 <tr>
@@ -90,5 +91,6 @@ class extends Component
                 @endforelse
             </tbody>
         </table>
+        </div>
     </div>
 </div>

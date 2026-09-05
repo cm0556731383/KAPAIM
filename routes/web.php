@@ -47,6 +47,19 @@ Route::get('/materials/{material}/acknowledge', function (
 })->middleware('signed')->name('materials.acknowledge');
 
 /**
+ * Build-plan 12 — the download link embedded in a Smove materials email
+ * (Smove's real API has no attachment-upload endpoint, so the file itself
+ * stays here — see MaterialDeliveryAttachment::downloadUrl()). Same
+ * outside-auth + `signed` pattern as the acknowledge route above: the
+ * recipient clicking this link isn't logged into the app.
+ */
+Route::get('/materials/attachments/{attachment}/download', function (
+    \App\Models\MaterialDeliveryAttachment $attachment,
+) {
+    return \Illuminate\Support\Facades\Storage::disk('local')->download($attachment->file_reference, $attachment->file_name);
+})->middleware('signed')->name('materials.attachment.download');
+
+/**
  * Build-plan 12 — three public, unauthenticated-by-Laravel-auth webhook
  * endpoints (landing page, Smove, Summit). Each is gated instead by
  * ExternalIntegrationSetting::verifyWebhookSecret() against an
@@ -57,7 +70,12 @@ Route::get('/materials/{material}/acknowledge', function (
  * markOpened(), Deal::collectStandingOrderPayment()) — these closures are
  * thin, matching the materials.acknowledge route above.
  */
-Route::post('/webhooks/landing-page/lead', function (Request $request, ActivityLogger $activityLogger) {
+Route::post('/webhooks/landing-page/lead', function (
+    Request $request,
+    ActivityLogger $activityLogger,
+    \App\Services\Integrations\ExternalOperationRunner $runner,
+    \App\Services\Integrations\SmoveClient $smove,
+) {
     abort_unless(ExternalIntegrationSetting::verifyWebhookSecret('landing_page', $request->header('X-Webhook-Secret')), 403);
 
     $data = $request->validate([
@@ -68,7 +86,7 @@ Route::post('/webhooks/landing-page/lead', function (Request $request, ActivityL
         'phone' => ['required', 'string', 'max:50'],
     ]);
 
-    $lead = Lead::createFromLandingPage($data, $activityLogger);
+    $lead = Lead::createFromLandingPage($data, $activityLogger, $runner, $smove);
 
     return response()->json(['lead_id' => $lead->id], 201);
 })->name('webhooks.landing-page.lead');

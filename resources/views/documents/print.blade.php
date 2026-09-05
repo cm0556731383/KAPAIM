@@ -38,7 +38,7 @@
         table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 24px; }
         th, td { text-align: start; padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
         .total-row td { font-weight: 700; font-size: 18px; border-top: 2px solid var(--color-text-primary); border-bottom: none; }
-        .ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; }
+        .ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; white-space: nowrap; }
         .print-actions { max-width: 780px; margin: 0 auto 16px; text-align: end; }
         .print-actions button {
             font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;

@@ -6,6 +6,8 @@ use App\Models\Deal;
 use App\Models\PaymentMethod;
 use App\Models\Receipt;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Seeder;
 
 /**
@@ -39,7 +41,7 @@ class PaymentsDemoSeeder extends Seeder
         ]);
 
         if ($deal->documents()->where('document_type', 'invoice')->exists()) {
-            $receipt = Receipt::issueFor($deal, $payment);
+            $receipt = Receipt::issueFor($deal, $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
 
             $activityLogger->log('receipt.issued', "הופקה קבלה עבור תשלום בעסקה #{$deal->id}", [
                 'deal_id' => $deal->id, 'customer_id' => $deal->customer_id,
