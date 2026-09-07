@@ -329,7 +329,7 @@ class DocumentsEngineTest extends TestCase
         $document->sendTo([
             ['contact_id' => $primary->id, 'name' => $primary->name, 'email' => $primary->email],
             ['contact_id' => null, 'name' => 'נמען נקודתי', 'email' => 'ad-hoc@example.com'],
-        ], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
+        ], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class), app(\App\Services\Integrations\SmoveClient::class));
 
         $this->assertCount(2, $document->recipients);
         $primary->refresh();
@@ -353,6 +353,7 @@ class DocumentsEngineTest extends TestCase
             app(\App\Services\ActivityLogger::class),
             app(\App\Services\Integrations\ExternalOperationRunner::class),
             app(\App\Services\Integrations\SummitClient::class),
+            app(\App\Services\Integrations\SmoveClient::class),
         );
 
         // Primary contact changes after the send.
@@ -369,7 +370,7 @@ class DocumentsEngineTest extends TestCase
         $document = $this->generateQuote($this->createDeal());
 
         $this->expectException(RuntimeException::class);
-        $document->sendTo([], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
+        $document->sendTo([], 'digital', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class), app(\App\Services\Integrations\SmoveClient::class));
     }
 
     // ----- FR-4.7: sending is always logged -----
@@ -380,7 +381,7 @@ class DocumentsEngineTest extends TestCase
         Contact::create(['customer_id' => $deal->customer_id, 'name' => 'איש קשר', 'email' => 'contact@example.com', 'is_primary' => true]);
         $document = $this->generateQuote($deal);
 
-        $document->sendTo($document->defaultRecipients()->map(fn ($c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(), 'pdf', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class));
+        $document->sendTo($document->defaultRecipients()->map(fn ($c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(), 'pdf', app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class), app(\App\Services\Integrations\SummitClient::class), app(\App\Services\Integrations\SmoveClient::class));
 
         $this->assertDatabaseHas('activity_logs', [
             'activity_type' => 'document.sent', 'document_id' => $document->id, 'deal_id' => $deal->id,
@@ -404,6 +405,108 @@ class DocumentsEngineTest extends TestCase
         $document->submitFieldValues([$field->id => 'רחוב הדוגמה 5, תל אביב']);
 
         $this->assertSame('רחוב הדוגמה 5, תל אביב', $deal->customer->school->fresh()->address);
+    }
+
+    public function test_submitting_city_phone_and_email_linked_fields_updates_the_school_record(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'עיר', 'field_type' => 'linked', 'linked_field' => 'customer.school_city', 'is_required' => false],
+            ['name' => 'טלפון', 'field_type' => 'linked', 'linked_field' => 'customer.school_phone', 'is_required' => false],
+            ['name' => 'דוא"ל', 'field_type' => 'linked', 'linked_field' => 'customer.school_email', 'is_required' => false],
+        ]);
+
+        $document = Document::generateFor($deal, $template);
+        [$cityField, $phoneField, $emailField] = $document->documentTemplate->fields->all();
+
+        $document->submitFieldValues([
+            $cityField->id => 'חיפה',
+            $phoneField->id => '04-1234567',
+            $emailField->id => 'office@example.com',
+        ]);
+
+        $school = $deal->customer->school->fresh();
+        $this->assertSame('חיפה', $school->city);
+        $this->assertSame('04-1234567', $school->phone);
+        $this->assertSame('office@example.com', $school->email);
+    }
+
+    /**
+     * Template content is now rendered as raw HTML everywhere ({!! !!}) so
+     * the rich-text editor's bold/italic/underline/font-size actually show
+     * up — which makes DocumentTemplate::renderContent() the one place that
+     * MUST escape a submitted field value: a free-text field on the public
+     * sign form (⚡document-sign.blade.php, no auth) is filled in by the
+     * customer, not staff, so a value like "<script>" must never reach the
+     * page as live HTML (stored XSS shown back on both the customer's own
+     * page and staff's ⚡document-view.blade.php).
+     */
+    public function test_rendering_content_escapes_a_submitted_field_value(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'הערות', 'field_type' => 'free_text', 'is_required' => false],
+        ]);
+        $document = Document::generateFor($deal, $template);
+        $field = $document->documentTemplate->fields->first();
+
+        $document->submitFieldValues([$field->id => '<script>alert(1)</script>']);
+
+        $this->assertStringNotContainsString('<script>', $document->rendered_content);
+        $this->assertStringContainsString('&lt;script&gt;', $document->rendered_content);
+    }
+
+    /**
+     * Template content itself (authored by staff via the rich-text editor)
+     * is trusted and must render as real HTML, not escaped text.
+     */
+    public function test_rendering_content_preserves_staff_authored_html_formatting(): void
+    {
+        $template = DocumentTemplate::create([
+            'document_type' => 'quote',
+            'name' => 'תבנית מעוצבת '.random_int(1, 999999),
+            'content' => 'שלום <b>יקרים</b>, <i>בברכה</i> <span style="font-size:18px">גדול</span>',
+            'is_active' => true,
+        ]);
+
+        $this->assertSame(
+            'שלום <b>יקרים</b>, <i>בברכה</i> <span style="font-size:18px">גדול</span>',
+            $template->renderContent(),
+        );
+    }
+
+    /**
+     * documents.pdf (resources/views/documents/pdf.blade.php) has no
+     * interactive input the way the online form does — an empty field gets
+     * a blank line to fill by hand instead of the on-screen "[field name]"
+     * bracket.
+     */
+    public function test_print_friendly_content_leaves_a_blank_line_for_an_empty_field(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'כתובת למשלוח', 'field_type' => 'free_text', 'is_required' => false],
+        ]);
+
+        $document = Document::generateFor($deal, $template);
+
+        $this->assertStringContainsString('כתובת למשלוח: '.str_repeat('_', 24), $document->printFriendlyContent());
+        $this->assertStringNotContainsString('[כתובת למשלוח]', $document->printFriendlyContent());
+    }
+
+    public function test_print_friendly_content_shows_a_filled_fields_actual_value(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'כתובת למשלוח', 'field_type' => 'free_text', 'is_required' => false],
+        ]);
+
+        $document = Document::generateFor($deal, $template);
+        $field = $document->documentTemplate->fields->first();
+        $document->submitFieldValues([$field->id => 'רחוב הרצל 1, תל אביב']);
+
+        $this->assertStringContainsString('רחוב הרצל 1, תל אביב', $document->printFriendlyContent());
+        $this->assertStringNotContainsString(str_repeat('_', 24), $document->printFriendlyContent());
     }
 
     public function test_required_field_left_empty_is_rejected(): void
@@ -466,6 +569,87 @@ class DocumentsEngineTest extends TestCase
             ->call('toggleTemplate', $template->id);
 
         $this->assertDatabaseHas('document_templates', ['id' => $template->id, 'is_active' => false]);
+    }
+
+    public function test_editing_a_template_also_targets_it_for_adding_fields(): void
+    {
+        $template = $this->createTemplate('quote');
+
+        Livewire::actingAs($this->owner)->test('document-templates')
+            ->call('editTemplate', $template->id)
+            ->assertSet('fieldTemplateId', $template->id);
+    }
+
+    public function test_ensuring_a_linked_field_creates_it_and_returns_its_token(): void
+    {
+        $template = $this->createTemplate('order_form');
+
+        $component = Livewire::actingAs($this->owner)->test('document-templates')
+            ->call('editTemplate', $template->id);
+
+        $token = $component->instance()->ensureLinkedField('customer.school_name', app(\App\Services\ActivityLogger::class));
+
+        $this->assertSame('{{שם_בית_הספר}}', $token);
+
+        $field = $template->fields()->where('linked_field', 'customer.school_name')->first();
+        $this->assertNotNull($field);
+        $this->assertSame('linked', $field->field_type);
+        $this->assertSame('שם בית הספר', $field->name);
+    }
+
+    public function test_ensuring_the_same_linked_field_twice_reuses_the_existing_field(): void
+    {
+        $template = $this->createTemplate('order_form');
+
+        $component = Livewire::actingAs($this->owner)->test('document-templates')
+            ->call('editTemplate', $template->id);
+
+        $component->instance()->ensureLinkedField('customer.school_name', app(\App\Services\ActivityLogger::class));
+        $component->instance()->ensureLinkedField('customer.school_name', app(\App\Services\ActivityLogger::class));
+
+        $this->assertSame(1, $template->fields()->where('linked_field', 'customer.school_name')->count());
+    }
+
+    public function test_ensuring_a_linked_field_without_an_active_edit_does_nothing(): void
+    {
+        $template = $this->createTemplate('order_form');
+
+        $component = Livewire::actingAs($this->owner)->test('document-templates');
+        $token = $component->instance()->ensureLinkedField('customer.school_name', app(\App\Services\ActivityLogger::class));
+
+        $this->assertNull($token);
+        $this->assertSame(0, $template->fields()->count());
+    }
+
+    /**
+     * The quick-insert picker must only ever offer real customer-card
+     * fields (school name/address/city/phone/email) — never the
+     * deal-scoped options (agreed_amount/program_name), which stay
+     * reachable only through the older "הוספת שדה" dropdown.
+     */
+    public function test_ensuring_a_deal_scoped_field_via_the_quick_picker_does_nothing(): void
+    {
+        $template = $this->createTemplate('order_form');
+
+        $component = Livewire::actingAs($this->owner)->test('document-templates')
+            ->call('editTemplate', $template->id);
+
+        $token = $component->instance()->ensureLinkedField('deal.agreed_amount', app(\App\Services\ActivityLogger::class));
+
+        $this->assertNull($token);
+        $this->assertSame(0, $template->fields()->count());
+    }
+
+    public function test_the_quick_picker_search_filters_to_matching_customer_card_fields(): void
+    {
+        $component = Livewire::actingAs($this->owner)->test('document-templates')
+            ->set('linkedFieldSearch', 'טלפון');
+
+        $options = $component->instance()->customerCardLinkedFieldOptions();
+
+        $this->assertArrayHasKey('customer.school_phone', $options);
+        $this->assertArrayNotHasKey('customer.school_name', $options);
+        $this->assertArrayNotHasKey('deal.agreed_amount', $options);
     }
 
     // ----- Livewire screens render real data -----

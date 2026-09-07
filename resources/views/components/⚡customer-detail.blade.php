@@ -267,7 +267,7 @@ class extends Component
         $data = $this->validateContact();
 
         if ($contact->is_primary && ! $data['is_primary'] && ! $this->hasOtherPrimaryContact($contact->id)) {
-            $this->contactError = 'לא ניתן להסיר את הסימון מאיש הקשר הראשי האחרון — לכל לקוחה חייב להיות לפחות איש קשר ראשי אחד (FR-2.8/FR-2.9).';
+            $this->contactError = 'לא ניתן להסיר את הסימון מאיש הקשר הראשי האחרון — לכל לקוחה חייב להיות לפחות איש קשר ראשי אחד.';
 
             return;
         }
@@ -305,7 +305,7 @@ class extends Component
         $contact = Contact::findOrFail($id);
 
         if ($contact->is_primary && ! $this->hasOtherPrimaryContact($contact->id)) {
-            $this->contactError = 'לא ניתן להסיר את איש הקשר הראשי האחרון — לכל לקוחה חייב להיות לפחות איש קשר ראשי אחד (FR-2.8/FR-2.9).';
+            $this->contactError = 'לא ניתן להסיר את איש הקשר הראשי האחרון — לכל לקוחה חייב להיות לפחות איש קשר ראשי אחד.';
 
             return;
         }
@@ -482,7 +482,7 @@ class extends Component
         $programId = $this->deliveryProgramSelections[$deliveryId] ?? null;
 
         if (! $programId) {
-            $this->subscriptionError = 'יש לבחור תוכנית עבור שורת האספקה לפני הסימון (FR-3.14).';
+            $this->subscriptionError = 'יש לבחור תוכנית עבור שורת האספקה לפני הסימון.';
 
             return;
         }
@@ -505,13 +505,13 @@ class extends Component
         $this->notifySuccess("תוכנית מס' {$delivery->sequence_number} סומנה כסופקה.");
 
         if ($subscription->fresh()->status?->name === Subscription::ENDED_STATUS_NAME) {
-            $activityLogger->log('subscription.ended', "מנוי #{$subscription->id} הסתיים אוטומטית לאחר סימון התוכנית העשירית (FR-3.16/FR-3.17)", [
+            $activityLogger->log('subscription.ended', "מנוי #{$subscription->id} הסתיים אוטומטית לאחר סימון התוכנית העשירית", [
                 'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
             ]);
 
             // FR-7.23 — a genuinely informational outcome distinct from the
             // plain "marked as supplied" success above.
-            $this->notifyInfo('המנוי הסתיים אוטומטית לאחר סימון התוכנית העשירית (FR-3.16/FR-3.17).');
+            $this->notifyInfo('המנוי הסתיים אוטומטית לאחר סימון התוכנית העשירית.');
         }
 
         unset($this->deliveryProgramSelections[$deliveryId]);
@@ -721,7 +721,7 @@ class extends Component
         }
 
         if (ExternalOperation::where('material_delivery_id', $delivery->id)->where('status', ExternalOperation::STATUS_FAILED)->exists()) {
-            $this->notifyWarning('חומרי הלימוד נרשמו במערכת, אך שליחתם בפועל דרך Smove נכשלה — ראו יומן פעילות (FR-8.16).');
+            $this->notifyWarning('חומרי הלימוד נרשמו במערכת, אך שליחתם בפועל דרך Smove נכשלה — ראו יומן פעילות.');
         }
 
         // FR-5.6/FR-5.20: discard the temp upload now that the Smove send
@@ -941,7 +941,7 @@ class extends Component
 
     @if ($this->priceExceededAlert)
         <div class="mb-8" style="background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
-            התראת חריגת מחיר: סך רכישות התוכניות הבודדות (מחוץ למנוי) של לקוחה זו עולה על מחיר מנוי שנתי מלא (FR-8.23).
+            התראת חריגת מחיר: סך רכישות התוכניות הבודדות (מחוץ למנוי) של לקוחה זו עולה על מחיר מנוי שנתי מלא.
         </div>
     @endif
 
@@ -1067,14 +1067,14 @@ class extends Component
                             </form>
                         </div>
                     @endif
-                    <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון (FR-2.8, FR-2.9).</p>
+                    <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון.</p>
                 </div>
 
                 @if ($this->recentlyRemovedContacts->isNotEmpty() || $this->recentlyRemovedTasks->isNotEmpty())
                     {{-- ===== פריטים שהוסרו לאחרונה (FR-8.22) ===== --}}
                     <div class="card" style="margin-top:var(--sp-lg)">
                         <h3>פריטים שהוסרו לאחרונה</h3>
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר (FR-8.22).</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר.</p>
 
                         @foreach ($this->recentlyRemovedContacts as $contact)
                             <div class="list-item">
@@ -1179,7 +1179,7 @@ class extends Component
                 </table>
                 </div>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-                    סימון "סופקה" הוא פעולה ידנית בלבד ואינה נגזרת משליחת חומרי לימוד (FR-3.15). לאחר סימון התוכנית העשירית המנוי מסתיים אוטומטית ואינו מתחדש (FR-3.16/FR-3.17) — חידוש מתבצע ביצירת עסקה חדשה (FR-3.18).
+                    סימון "סופקה" הוא פעולה ידנית בלבד ואינה נגזרת משליחת חומרי לימוד. לאחר סימון התוכנית העשירית המנוי מסתיים אוטומטית ואינו מתחדש — חידוש מתבצע ביצירת עסקה חדשה.
                 </p>
 
                 {{-- ===== ביטול מנוי וחישוב קיזוז (US-010) ===== --}}
@@ -1207,12 +1207,12 @@ class extends Component
                         >הפקת חשבונית זיכוי</button>
                     </div>
                     @unless (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">לא ניתן להפיק חשבונית זיכוי — לעסקה זו טרם הופקה חשבונית (FR-4.5/FR-8.12).</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">לא ניתן להפיק חשבונית זיכוי — לעסקה זו טרם הופקה חשבונית.</p>
                     @endunless
                 @endif
             </div>
         @empty
-            <div class="card empty-state">אין ללקוחה זו מנוי — מנוי נפתח אוטומטית עם יצירת עסקה עבור תוכנית המנוי השנתי (FR-3.12).</div>
+            <div class="card empty-state">אין ללקוחה זו מנוי — מנוי נפתח אוטומטית עם יצירת עסקה עבור תוכנית המנוי השנתי.</div>
         @endforelse
     @elseif ($activeTab === 'deals')
         <x-business-error-banner :message="$dealError" />
@@ -1241,7 +1241,7 @@ class extends Component
             <div>
                 <div class="card">
                     <h3>עסקה חדשה</h3>
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">תוכנית אחת או מארז אחד בלבד לעסקה — רכישת כמה תוכניות יוצרת כמה עסקאות נפרדות (FR-3.3/FR-3.4).</p>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">תוכנית אחת או מארז אחד בלבד לעסקה — רכישת כמה תוכניות יוצרת כמה עסקאות נפרדות.</p>
                     <form wire:submit="createDeal" class="form-grid">
                         <div class="full">
                             <label for="dealItem">תוכנית / מארז</label>
@@ -1279,7 +1279,7 @@ class extends Component
                             </select>
                         </div>
                         <div class="full">
-                            <label for="dealSpecialRequest">בקשת התאמה מיוחדת (FR-3.7)</label>
+                            <label for="dealSpecialRequest">בקשת התאמה מיוחדת</label>
                             <textarea id="dealSpecialRequest" wire:model="dealSpecialRequest" rows="2"></textarea>
                         </div>
                         <div class="full"><button type="submit" class="btn btn-primary">יצירת עסקה</button></div>
@@ -1293,7 +1293,7 @@ class extends Component
 
             @if ($this->outstandingBalance > 0)
                 <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
-                    ללקוחה זו יתרת חוב פתוחה בסך <span class="ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</span> (FR-2.15).
+                    ללקוחה זו יתרת חוב פתוחה בסך <span class="ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</span>.
                 </div>
             @else
                 <div class="mb-8" style="background: var(--color-success-bg); color: var(--color-success); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
@@ -1333,7 +1333,7 @@ class extends Component
         <div class="cols2">
             <div class="card">
                 <h3>שליחת חומרים</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">השליחה מתבצעת באמצעות Smove — הקבצים אינם נשמרים במערכת לאחר השליחה (FR-5.6).</p>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">השליחה מתבצעת באמצעות Smove — הקבצים אינם נשמרים במערכת לאחר השליחה.</p>
 
                 <form wire:submit="sendMaterials" class="form-grid">
                     <div class="full">
@@ -1379,7 +1379,7 @@ class extends Component
                         </div>
                     </div>
 
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה (FR-5.2/FR-5.3/FR-8.13/FR-8.14).</p>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
 
                     <div class="full"><button type="submit" class="btn btn-primary">שליחה באמצעות Smove</button></div>
                 </form>
@@ -1387,7 +1387,7 @@ class extends Component
 
             <div class="card">
                 <h3>היסטוריית משלוחים</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שליחה חוזרת מתועדת כמשלוח חדש (FR-5.9).</p>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שליחה חוזרת מתועדת כמשלוח חדש.</p>
                 @if ($this->materialDeliveries->isEmpty())
                     <div class="empty-state">אין עדיין משלוחי חומרי לימוד ללקוחה זו.</div>
                 @else

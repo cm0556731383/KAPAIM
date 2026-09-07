@@ -62,7 +62,7 @@ class Receipt extends Model
         $invoice = $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
 
         if (! $invoice) {
-            throw new RuntimeException('לא ניתן להפיק קבלה לעסקה שאין לה חשבונית (FR-4.5).');
+            throw new RuntimeException('לא ניתן להפיק קבלה לעסקה שאין לה חשבונית.');
         }
 
         if ($payment) {
@@ -71,11 +71,11 @@ class Receipt extends Model
             }
 
             if ($payment->isCheck() && ! $payment->cleared_date) {
-                throw new RuntimeException('לא ניתן להפיק קבלה עבור צ\'ק שטרם נפרע — קבלה מופקת רק בעת פירעון בפועל (FR-4.28).');
+                throw new RuntimeException('לא ניתן להפיק קבלה עבור צ\'ק שטרם נפרע — קבלה מופקת רק בעת פירעון בפועל.');
             }
 
             if (self::where('payment_id', $payment->id)->exists()) {
-                throw new RuntimeException('כבר הופקה קבלה עבור תשלום זה — לא ניתן להפיק יותר מקבלה אחת לאותו תשלום (FR-4.29).');
+                throw new RuntimeException('כבר הופקה קבלה עבור תשלום זה — לא ניתן להפיק יותר מקבלה אחת לאותו תשלום.');
             }
         }
 

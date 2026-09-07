@@ -78,7 +78,7 @@ class extends Component
 
     <h3>הכנסות ורווח — לפי חודש</h3>
     <p style="color:var(--color-text-secondary); font-size:var(--fs-small); margin-top:-6px">
-        הכנסה ממנוי שנתי ששולם מראש נפרשת על פני חודשי המנוי (FR-6.4) · רווח מחושב כהפרש בין הכנסה להוצאה של אותו חודש (FR-6.11/FR-6.13)
+        הכנסה ממנוי שנתי ששולם מראש נפרשת על פני חודשי המנוי · רווח מחושב כהפרש בין הכנסה להוצאה של אותו חודש
     </p>
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">
         <div class="table-scroll">
@@ -104,7 +104,7 @@ class extends Component
 
     <h3>הכנסות ורווח — לפי תוכנית</h3>
     <p style="color:var(--color-text-secondary); font-size:var(--fs-small); margin-top:-6px">
-        רכישת מארז מוצגת תחת דלי "{{ \App\Services\RevenueReport::BUNDLE_BUCKET_LABEL }}" · הוצאה ללא שיוך לתוכנית אינה מופיעה כאן (FR-6.12/FR-6.13)
+        רכישת מארז מוצגת תחת דלי "{{ \App\Services\RevenueReport::BUNDLE_BUCKET_LABEL }}" · הוצאה ללא שיוך לתוכנית אינה מופיעה כאן
     </p>
     <div class="card" style="padding:0; overflow:hidden">
         <div class="table-scroll">

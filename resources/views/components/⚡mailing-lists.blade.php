@@ -133,13 +133,13 @@ class extends Component
 
         <div class="card">
             <h3>עדכון אוטומטי — לא נדרשת תחזוקה ידנית</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שינוי במצב העסקי מעדכן את השיוך ברשימות אוטומטית (US-013).</p>
+            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שינוי במצב העסקי מעדכן את השיוך ברשימות אוטומטית.</p>
             <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:var(--sp-md); font-size:var(--fs-small)">
-                <li><b>ליד חדש</b> ← רשימה ראשית (FR-5.21)</li>
-                <li><b>רכישת תוכנית</b> ← רשימת התוכנית שנרכשה (FR-5.22)</li>
-                <li><b>רכישת מנוי</b> ← רשימת מנויים + רשימות התוכניות החודשיות בקטלוג (FR-5.23)</li>
-                <li><b>ביטול מנוי</b> ← הסרה ממנויים ומרשימות שטרם סופקו; השארה ברשימה הראשית ובמה שכבר סופק (FR-5.24/FR-5.25)</li>
-                <li><b>ספק חדש</b> ← רשימת ספקים (FR-5.26, שלב 11)</li>
+                <li><b>ליד חדש</b> ← רשימה ראשית</li>
+                <li><b>רכישת תוכנית</b> ← רשימת התוכנית שנרכשה</li>
+                <li><b>רכישת מנוי</b> ← רשימת מנויים + רשימות התוכניות החודשיות בקטלוג</li>
+                <li><b>ביטול מנוי</b> ← הסרה ממנויים ומרשימות שטרם סופקו; השארה ברשימה הראשית ובמה שכבר סופק</li>
+                <li><b>ספק חדש</b> ← רשימת ספקים (שלב 11)</li>
             </ul>
             <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-lg); margin-bottom:0">
                 כל שיוך מקומי דוחף גם קריאה אמיתית ל-Smove (שלב 12) — עבור רשימה שטרם קיבלה מזהה Smove בטבלה משמאל, הקריאה נכשלת בלי לחסום את השיוך המקומי (רואים זאת ביומן הפעילות).

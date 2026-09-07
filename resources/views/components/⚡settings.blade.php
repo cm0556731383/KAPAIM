@@ -581,7 +581,7 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>עוסקים</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">נבחר בכל הפקת חשבונית (FR-4.15)</p>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">נבחר בכל הפקת חשבונית</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
@@ -831,7 +831,7 @@ class extends Component
                         <input type="password" id="summitApiKey" wire:model="summitApiKey" class="ltr-num" dir="ltr">
                     </div>
                     <div class="full">
-                        <label for="summitWebhookSecret">סוד Webhook (לגבייה אוטומטית בהוראת קבע, FR-4.27)</label>
+                        <label for="summitWebhookSecret">סוד Webhook (לגבייה אוטומטית בהוראת קבע)</label>
                         <input type="password" id="summitWebhookSecret" wire:model="summitWebhookSecret" class="ltr-num" dir="ltr">
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">שמירת הגדרות Summit</button></div>
@@ -841,7 +841,7 @@ class extends Component
 
         <div class="card" style="margin-top:var(--sp-md); max-width:640px">
             <h3>דף הנחיתה — סוד Webhook</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">יש להזין סוד זה גם בהגדרות דף הנחיתה עצמו, בכותרת X-Webhook-Secret (FR-1.18).</p>
+            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">יש להזין סוד זה גם בהגדרות דף הנחיתה עצמו, בכותרת X-Webhook-Secret.</p>
             <form wire:submit="saveLandingPageSettings" class="form-grid">
                 <div class="full">
                     <label for="landingPageWebhookSecret">סוד Webhook</label>

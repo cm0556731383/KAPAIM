@@ -817,7 +817,7 @@ class extends Component
                     </div>
                     @if ($previewColor === 'yellow')
                         <div class="full sub-status" style="margin-top:0">
-                            <label for="selectedSubStatus">תת-סטטוס (צהוב בלבד — FR-1.6)</label>
+                            <label for="selectedSubStatus">תת-סטטוס (צהוב בלבד)</label>
                             <input type="text" id="selectedSubStatus" wire:model="selectedSubStatus" placeholder="למשל: ממתינה לשיחה חוזרת">
                         </div>
                     @endif
@@ -972,7 +972,7 @@ class extends Component
                 {{-- ===== פריטים שהוסרו לאחרונה (FR-8.22) ===== --}}
                 <div class="card" style="margin-top:var(--sp-lg)">
                     <h3>פריטים שהוסרו לאחרונה</h3>
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר (FR-8.22).</p>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר.</p>
 
                     @foreach ($this->recentlyRemovedContacts as $contact)
                         <div class="list-item">

@@ -223,7 +223,7 @@ class extends Component
     </div>
 
     <div class="mb-8" style="display:flex; align-items:center; gap:10px; background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-        השבתת תוכנית חוסמת <strong>רכישה חדשה</strong> שלה בלבד — היא ממשיכה להופיע בעסקאות עבר כפי שהייתה (FR-3.6, FR-8.25).
+        השבתת תוכנית חוסמת <strong>רכישה חדשה</strong> שלה בלבד — היא ממשיכה להופיע בעסקאות עבר כפי שהייתה.
     </div>
 
     <x-business-error-banner :message="$catalogError" />
@@ -260,12 +260,12 @@ class extends Component
             </div>
         </div>
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-bottom: var(--sp-md)">
-            תוכניות פרימיום נמכרות <strong>לפי פנייה בלבד</strong> ואינן חלק משיווק חוזר אוטומטי (FR-3.10). ללקוחה עם מנוי פעיל — הנחה אוטומטית של 10% על פרימיום.
+            תוכניות פרימיום נמכרות <strong>לפי פנייה בלבד</strong> ואינן חלק משיווק חוזר אוטומטי. ללקוחה עם מנוי פעיל — הנחה אוטומטית של 10% על פרימיום.
         </p>
 
         <div class="card" style="max-width:640px">
             <h3>תוכנית חדשה</h3>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">מחיר חייב להיות גדול מ-0 (FR-8.6)</p>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">מחיר חייב להיות גדול מ-0</p>
             <form wire:submit="addProgram" class="form-grid">
                 <div class="full">
                     <label for="programName">שם</label>
@@ -297,7 +297,7 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>מארזים</h2>
-            <p class="hint">רכישה חד-פעמית עצמאית, לא נכללת בחישוב קיזוז מנוי (FR-3.8)</p>
+            <p class="hint">רכישה חד-פעמית עצמאית, לא נכללת בחישוב קיזוז מנוי</p>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">

@@ -362,7 +362,7 @@ class Lead extends Model
             $lead->update(['assigned_user_id' => $salesRep->id]);
         }
 
-        $activityLogger->log('lead.created', 'נוצר ליד חדש מדף הנחיתה: '.($school?->name ?? $lead->email).' (FR-1.18)', [
+        $activityLogger->log('lead.created', 'נוצר ליד חדש מדף הנחיתה: '.($school?->name ?? $lead->email), [
             'lead_id' => $lead->id,
             'school_id' => $school?->id,
             'user' => null,
@@ -412,7 +412,7 @@ class Lead extends Model
             [
                 'lead_id' => $lead->id,
                 'user' => null,
-                'description' => "מייל אישור אוטומטי לליד #{$lead->id} (FR-1.18)",
+                'description' => "מייל אישור אוטומטי לליד #{$lead->id}",
             ],
         );
     }

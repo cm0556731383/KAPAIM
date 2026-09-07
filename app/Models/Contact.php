@@ -60,7 +60,7 @@ class Contact extends Model
     {
         $result = $this->restoreSoftDelete();
 
-        $activityLogger->log('contact.restored', "שוחזר איש קשר \"{$this->name}\" (FR-8.22)", [
+        $activityLogger->log('contact.restored', "שוחזר איש קשר \"{$this->name}\"", [
             'customer_id' => $this->customer_id, 'school_id' => $this->school_id,
         ]);
 

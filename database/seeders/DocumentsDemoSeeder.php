@@ -9,6 +9,7 @@ use App\Models\Document;
 use App\Models\DocumentTemplate;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Seeder;
 
@@ -25,6 +26,7 @@ class DocumentsDemoSeeder extends Seeder
         $activityLogger = app(ActivityLogger::class);
         $runner = app(ExternalOperationRunner::class);
         $summit = app(SummitClient::class);
+        $smove = app(SmoveClient::class);
 
         $deal = Deal::whereHas('customer.school', fn ($q) => $q->where('name', 'בית ספר יובלים'))->first();
         $businessEntity = BusinessEntity::where('is_active', true)->first();
@@ -40,11 +42,11 @@ class DocumentsDemoSeeder extends Seeder
 
         // ----- הצעת מחיר: נשלחה כ-PDF -----
         $quote = Document::generateFor($deal, $quoteTemplate, 'pdf');
-        $quote->sendTo($this->recipientsFor($deal), 'pdf', $activityLogger, $runner, $summit);
+        $quote->sendTo($this->recipientsFor($deal), 'pdf', $activityLogger, $runner, $summit, $smove);
 
         // ----- טופס הזמנה: נשלח כטופס דיגיטלי, מולא, והתקבל -----
         $orderForm = Document::generateFor($deal, $orderFormTemplate, 'digital');
-        $orderForm->sendTo($this->recipientsFor($deal), 'digital', $activityLogger, $runner, $summit);
+        $orderForm->sendTo($this->recipientsFor($deal), 'digital', $activityLogger, $runner, $summit, $smove);
         $values = collect($orderForm->field_values)->map(fn ($v) => $v['value'])->all();
         $freeTextField = $orderForm->documentTemplate->fields->firstWhere('field_type', 'free_text');
         if ($freeTextField) {
@@ -55,13 +57,13 @@ class DocumentsDemoSeeder extends Seeder
 
         // ----- חוזה: מתמלא אוטומטית משדות ההזמנה (FR-4.13), נשלח ונחתם -----
         $contract = Document::generateFor($deal, $contractTemplate, 'digital');
-        $contract->sendTo($this->recipientsFor($deal), 'digital', $activityLogger, $runner, $summit);
+        $contract->sendTo($this->recipientsFor($deal), 'digital', $activityLogger, $runner, $summit, $smove);
         $contract->markSigned();
 
         // ----- חשבונית: עוסק פטור + שורת פירוט, נשלחה כ-PDF -----
         $invoice = Document::generateFor($deal, $invoiceTemplate, 'pdf', $businessEntity->id);
         $invoice->addLine('מנוי שנתי — 10 תוכניות (' . $deal->program_name_snapshot . ')', (float) $deal->agreed_amount);
-        $invoice->sendTo($this->recipientsFor($deal), 'pdf', $activityLogger, $runner, $summit);
+        $invoice->sendTo($this->recipientsFor($deal), 'pdf', $activityLogger, $runner, $summit, $smove);
 
         $activityLogger->log('document.demo_chain_seeded', "נוצרה שרשרת מסמכים מלאה (הצעה→הזמנה→חוזה→חשבונית) עבור עסקה #{$deal->id}", [
             'deal_id' => $deal->id, 'customer_id' => $deal->customer_id,

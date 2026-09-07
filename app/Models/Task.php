@@ -69,7 +69,7 @@ class Task extends Model
     {
         $result = $this->restoreSoftDelete();
 
-        $activityLogger->log('task.restored', "שוחזרה משימה \"{$this->title}\" (FR-8.22)", [
+        $activityLogger->log('task.restored', "שוחזרה משימה \"{$this->title}\"", [
             'lead_id' => $this->lead_id, 'customer_id' => $this->customer_id,
             'deal_id' => $this->deal_id, 'task_id' => $this->id,
         ]);

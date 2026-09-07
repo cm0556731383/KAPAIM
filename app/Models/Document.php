@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Services\ActivityLogger;
 use App\Services\DocumentLinkedFields;
 use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\URL;
 use RuntimeException;
 
 /**
@@ -28,7 +30,7 @@ use RuntimeException;
 #[Fillable([
     'deal_id', 'expense_id', 'document_template_id', 'business_entity_id', 'preceding_document_id',
     'document_type', 'status_id', 'format', 'file_reference', 'rendered_content',
-    'field_values', 'sent_at', 'received_at', 'signed_at',
+    'field_values', 'sent_at', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at',
 ])]
 class Document extends Model
 {
@@ -65,6 +67,8 @@ class Document extends Model
             'sent_at' => 'datetime',
             'received_at' => 'datetime',
             'signed_at' => 'datetime',
+            'confirmed_at' => 'datetime',
+            'viewed_at' => 'datetime',
         ];
     }
 
@@ -171,7 +175,7 @@ class Document extends Model
 
         if ($template->document_type === 'invoice') {
             if (! $businessEntityId) {
-                throw new RuntimeException('יש לבחור עוסק פטור בעת הפקת חשבונית (FR-4.15/FR-8.9).');
+                throw new RuntimeException('יש לבחור עוסק פטור בעת הפקת חשבונית.');
             }
 
             $businessEntity = BusinessEntity::find($businessEntityId);
@@ -240,7 +244,7 @@ class Document extends Model
                 ->exists();
 
             if (! $hasReceivedOrderForm) {
-                throw new RuntimeException('לא ניתן להפיק חוזה לפני שהתקבל טופס הזמנה עבור עסקה זו (FR-4.3/FR-8.7).');
+                throw new RuntimeException('לא ניתן להפיק חוזה לפני שהתקבל טופס הזמנה עבור עסקה זו.');
             }
         }
 
@@ -251,13 +255,13 @@ class Document extends Model
                 ->exists();
 
             if (! $hasSignedContract) {
-                throw new RuntimeException('לא ניתן להפיק חשבונית לפני שהתקבל חוזה חתום עבור עסקה זו (FR-4.4/FR-8.8).');
+                throw new RuntimeException('לא ניתן להפיק חשבונית לפני שהתקבל חוזה חתום עבור עסקה זו.');
             }
 
             $alreadyHasInvoice = self::where('deal_id', $deal->id)->where('document_type', 'invoice')->exists();
 
             if ($alreadyHasInvoice) {
-                throw new RuntimeException('לעסקה זו כבר הופקה חשבונית — ניתן להפיק חשבונית אחת בלבד לכל עסקה (FR-4.21/FR-4.22).');
+                throw new RuntimeException('לעסקה זו כבר הופקה חשבונית — ניתן להפיק חשבונית אחת בלבד לכל עסקה.');
             }
         }
 
@@ -265,7 +269,7 @@ class Document extends Model
             $hasInvoice = self::where('deal_id', $deal->id)->where('document_type', 'invoice')->exists();
 
             if (! $hasInvoice) {
-                throw new RuntimeException('לא ניתן להפיק חשבונית זיכוי לעסקה שלא הופקה עבורה חשבונית (FR-4.5/FR-8.12).');
+                throw new RuntimeException('לא ניתן להפיק חשבונית זיכוי לעסקה שלא הופקה עבורה חשבונית.');
             }
         }
     }
@@ -366,7 +370,7 @@ class Document extends Model
             $value = trim((string) ($valuesByFieldId[$field->id] ?? ($this->field_values[$field->id]['value'] ?? '')));
 
             if ($field->is_required && $value === '') {
-                throw new RuntimeException("השדה \"{$field->name}\" הוא שדה חובה (FR-4.11).");
+                throw new RuntimeException("השדה \"{$field->name}\" הוא שדה חובה.");
             }
 
             $stored[$field->id] = [
@@ -401,6 +405,158 @@ class Document extends Model
         $this->update(['signed_at' => now()]);
     }
 
+    /** The link embedded in a "digital form" send — a signed route, no login required (see routes/web.php). */
+    public function signUrl(): string
+    {
+        return URL::signedRoute('documents.sign', ['document' => $this->id]);
+    }
+
+    /** The link embedded in a "PDF" send — a signed route that renders the document as a real PDF file (see routes/web.php). */
+    public function pdfUrl(): string
+    {
+        return URL::signedRoute('documents.pdf', ['document' => $this->id]);
+    }
+
+    /**
+     * The "קבלת המסמך כ-PDF" button on a digital-form send (SmoveClient::
+     * sendDocumentEmail()'s $requestPdfUrl) — unlike pdfUrl() above, this
+     * doesn't link to the file directly; it hits documents.email-pdf, which
+     * emails $email a brand-new message with the PDF actually attached (see
+     * emailPdfTo() and DocumentPdfMail). The recipient isn't logged in when
+     * clicking this, so who to send to travels signed in the URL itself,
+     * same as every other document/materials link.
+     */
+    public function emailPdfUrl(string $email, string $name): string
+    {
+        return URL::signedRoute('documents.email-pdf', ['document' => $this->id, 'email' => $email, 'name' => $name]);
+    }
+
+    /**
+     * The actual PDF bytes for this document — shared by documents.pdf
+     * (direct in-browser download) and emailPdfTo() below (real-attachment
+     * email), so both stay in sync with a single mpdf setup. See
+     * documents.pdf's own docblock (routes/web.php) for why mpdf over
+     * dompdf (Hebrew bidi rendering).
+     *
+     * @return array{binary: string, fileName: string}
+     */
+    public function renderPdfBinary(): array
+    {
+        $this->loadMissing(['deal.customer.school', 'businessEntity', 'lines']);
+
+        $fileName = (self::TYPE_LABELS[$this->document_type] ?? $this->document_type).'-'.$this->id.'.pdf';
+
+        $mpdf = new \Mpdf\Mpdf(['default_font' => 'dejavusans', 'directionality' => 'rtl']);
+        $mpdf->WriteHTML(view('documents.pdf', ['document' => $this])->render());
+
+        return ['binary' => $mpdf->Output($fileName, \Mpdf\Output\Destination::STRING_RETURN), 'fileName' => $fileName];
+    }
+
+    /**
+     * emailPdfUrl()'s click — sends $email a brand-new message
+     * (App\Mail\DocumentPdfMail) with the real PDF file attached, via
+     * Laravel Mail rather than Smove (see that mailable's docblock for why:
+     * Smove has no real attachment endpoint at all). Not idempotency-guarded
+     * like confirm()/acknowledge() — re-clicking is a deliberate "send it to
+     * me again", not a one-time action.
+     */
+    public function emailPdfTo(string $email, string $name, ActivityLogger $logger): void
+    {
+        $pdf = $this->renderPdfBinary();
+
+        \Illuminate\Support\Facades\Mail::to($email, $name)->send(
+            new \App\Mail\DocumentPdfMail($this, $name, $pdf['binary'], $pdf['fileName']),
+        );
+
+        $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+
+        $logger->log('document.pdf_emailed', "נשלח קובץ PDF של \"{$typeLabel}\" למייל {$email} עבור עסקה #{$this->deal_id}", [
+            'document_id' => $this->id,
+            'deal_id' => $this->deal_id,
+            'user' => null,
+        ]);
+    }
+
+    /**
+     * documents.pdf's content (resources/views/documents/pdf.blade.php) —
+     * same underlying values as rendered_content, just with a blank line to
+     * write on by hand instead of a bracket for any field still empty (a
+     * printed PDF has no interactive input the way the online form does).
+     */
+    public function printFriendlyContent(): string
+    {
+        return $this->documentTemplate->renderContent(
+            collect($this->field_values ?? [])->map(fn ($v) => $v['value'])->all(),
+            printFriendly: true,
+        );
+    }
+
+    /**
+     * The online form's "אישור וחתימה" click — a simple click-to-confirm,
+     * not a drawn signature. Generic across every document_type (including
+     * quote/invoice/credit_note, which have no dedicated status column of
+     * their own), but for order_form/contract it also fires the existing,
+     * unchanged FR-4.3/FR-4.4 gate methods above so nothing downstream
+     * (Document::assertCanGenerate()) needs to know this route exists.
+     * Idempotent: revisiting an already-confirmed link is a no-op rather
+     * than an error, so the same emailed link can be opened more than once.
+     *
+     * @param  array<int, string>  $fieldValues  Keyed by document_template_field_id, same shape submitFieldValues() expects.
+     */
+    public function confirm(array $fieldValues, ActivityLogger $logger): void
+    {
+        if ($this->confirmed_at) {
+            return;
+        }
+
+        if ($this->documentTemplate->fields->isNotEmpty()) {
+            $this->submitFieldValues($fieldValues);
+        }
+
+        $this->update(['confirmed_at' => now()]);
+
+        if ($this->document_type === 'order_form' && ! $this->received_at) {
+            $this->markReceived();
+        }
+
+        if ($this->document_type === 'contract' && ! $this->signed_at) {
+            $this->markSigned();
+        }
+
+        $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+
+        $logger->log('document.confirmed', "הלקוחה אישרה את \"{$typeLabel}\" דרך הטופס המקוון עבור עסקה #{$this->deal_id}", [
+            'document_id' => $this->id,
+            'deal_id' => $this->deal_id,
+            'user' => null,
+        ]);
+    }
+
+    /** Set the first time the public sign form is opened (⚡document-sign.blade.php's mount()) — idempotent, a second visit never overwrites it. */
+    public function markViewed(): void
+    {
+        if (! $this->viewed_at) {
+            $this->update(['viewed_at' => now()]);
+        }
+    }
+
+    /**
+     * The "סטטוס" badge (⚡deal-detail.blade.php/⚡document-view.blade.php) —
+     * computed from real customer engagement (viewed_at/confirmed_at)
+     * rather than status_id, which nothing in this codebase ever
+     * transitions past its draft default. Empty until the document is
+     * actually opened, so an unopened document shows nothing rather than a
+     * misleadingly official-looking "טיוטה".
+     */
+    public function engagementStatusLabel(): string
+    {
+        return match (true) {
+            (bool) $this->confirmed_at => 'נחתם',
+            (bool) $this->viewed_at => 'פתיחת מסמך',
+            default => '',
+        };
+    }
+
     /**
      * FR-4.17/FR-4.18/FR-8.10: description + a positive amount are always
      * required; lines only exist for invoices, and only while the invoice
@@ -411,17 +567,17 @@ class Document extends Model
     public function addLine(string $description, float $amount, float $quantity = 1, ?float $unitPrice = null): DocumentLine
     {
         if (! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
-            throw new RuntimeException('שורות פירוט קיימות רק עבור מסמכי חשבונית וחשבונית זיכוי (FR-4.17).');
+            throw new RuntimeException('שורות פירוט קיימות רק עבור מסמכי חשבונית וחשבונית זיכוי.');
         }
 
         if ($this->sent_at) {
-            throw new RuntimeException('לא ניתן לערוך את פירוט החשבונית לאחר שנשלחה (FR-4.17).');
+            throw new RuntimeException('לא ניתן לערוך את פירוט החשבונית לאחר שנשלחה.');
         }
 
         $description = trim($description);
 
         if ($description === '' || $amount <= 0) {
-            throw new RuntimeException('כל שורת פירוט חייבת לכלול תיאור וסכום (FR-4.18/FR-8.10).');
+            throw new RuntimeException('כל שורת פירוט חייבת לכלול תיאור וסכום.');
         }
 
         $nextSort = (int) $this->lines()->max('sort_order') + 1;
@@ -441,7 +597,7 @@ class Document extends Model
     public function removeLine(int $lineId): void
     {
         if ($this->sent_at) {
-            throw new RuntimeException('לא ניתן לערוך את פירוט החשבונית לאחר שנשלחה (FR-4.17).');
+            throw new RuntimeException('לא ניתן לערוך את פירוט החשבונית לאחר שנשלחה.');
         }
 
         $this->lines()->where('id', $lineId)->firstOrFail()->delete();
@@ -469,24 +625,42 @@ class Document extends Model
      * created here are a permanent snapshot of who this specific send went
      * to — a later change to contacts.is_primary can never alter them.
      *
-     * Build-plan 12: an invoice or credit note is issued to Summit at the
-     * moment it's sent here — this codebase's existing "sent_at is the
-     * final/official moment" convention (addLine()/removeLine() already
-     * block editing invoice lines once sent_at is set) made this the
-     * natural single wiring point, rather than at generateFor() (still just
-     * a local draft) or as a separate explicit action. Non-blocking — see
-     * ExternalOperationRunner's docblock: the document is sent locally
-     * either way; the caller can inspect the returned ExternalOperation to
-     * decide whether to also warn the user (FR-8.16).
+     * Build-plan 12: the recipient email is now actually dispatched via
+     * Smove — "כל פעולות הדיוור מתבצעות באמצעות Smove" (docs/prd.md) applies
+     * to a sent quote/order-form/contract exactly like it already did to
+     * material deliveries and lead confirmations; this was previously the
+     * one send path in the codebase that only wrote local bookkeeping and
+     * never actually emailed anything.
+     *
+     * An invoice or credit note is a deliberate exception to all of that:
+     * it's issued to Summit only, at the moment it's sent here — this
+     * codebase's existing "sent_at is the final/official moment" convention
+     * (addLine()/removeLine() already block editing invoice lines once
+     * sent_at is set) made this the natural single wiring point, rather
+     * than at generateFor() (still just a local draft) or as a separate
+     * explicit action. It never goes through Smove at all: there is no
+     * online sign form and no PDF for these two types (⚡document-view.blade.php
+     * shows a single "הפקה מול Summit" action for them instead of the
+     * recipients/digital-form/PDF choice every other type gets) — the
+     * accounting document itself is Summit's own output, not something this
+     * app emails. (expense_invoice is unrelated to any of this — a
+     * standalone type generated only by Expense::attachInvoice(), never
+     * reaching sendTo() at all.)
+     *
+     * Both external calls are non-blocking — see ExternalOperationRunner's
+     * docblock: the document is sent locally either way; the caller can
+     * inspect the returned ExternalOperations to decide whether to also
+     * warn the user (FR-8.16).
      *
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
+     * @return array{smove: ?ExternalOperation, summit: ?ExternalOperation}
      *
      * @throws RuntimeException when no recipient is supplied.
      */
-    public function sendTo(array $recipients, string $format, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit): ?ExternalOperation
+    public function sendTo(array $recipients, string $format, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): array
     {
         if (empty($recipients)) {
-            throw new RuntimeException('יש לבחור לפחות נמען אחד לפני השליחה (FR-4.8/FR-4.9).');
+            throw new RuntimeException('יש לבחור לפחות נמען אחד לפני השליחה.');
         }
 
         $now = now();
@@ -510,20 +684,54 @@ class Document extends Model
             'metadata' => ['format' => $format, 'recipient_count' => count($recipients)],
         ]);
 
-        if (! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
-            return null;
+        $emailRecipients = array_values(array_filter(
+            $recipients,
+            fn (array $r) => ! empty($r['email']) && filter_var($r['email'], FILTER_VALIDATE_EMAIL),
+        ));
+
+        $operations = ['smove' => null, 'summit' => null];
+
+        if (! empty($emailRecipients) && ! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            $intro = "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
+            $formUrl = $format === 'digital' ? $this->signUrl() : null;
+            $pdfUrl = $format === 'pdf' ? $this->pdfUrl() : null;
+
+            $operations['smove'] = $runner->run(
+                'smove',
+                'document_send',
+                'app_action',
+                function () use ($smove, $emailRecipients, $typeLabel, $intro, $formUrl, $pdfUrl, $format) {
+                    $reference = '';
+
+                    foreach ($emailRecipients as $recipient) {
+                        $requestPdfUrl = $format === 'digital' ? $this->emailPdfUrl($recipient['email'], $recipient['name']) : null;
+                        $reference = $smove->sendDocumentEmail($recipient['email'], $recipient['name'], $typeLabel, $intro, $formUrl, $pdfUrl, $requestPdfUrl);
+                    }
+
+                    return $reference;
+                },
+                [
+                    'document_id' => $this->id,
+                    'deal_id' => $this->deal_id,
+                    'description' => "שליחת {$typeLabel} במייל עבור עסקה #{$this->deal_id}",
+                ],
+            );
         }
 
-        return $runner->run(
-            'summit',
-            $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
-            'app_action',
-            fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
-            [
-                'document_id' => $this->id,
-                'deal_id' => $this->deal_id,
-                'description' => "הפקת {$typeLabel} מול Summit עבור עסקה #{$this->deal_id}",
-            ],
-        );
+        if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            $operations['summit'] = $runner->run(
+                'summit',
+                $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
+                'app_action',
+                fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
+                [
+                    'document_id' => $this->id,
+                    'deal_id' => $this->deal_id,
+                    'description' => "הפקת {$typeLabel} מול Summit עבור עסקה #{$this->deal_id}",
+                ],
+            );
+        }
+
+        return $operations;
     }
 }

@@ -178,11 +178,11 @@ class MaterialDelivery extends Model
         ));
 
         if (empty($validRecipients)) {
-            throw new RuntimeException('יש לבחור לפחות איש קשר אחד עם כתובת דוא"ל תקינה לפני שליחת חומרי הלימוד (FR-5.2/FR-8.13).');
+            throw new RuntimeException('יש לבחור לפחות איש קשר אחד עם כתובת דוא"ל תקינה לפני שליחת חומרי הלימוד.');
         }
 
         if (empty($attachments)) {
-            throw new RuntimeException('יש לצרף לפחות קובץ אחד לפני שליחת חומרי הלימוד (FR-5.3/FR-8.14).');
+            throw new RuntimeException('יש לצרף לפחות קובץ אחד לפני שליחת חומרי הלימוד.');
         }
 
         $status = StatusDefinition::firstOrCreate(

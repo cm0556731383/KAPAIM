@@ -121,7 +121,7 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">הוצאות</h1>
-            <p class="text-text-secondary m-0">רישום הוצאות ידני וזיהוי הוצאות שחסרה להן חשבונית (FR-6.5-FR-6.10)</p>
+            <p class="text-text-secondary m-0">רישום הוצאות ידני וזיהוי הוצאות שחסרה להן חשבונית</p>
         </div>
     </div>
 
@@ -219,7 +219,7 @@ class extends Component
             </div>
         </form>
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">
-            צירוף חשבונית מתבצע מרשימת ההוצאות למעלה, לאחר שמירת ההוצאה (FR-6.6).
+            צירוף חשבונית מתבצע מרשימת ההוצאות למעלה, לאחר שמירת ההוצאה.
         </p>
     </div>
 </div>

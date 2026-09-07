@@ -389,7 +389,7 @@ class extends Component
             ->exists();
 
         if ($summitFailed) {
-            $this->notifyWarning('הקבלה נרשמה במערכת, אך ההפקה מול Summit נכשלה — ראו יומן פעילות (FR-8.16).');
+            $this->notifyWarning('הקבלה נרשמה במערכת, אך ההפקה מול Summit נכשלה — ראו יומן פעילות.');
 
             return;
         }
@@ -445,7 +445,7 @@ class extends Component
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>פרטי המוצר בעת המכירה</h3>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">
-                    שם ומחיר קפואים למועד יצירת העסקה — ממשיכים להופיע כאן גם אם התוכנית/המארז החי שונה או הושבת בהמשך (FR-3.6).
+                    שם ומחיר קפואים למועד יצירת העסקה — ממשיכים להופיע כאן גם אם התוכנית/המארז החי שונה או הושבת בהמשך.
                 </p>
                 @if ($deal->program_id)
                     <div class="field"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
@@ -473,10 +473,10 @@ class extends Component
                                 <option value="{{ $method->id }}">{{ $method->name }}</option>
                             @endforeach
                         </select>
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ניתן לשנות רק כל עוד לא התקבל תשלום בפועל עבור העסקה (FR-4.30/FR-4.31).</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ניתן לשנות רק כל עוד לא התקבל תשלום בפועל עבור העסקה.</p>
                     </div>
                     <div class="full">
-                        <label for="specialRequest">בקשת התאמה מיוחדת (FR-3.7)</label>
+                        <label for="specialRequest">בקשת התאמה מיוחדת</label>
                         <textarea id="specialRequest" wire:model="specialRequest" rows="3" placeholder="הערה חופשית — ללא סטטוס או תהליך נפרד"></textarea>
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטי עסקה</button></div>
@@ -507,7 +507,7 @@ class extends Component
                     </div>
                 </form>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-                    ביטול עסקה הוא שינוי סטטוס בלבד — עסקה לעולם אינה נמחקת (FR-3.5). עדכון סטטוס במקביל משתי משתמשות אינו דורס בשקט (FR-8.19).
+                    ביטול עסקה הוא שינוי סטטוס בלבד — עסקה לעולם אינה נמחקת. עדכון סטטוס במקביל משתי משתמשות אינו דורס בשקט.
                 </p>
                 @if ($deal->completed_at)
                     <div class="field" style="margin-top:var(--sp-md)"><div class="k">הושלמה בתאריך</div><div class="v ltr-num">{{ $deal->completed_at->format('d/m/Y H:i') }}</div></div>
@@ -520,7 +520,7 @@ class extends Component
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>מסמכים</h3>
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">
-            רצף עסקי מחייב: הצעת מחיר (אופציונלי) ← טופס הזמנה ← חוזה ← חשבונית. לא ניתן לדלג על שלב (FR-4.1, FR-4.3, FR-4.4).
+            רצף עסקי מחייב: הצעת מחיר (אופציונלי) ← טופס הזמנה ← חוזה ← חשבונית. לא ניתן לדלג על שלב.
         </p>
 
         <x-business-error-banner :message="$documentError" />
@@ -538,7 +538,7 @@ class extends Component
                 @if ($type === 'invoice')
                     <div style="display:flex; gap:6px; align-items:flex-end">
                         <div>
-                            <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק פטור (FR-4.15/FR-4.16)</label>
+                            <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק פטור</label>
                             <select id="invoiceBusinessEntityId" wire:model="invoiceBusinessEntityId" style="min-width:220px">
                                 <option value="">בחרו עוסק</option>
                                 @foreach ($this->activeBusinessEntities as $entity)
@@ -564,11 +564,17 @@ class extends Component
                     @foreach ($this->documents as $document)
                         <tr>
                             <td>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</td>
-                            <td><span class="badge badge-neutral">{{ $document->status?->name }}</span></td>
+                            <td>
+                                @if ($document->engagementStatusLabel())
+                                    <span class="badge badge-neutral">{{ $document->engagementStatusLabel() }}</span>
+                                @else
+                                    <span class="text-text-secondary">—</span>
+                                @endif
+                            </td>
                             <td class="ltr-num">{{ $document->sent_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->received_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->signed_at?->format('d/m/Y') ?? '—' }}</td>
-                            <td><a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">פתיחת מסמך</a></td>
+                            <td><a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -615,7 +621,7 @@ class extends Component
                 </div>
                 <div class="full"><button type="submit" class="btn btn-primary" @disabled(! $deal->payment_method_id)>רישום תשלום</button></div>
                 @unless ($deal->payment_method_id)
-                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">יש לבחור אמצעי תשלום בפרטי העסקה לפני רישום תשלום (FR-4.30).</p>
+                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">יש לבחור אמצעי תשלום בפרטי העסקה לפני רישום תשלום.</p>
                 @endunless
             </form>
         @endif
@@ -623,12 +629,12 @@ class extends Component
         @if ($deal->paymentMethod?->type === 'recurring')
             <div style="display:flex; gap:var(--sp-sm); align-items:center; margin-bottom:var(--sp-lg)">
                 <button type="button" wire:click="registerStandingOrder" class="btn btn-secondary">רישום הוראת קבע מול Summit</button>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">גבייה חודשית וקבלה אוטומטית לאחריה (FR-4.27) יתבצעו מרגע זה מול Summit.</p>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">גבייה חודשית וקבלה אוטומטית לאחריה יתבצעו מרגע זה מול Summit.</p>
             </div>
         @endif
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg)">
-            <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($this->documents->where('document_type', 'invoice')->isEmpty())>הפקת קבלה לפני תשלום (FR-4.24/FR-4.25)</button>
+            <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($this->documents->where('document_type', 'invoice')->isEmpty())>הפקת קבלה לפני תשלום</button>
         </div>
 
         @if ($this->payments->isEmpty())
@@ -670,7 +676,7 @@ class extends Component
             </div>
         @endif
         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-            תשלום חלקי אינו סוגר את העסקה — היא מסומנת "שולמה" רק כשמלוא הסכום התקבל (FR-4.32/FR-4.33). קבלה עבור צ'ק מופקת רק לאחר פירעון בפועל, ולא יותר מקבלה אחת לכל תשלום (FR-4.28/FR-4.29).
+            תשלום חלקי אינו סוגר את העסקה — היא מסומנת "שולמה" רק כשמלוא הסכום התקבל. קבלה עבור צ'ק מופקת רק לאחר פירעון בפועל, ולא יותר מקבלה אחת לכל תשלום.
         </p>
     </div>
 </div>

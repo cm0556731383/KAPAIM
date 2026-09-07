@@ -60,6 +60,68 @@ Route::get('/materials/attachments/{attachment}/download', function (
 })->middleware('signed')->name('materials.attachment.download');
 
 /**
+ * Build-plan 12 follow-up (FR-4.2) — the online form embedded in a
+ * "digital" document send (Document::signUrl()). Same outside-auth +
+ * `signed` pattern as the two routes above: the recipient opening this link
+ * isn't logged into the app at all.
+ */
+Route::livewire('/documents/{document}/sign', 'document-sign')->middleware('signed')->name('documents.sign');
+
+/**
+ * Build-plan 12 follow-up (FR-4.2) — the real generated PDF embedded in a
+ * "PDF" document send (Document::pdfUrl()). Same signed-link pattern; the
+ * PDF is generated on the fly from the frozen rendered_content (FR-4.14),
+ * never stored, since regenerating it is cheap and content never changes.
+ *
+ * mpdf, not dompdf: confirmed by direct comparison (both rendered on the
+ * exact same Hebrew text) that dompdf does not apply the Unicode
+ * bidirectional algorithm at all here — Hebrew came out with its
+ * characters in raw logical (reversed-looking) order, unreadable. mpdf
+ * renders the identical text correctly out of the box, no manual
+ * bidi-reordering workaround needed — the only sane choice for a
+ * Hebrew-first business app.
+ */
+Route::get('/documents/{document}/pdf', function (\App\Models\Document $document) {
+    abort_if(in_array($document->document_type, ['invoice', 'credit_note'], true), 404);
+
+    $pdf = $document->renderPdfBinary();
+
+    return response($pdf['binary'], 200, [
+        'Content-Type' => 'application/pdf',
+        'Content-Disposition' => 'attachment; filename="'.$pdf['fileName'].'"',
+    ]);
+})->middleware('signed')->name('documents.pdf');
+
+/**
+ * Build-plan 12 follow-up (2026-09-07) — the "קבלת המסמך כ-PDF" button on a
+ * digital-form document send (Document::emailPdfUrl()). Unlike documents.pdf
+ * above (a direct in-browser download), this sends the PDF as a real
+ * attached file in a brand-new email — see Document::emailPdfTo() and
+ * App\Mail\DocumentPdfMail for why this is the one send in the app that
+ * goes through Laravel Mail instead of Smove (Smove has no real
+ * attachment-upload endpoint at all, so this isn't a stylistic choice).
+ * Same outside-auth + `signed` pattern as every other document/materials
+ * link: the recipient's email/name travel signed in the URL itself since
+ * they aren't logged in when clicking it.
+ */
+Route::get('/documents/{document}/email-pdf', function (
+    \App\Models\Document $document,
+    Request $request,
+    ActivityLogger $activityLogger,
+) {
+    abort_if(in_array($document->document_type, ['invoice', 'credit_note'], true), 404);
+
+    $email = (string) $request->query('email');
+    $name = (string) $request->query('name', $email);
+
+    abort_unless(filter_var($email, FILTER_VALIDATE_EMAIL), 404);
+
+    $document->emailPdfTo($email, $name, $activityLogger);
+
+    return view('documents.pdf-emailed', ['document' => $document]);
+})->middleware('signed')->name('documents.email-pdf');
+
+/**
  * Build-plan 12 — three public, unauthenticated-by-Laravel-auth webhook
  * endpoints (landing page, Smove, Summit). Each is gated instead by
  * ExternalIntegrationSetting::verifyWebhookSecret() against an

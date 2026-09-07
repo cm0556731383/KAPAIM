@@ -167,7 +167,7 @@ class Subscription extends Model
         $program = Program::find($programId);
 
         if (! $program || ! $program->is_active || $program->is_subscription_type) {
-            throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה (שאינה תוכנית מנוי) עבור שורת האספקה (FR-3.14).');
+            throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה (שאינה תוכנית מנוי) עבור שורת האספקה.');
         }
 
         return DB::transaction(function () use ($expectedVersion, $delivery, $program, $user) {

@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\ExternalOperation;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -20,9 +21,11 @@ use Livewire\Component;
  * received/a contract signed (the FR-4.3/FR-4.4 gate's prerequisites), and
  * sending (FR-4.2/FR-4.7/FR-4.8/FR-4.9).
  *
- * There is no external customer portal yet (that's stage 12's landing-page/
- * integration work) — the "digital form" here is filled in by staff on the
- * customer's behalf, recording what the order form/contract actually said.
+ * Build-plan 12 follow-up: there's now also a real external customer portal
+ * — ⚡document-sign.blade.php (public, no auth, routes.php's documents.sign)
+ * — that the customer opens from the emailed link and fills in themselves.
+ * The fields here stay too: staff can still fill/edit them directly (e.g.
+ * before the customer confirms, or if the info arrived by phone instead).
  */
 new
 #[Layout('layouts.app', ['title' => 'מסמך — כפיים'])]
@@ -176,12 +179,12 @@ class extends Component
      * recipient rows created here are a permanent snapshot — never derived
      * live from contacts.is_primary again.
      */
-    public function send(string $format, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
+    public function send(string $format, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
     {
         $this->sendError = null;
 
         try {
-            $operation = $this->document->sendTo($this->workingRecipients, $format, $activityLogger, $runner, $summit);
+            $operations = $this->document->sendTo($this->workingRecipients, $format, $activityLogger, $runner, $summit, $smove);
         } catch (\RuntimeException $e) {
             $this->sendError = $e->getMessage();
 
@@ -190,8 +193,14 @@ class extends Component
 
         $this->document->refresh()->load('recipients');
 
-        if ($operation?->status === ExternalOperation::STATUS_FAILED) {
-            $this->notifyWarning('המסמך נשלח, אך ההפקה מול Summit נכשלה — ראו יומן פעילות (FR-8.16).');
+        if ($operations['smove']?->status === ExternalOperation::STATUS_FAILED) {
+            $this->notifyWarning('המסמך נשלח, אך שליחת המייל דרך Smove נכשלה — ראו יומן פעילות.');
+
+            return;
+        }
+
+        if ($operations['summit']?->status === ExternalOperation::STATUS_FAILED) {
+            $this->notifyWarning('המסמך נשלח, אך ההפקה מול Summit נכשלה — ראו יומן פעילות.');
 
             return;
         }
@@ -216,7 +225,9 @@ class extends Component
             <p style="color:var(--color-text-secondary); margin:0">{{ $document->deal->customer->school?->name }} · נוצר <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span></p>
         </div>
         <div style="display:flex; gap:var(--sp-sm); align-items:center">
-            <span class="badge badge-neutral">{{ $document->status?->name }}</span>
+            @if ($document->engagementStatusLabel())
+                <span class="badge badge-neutral">{{ $document->engagementStatusLabel() }}</span>
+            @endif
             <a href="{{ route('document-print', $document) }}" target="_blank" class="btn btn-secondary">תצוגת הדפסה / PDF</a>
         </div>
     </div>
@@ -234,9 +245,9 @@ class extends Component
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>תוכן המסמך</h3>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">
-                    תוכן קפוא בעת ההפקה — שינוי בתבנית אינו משפיע רטרואקטיבית על מסמך זה (FR-4.14).
+                    תוכן קפוא בעת ההפקה — שינוי בתבנית אינו משפיע רטרואקטיבית על מסמך זה.
                 </p>
-                <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{{ $document->rendered_content }}</div>
+                <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{!! $document->rendered_content !!}</div>
 
                 @if ($document->document_type === 'invoice' && $document->businessEntity)
                     <div class="field" style="margin-top:var(--sp-md)"><div class="k">עוסק פטור</div><div class="v">{{ $document->businessEntity->name }} — {{ $document->businessEntity->classification }}</div></div>
@@ -248,7 +259,7 @@ class extends Component
                 <div class="card" style="margin-bottom:var(--sp-lg)">
                     <h3>שדות הטופס</h3>
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">
-                        אין עדיין פורטל לקוחות חיצוני — השדות מתועדים כאן על ידי הצוות בהתאם למה שנמסר בפועל (FR-4.10-FR-4.12).
+                        הלקוחה ממלאת שדות אלו בעצמה בטופס המקוון שנשלח אליה; ניתן גם לערוך אותם כאן ישירות (למשל אם הפרטים נמסרו בטלפון).
                     </p>
                     <x-business-error-banner :message="$fieldsError" />
                     <div class="form-grid">
@@ -286,7 +297,7 @@ class extends Component
                                 </tr>
                             @endforeach
                             <tr class="total-row">
-                                <td colspan="3">סה"כ לתשלום (FR-4.19)</td>
+                                <td colspan="3">סה"כ לתשלום</td>
                                 <td class="ltr-num">₪{{ number_format($document->totalAmount(), 0) }}</td>
                                 <td></td>
                             </tr>
@@ -307,38 +318,59 @@ class extends Component
                 </div>
             @endif
 
-            {{-- ===== נמענים ושליחה ===== --}}
-            <div class="card">
-                <h3>נמענים</h3>
-                <x-business-error-banner :message="$sendError" />
+            {{-- ===== חשבונית/זיכוי: הפקה מול Summit בלבד — אין טופס מקוון/PDF/נמענים במייל,
+                 ההפקה החשבונאית מתבצעת ישירות מול Summit (לא Smove) בלחיצת הכפתור. ===== --}}
+            @if (in_array($document->document_type, ['invoice', 'credit_note'], true))
+                <div class="card">
+                    <h3>הפקה מול Summit</h3>
+                    <x-business-error-banner :message="$sendError" />
+                    @if ($document->sent_at)
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">
+                            הופק מול Summit בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span>.
+                        </p>
+                    @else
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">
+                            {{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} מופקת ישירות מול Summit — אין טופס מקוון או PDF למסמך מסוג זה.
+                        </p>
+                        <div style="margin-top:var(--sp-lg)">
+                            <button type="button" wire:click="send('digital')" class="btn btn-primary">הפקה מול Summit</button>
+                        </div>
+                    @endif
+                </div>
+            @else
+                {{-- ===== נמענים ושליחה ===== --}}
+                <div class="card">
+                    <h3>נמענים</h3>
+                    <x-business-error-banner :message="$sendError" />
 
-                @if ($document->sent_at)
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->format === 'pdf' ? 'קובץ PDF' : 'טופס דיגיטלי' }}.</p>
-                    <div class="recipients-row">
-                        @foreach ($document->recipients as $recipient)
-                            <span class="chip-recipient">{{ $recipient->recipient_name }}</span>
-                        @endforeach
-                    </div>
-                @else
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">ברירת מחדל: אנשי קשר ראשיים · שינוי כאן משפיע רק על שליחה זו (FR-4.8, FR-4.9)</p>
-                    <div class="recipients-row">
-                        @forelse ($workingRecipients as $index => $recipient)
-                            <span class="chip-recipient">{{ $recipient['name'] }}<button type="button" wire:click="removeRecipient({{ $index }})" aria-label="הסרה">×</button></span>
-                        @empty
-                            <span class="text-text-secondary" style="font-size:var(--fs-small)">אין נמענים — יש להוסיף לפחות נמען אחד.</span>
-                        @endforelse
-                    </div>
-                    <div class="form-grid">
-                        <div><input type="text" wire:model="newRecipientName" placeholder="שם הנמען"></div>
-                        <div><input type="text" wire:model="newRecipientEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל (אופציונלי)"></div>
-                        <div class="full"><button type="button" wire:click="addRecipient" class="btn btn-ghost">+ הוספת נמען לשליחה זו</button></div>
-                    </div>
-                    <div style="display:flex; gap:var(--sp-sm); margin-top:var(--sp-lg)">
-                        <button type="button" wire:click="send('digital')" class="btn btn-primary">שליחה כטופס דיגיטלי</button>
-                        <button type="button" wire:click="send('pdf')" class="btn btn-secondary">שליחה כ-PDF</button>
-                    </div>
-                @endif
-            </div>
+                    @if ($document->sent_at)
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->format === 'pdf' ? 'קובץ PDF' : 'טופס דיגיטלי' }}.</p>
+                        <div class="recipients-row">
+                            @foreach ($document->recipients as $recipient)
+                                <span class="chip-recipient">{{ $recipient->recipient_name }}</span>
+                            @endforeach
+                        </div>
+                    @else
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">ברירת מחדל: אנשי קשר ראשיים · שינוי כאן משפיע רק על שליחה זו</p>
+                        <div class="recipients-row">
+                            @forelse ($workingRecipients as $index => $recipient)
+                                <span class="chip-recipient">{{ $recipient['name'] }}<button type="button" wire:click="removeRecipient({{ $index }})" aria-label="הסרה">×</button></span>
+                            @empty
+                                <span class="text-text-secondary" style="font-size:var(--fs-small)">אין נמענים — יש להוסיף לפחות נמען אחד.</span>
+                            @endforelse
+                        </div>
+                        <div class="form-grid">
+                            <div><input type="text" wire:model="newRecipientName" placeholder="שם הנמען"></div>
+                            <div><input type="text" wire:model="newRecipientEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל (אופציונלי)"></div>
+                            <div class="full"><button type="button" wire:click="addRecipient" class="btn btn-ghost">+ הוספת נמען לשליחה זו</button></div>
+                        </div>
+                        <div style="display:flex; gap:var(--sp-sm); margin-top:var(--sp-lg)">
+                            <button type="button" wire:click="send('digital')" class="btn btn-primary">שליחה כטופס דיגיטלי</button>
+                            <button type="button" wire:click="send('pdf')" class="btn btn-secondary">שליחה כ-PDF</button>
+                        </div>
+                    @endif
+                </div>
+            @endif
         </div>
 
         <div>
@@ -346,14 +378,16 @@ class extends Component
             <div class="card">
                 <h3>סטטוס תהליך</h3>
                 <div class="field"><div class="k">נשלח</div><div class="v ltr-num">{{ $document->sent_at?->format('d/m/Y H:i') ?? '—' }}</div></div>
+                <div class="field"><div class="k">נפתח ע"י הלקוחה</div><div class="v ltr-num">{{ $document->viewed_at?->format('d/m/Y H:i') ?? '—' }}</div></div>
                 <div class="field"><div class="k">התקבל</div><div class="v ltr-num">{{ $document->received_at?->format('d/m/Y H:i') ?? '—' }}</div></div>
                 <div class="field"><div class="k">נחתם</div><div class="v ltr-num">{{ $document->signed_at?->format('d/m/Y H:i') ?? '—' }}</div></div>
+                <div class="field"><div class="k">אושר ע"י הלקוחה</div><div class="v ltr-num">{{ $document->confirmed_at?->format('d/m/Y H:i') ?? '—' }}</div></div>
 
                 @if ($document->document_type === 'order_form' && ! $document->received_at)
-                    <button type="button" wire:click="markReceived" class="btn btn-primary" style="margin-top:var(--sp-md)">סימון כטופס שהתקבל (FR-4.3)</button>
+                    <button type="button" wire:click="markReceived" class="btn btn-primary" style="margin-top:var(--sp-md)">סימון כטופס שהתקבל</button>
                 @endif
                 @if ($document->document_type === 'contract' && ! $document->signed_at)
-                    <button type="button" wire:click="markSigned" class="btn btn-primary" style="margin-top:var(--sp-md)">סימון כחוזה שנחתם (FR-4.4)</button>
+                    <button type="button" wire:click="markSigned" class="btn btn-primary" style="margin-top:var(--sp-md)">סימון כחוזה שנחתם</button>
                 @endif
             </div>
         </div>

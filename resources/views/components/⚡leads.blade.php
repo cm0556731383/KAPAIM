@@ -87,7 +87,7 @@ class extends Component
                 $existingLead = Lead::where('school_id', $exactSchool->id)->latest()->first();
 
                 if ($existingLead) {
-                    $this->leadError = "קיים כבר ליד עבור \"{$exactSchool->name}\" (ליד #{$existingLead->id}) — הפנייה נרשמה על הליד הקיים ולא נוצר ליד כפול (FR-1.9).";
+                    $this->leadError = "קיים כבר ליד עבור \"{$exactSchool->name}\" (ליד #{$existingLead->id}) — הפנייה נרשמה על הליד הקיים ולא נוצר ליד כפול.";
 
                     $activityLogger->log('lead.repeat_inquiry', "פנייה חוזרת מ\"{$exactSchool->name}\" נרשמה על ליד קיים #{$existingLead->id}", [
                         'lead_id' => $existingLead->id,
@@ -338,7 +338,7 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>ליד חדש</h2>
-            <p class="hint">מייל וטלפון הם השדות היחידים שחובה למלא (FR-1.2) — שאר הפרטים ניתנים להשלמה בכרטיס הליד</p>
+            <p class="hint">מייל וטלפון הם השדות היחידים שחובה למלא — שאר הפרטים ניתנים להשלמה בכרטיס הליד</p>
         </div>
         <div class="card" style="max-width:640px">
             <form wire:submit="addLead" class="form-grid">

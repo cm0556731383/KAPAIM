@@ -167,15 +167,15 @@ class Deal extends Model
         ?\DateTimeInterface $purchasedAt = null,
     ): self {
         if (($program === null) === ($bundle === null)) {
-            throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד (FR-3.3).');
+            throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד.');
         }
 
         if ($program && ! $program->is_active) {
-            throw new RuntimeException('לא ניתן ליצור עסקה עבור תוכנית שהושבתה (FR-8.5).');
+            throw new RuntimeException('לא ניתן ליצור עסקה עבור תוכנית שהושבתה.');
         }
 
         if ($bundle && ! $bundle->is_active) {
-            throw new RuntimeException('לא ניתן ליצור עסקה עבור מארז שהושבת (FR-8.5).');
+            throw new RuntimeException('לא ניתן ליצור עסקה עבור מארז שהושבת.');
         }
 
         $status = StatusDefinition::firstOrCreate(
@@ -339,7 +339,7 @@ class Deal extends Model
         }
 
         if ($this->payments()->exists()) {
-            throw new RuntimeException('לא ניתן לשנות את אמצעי התשלום לאחר שהתקבל תשלום בפועל עבור העסקה (FR-4.30/FR-4.31).');
+            throw new RuntimeException('לא ניתן לשנות את אמצעי התשלום לאחר שהתקבל תשלום בפועל עבור העסקה.');
         }
 
         $this->update(['payment_method_id' => $paymentMethodId]);
@@ -368,7 +368,7 @@ class Deal extends Model
     public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null): Payment
     {
         if (! $this->payment_method_id) {
-            throw new RuntimeException('יש לבחור אמצעי תשלום לעסקה לפני רישום תשלום (FR-4.30).');
+            throw new RuntimeException('יש לבחור אמצעי תשלום לעסקה לפני רישום תשלום.');
         }
 
         if ($amount <= 0) {

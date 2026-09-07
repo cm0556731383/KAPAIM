@@ -3,6 +3,7 @@
 namespace App\Services\Integrations;
 
 use App\Models\ExternalIntegrationSetting;
+use App\Support\BrandedEmail;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -128,24 +129,60 @@ class SmoveClient
     public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject): string
     {
         $linksHtml = collect($attachmentLinks)
-            ->map(fn (array $a) => '<li><a href="'.e($a['url']).'">'.e($a['name']).'</a></li>')
+            ->map(fn (array $a) => '<li style="margin-bottom:8px;"><a href="'.e($a['url']).'" style="color:#286E9A; font-weight:600;">'.e($a['name']).'</a></li>')
             ->implode('');
 
         return $this->sendCampaign(
             $recipients,
             $subject,
-            '<p>שלום,</p><p>מצורפים קישורים לחומרי הלימוד:</p><ul>'.$linksHtml.'</ul><p>בברכה, כפיים</p>',
+            BrandedEmail::wrap('<p>שלום,</p><p>מצורפים קישורים לחומרי הלימוד:</p><ul style="padding-inline-start:20px;">'.$linksHtml.'</ul><p>בברכה, כפיים</p>'),
         );
     }
 
-    /** Any single-recipient plain-text send: material/expense reminders (FR-5.16/FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. */
+    /** Any single-recipient plain-text send: material/expense reminders (FR-5.16/FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. The text itself (EmailTemplate::render()'s output, editable by the business owner) is untouched; BrandedEmail::wrap() only adds the branded shell around it. */
     public function sendTransactionalEmail(string $toEmail, string $toName, string $subject, string $body): string
     {
         return $this->sendCampaign(
             [['email' => $toEmail, 'name' => $toName]],
             $subject,
-            '<p>'.nl2br(e($body)).'</p>',
+            BrandedEmail::wrap('<p>'.nl2br(e($body)).'</p>'),
         );
+    }
+
+    /**
+     * Build-plan 12 follow-up (FR-4.2/FR-4.7): a document send (quote/order
+     * form/contract/invoice/credit note) — $formUrl links to the online
+     * form (documents.sign, no login required — view the content, fill in
+     * any template fields, click "אישור וחתימה") and $pdfUrl links to the
+     * generated PDF (documents.pdf); Document::sendTo() passes exactly one
+     * of the two, matching the digital/PDF choice already in the send UI.
+     * $requestPdfUrl (digital sends only — see Document::sendTo()) is a
+     * separate, additional button: "קבלת המסמך כ-PDF במייל" hits
+     * documents.email-pdf, which emails the recipient a brand-new message
+     * with the actual PDF file attached (2026-09-07 request) — unlike
+     * $pdfUrl, which only links to an in-browser download. Every link here
+     * is rendered as a branded BrandedEmail::button() rather than a plain
+     * `<a>` — these are the actions the recipient actually needs to take.
+     */
+    public function sendDocumentEmail(string $toEmail, string $toName, string $subject, string $introText, ?string $formUrl, ?string $pdfUrl, ?string $requestPdfUrl = null): string
+    {
+        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
+
+        if ($formUrl) {
+            $body .= BrandedEmail::button($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון');
+        }
+
+        if ($pdfUrl) {
+            $body .= BrandedEmail::button($pdfUrl, 'להורדת המסמך כקובץ PDF');
+        }
+
+        if ($requestPdfUrl) {
+            $body .= BrandedEmail::button($requestPdfUrl, 'קבלת המסמך כקובץ PDF במייל');
+        }
+
+        $body .= '<p>בברכה, כפיים</p>';
+
+        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($body));
     }
 
     /**
@@ -154,9 +191,26 @@ class SmoveClient
      * created with toMembersByEmail if that address isn't already a real,
      * opted-in contact (confirmed 2026-09-02: the campaign call returned
      * success with an id, but its own /Statistics showed 0 sent and
-     * /Recipients came back empty) — so each recipient is first upserted as
-     * a real contact (canReceiveEmails: true) and referenced by the
-     * resulting numeric id via toMembersById instead.
+     * /Recipients came back empty) — so each recipient is first resolved to
+     * a real contact and referenced by the resulting numeric id via
+     * toMembersById instead.
+     *
+     * Build-plan 12 fix (confirmed 2026-09-06 by isolating the call:
+     * canReceiveEmails came back false in the very same response, with no
+     * campaign involved at all, for both a pre-existing and a freshly
+     * created contact): posting to /Contacts with
+     * updateIfExists=true&restoreIfDeleted=true&restoreIfUnsubscribed=true —
+     * i.e. an API write that *asserts* consent rather than just reading a
+     * contact — is what resets/withholds canReceiveEmails, every single
+     * time, regardless of the boolean sent. ensureContact() below therefore
+     * never writes to an existing contact anymore: it only looks one up by
+     * email (read-only) and reuses its id untouched, so a contact whose
+     * consent was genuinely granted (Smove's own opt-in confirmation, or set
+     * directly in the Smove dashboard) is never overwritten by this send
+     * path. A contact that doesn't exist yet in Smove is still created (a
+     * plain create has nothing to preserve), but without claiming
+     * canReceiveEmails — the flag has no real effect via the API anyway, and
+     * a brand-new contact has no consent to assert.
      */
     private function sendCampaign(array $recipients, string $subject, string $bodyHtml): string
     {
@@ -180,17 +234,30 @@ class SmoveClient
         return $this->referenceOrFail($response);
     }
 
-    /** Upserts a contact (opted in to receive emails) and returns its Smove numeric id. */
+    /** Resolves a contact to its Smove numeric id — reused untouched if it already exists, created (never updated) otherwise. See sendCampaign()'s docblock for why this never writes to an existing contact. */
     private function ensureContact(array $contact): int
     {
-        $response = $this->http()->post('/Contacts?updateIfExists=true&restoreIfDeleted=true&restoreIfUnsubscribed=true', [
-            'email' => $this->requiredEmail($contact),
+        $email = $this->requiredEmail($contact);
+
+        $lookup = $this->http()->get('/Contacts', ['q.email.like' => $email]);
+
+        if ($lookup->successful()) {
+            $existing = collect($lookup->json() ?? [])->first(
+                fn (array $c) => strcasecmp($c['email'] ?? '', $email) === 0,
+            );
+
+            if ($existing) {
+                return (int) $existing['id'];
+            }
+        }
+
+        $response = $this->http()->post('/Contacts', [
+            'email' => $email,
             'firstName' => $contact['name'] ?? null,
-            'canReceiveEmails' => true,
         ]);
 
         if ($response->failed()) {
-            throw new RuntimeException('Smove החזירה שגיאה בעדכון איש קשר ('.$response->status().'): '.($response->json('message') ?? trim($response->body())));
+            throw new RuntimeException('Smove החזירה שגיאה ביצירת איש קשר ('.$response->status().'): '.($response->json('message') ?? trim($response->body())));
         }
 
         return (int) $response->json('id');

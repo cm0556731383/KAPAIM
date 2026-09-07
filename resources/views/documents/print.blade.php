@@ -61,7 +61,7 @@
             · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
         </p>
 
-        <div class="content">{{ $document->rendered_content }}</div>
+        <div class="content">{!! $document->rendered_content !!}</div>
 
         @if ($document->document_type === 'invoice')
             <table>

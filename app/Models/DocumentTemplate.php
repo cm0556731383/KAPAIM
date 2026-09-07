@@ -55,16 +55,35 @@ class DocumentTemplate extends Model
      * value; a field with no supplied value falls back to a bracketed
      * "[field name]" placeholder, which is exactly what the template-manager
      * preview screen wants to show before any real document exists.
+     *
+     * $printFriendly (Document::printFriendlyContent(), the PDF send) swaps
+     * that fallback for "field name: ________________" instead — a bracket
+     * makes sense on screen, but a printed/downloaded document has no
+     * interactive field for the recipient to fill, so it gets a blank line
+     * to write on by hand instead, right where the field actually sits in
+     * the text (matching the online form's own field, not a generic notice).
+     *
+     * `content` (and therefore this method's output) is real HTML now —
+     * authored by staff via ⚡document-templates.blade.php's rich-text
+     * editor and rendered raw ({!! !!}) everywhere so bold/italic/underline/
+     * font-size actually show up. $value, in contrast, is never trusted:
+     * for a "digital form" document it can be text a customer typed into
+     * the public sign form (⚡document-sign.blade.php, no auth at all) —
+     * escaping it here, the one place every value gets substituted in, is
+     * what stops a submitted "<script>..."/"<img onerror=...>" from
+     * becoming stored XSS shown back on both the customer's own page and
+     * staff's ⚡document-view.blade.php.
      */
-    public function renderContent(array $valuesByFieldId = []): string
+    public function renderContent(array $valuesByFieldId = [], bool $printFriendly = false): string
     {
         $content = (string) $this->content;
 
         foreach ($this->fields as $field) {
             $value = $valuesByFieldId[$field->id] ?? null;
+            $blank = $printFriendly ? e($field->name).': '.str_repeat('_', 24) : '['.e($field->name).']';
             $content = str_replace(
                 $field->placeholderToken(),
-                $value !== null && $value !== '' ? (string) $value : "[{$field->name}]",
+                $value !== null && $value !== '' ? e((string) $value) : $blank,
                 $content,
             );
         }

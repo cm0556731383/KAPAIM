@@ -22,6 +22,7 @@ use App\Models\StatusDefinition;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -355,6 +356,7 @@ class ExternalIntegrationsTest extends TestCase
             app(ActivityLogger::class),
             app(ExternalOperationRunner::class),
             app(SummitClient::class),
+            app(SmoveClient::class),
         );
 
         $this->assertNotNull($invoice->fresh()->sent_at);
@@ -365,6 +367,38 @@ class ExternalIntegrationsTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), '/invoices'));
     }
 
+    /**
+     * An invoice/credit note is issued to Summit only — never emailed via
+     * Smove (no online sign form or PDF exists for these two types, unlike
+     * every other document type). Smove is active and configured here on
+     * purpose, so a false "never touches Smove" pass can't be explained
+     * away by Smove simply not being configured.
+     */
+    public function test_sending_an_invoice_never_touches_smove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['base_url' => 'https://summit.test', 'api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(['summit.test/*' => Http::response(['id' => 'inv-1'], 200), 'rest.smoove.io/*' => Http::response(['id' => 42], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+
+        $operations = $invoice->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertNull($operations['smove']);
+        $this->assertSame(ExternalOperation::STATUS_SUCCESS, $operations['summit']->status);
+        // Not a blanket "nothing hit smoove.io" — creating the deal/customer above can trigger
+        // unrelated mailing-list contact syncs (FR-5.21 etc.); only the email-sending endpoint matters here.
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/Campaigns'));
+    }
+
     public function test_a_quote_send_never_touches_summit(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['base_url' => 'https://summit.test', 'api_key' => 'x']]);
@@ -373,16 +407,108 @@ class ExternalIntegrationsTest extends TestCase
         $deal = $this->createDeal();
         $quote = Document::generateFor($deal, $this->createTemplate('quote'));
 
-        $operation = $quote->sendTo(
+        $operations = $quote->sendTo(
             [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
             'digital',
             app(ActivityLogger::class),
             app(ExternalOperationRunner::class),
             app(SummitClient::class),
+            app(SmoveClient::class),
         );
 
-        $this->assertNull($operation);
+        $this->assertNull($operations['summit']);
         Http::assertNothingSent();
+    }
+
+    // ----- document send pushes the email itself to Smove -----
+
+    public function test_sending_a_document_sends_the_email_via_smove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(function ($request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
+                return Http::response([], 200); // not found yet — forces the create path
+            }
+
+            return Http::response(['id' => 42], 200);
+        });
+
+        $deal = $this->createDeal();
+        $quote = Document::generateFor($deal, $this->createTemplate('quote'));
+
+        $operations = $quote->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertSame(ExternalOperation::STATUS_SUCCESS, $operations['smove']->status);
+        $this->assertDatabaseHas('external_operations', [
+            'system' => 'smove', 'operation_type' => 'document_send', 'document_id' => $quote->id,
+            'status' => ExternalOperation::STATUS_SUCCESS,
+        ]);
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns'));
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST' && str_contains($request->url(), '/Contacts') && str_contains($request->url(), 'updateIfExists'));
+    }
+
+    /**
+     * Confirmed 2026-09-06 against Smove's real API: a write to an existing
+     * contact via updateIfExists=true&restoreIfDeleted=true&restoreIfUnsubscribed=true
+     * comes back with canReceiveEmails false regardless of what's sent — for
+     * a pre-existing contact and a freshly created one alike. So a recipient
+     * who already exists in Smove (found by email) must never be written to
+     * again by a document send — only looked up and referenced by id.
+     */
+    public function test_sending_a_document_to_an_existing_smove_contact_never_overwrites_it(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(function ($request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
+                return Http::response([['id' => 869408278, 'email' => 'billing@example.com', 'canReceiveEmails' => true]], 200);
+            }
+
+            return Http::response(['id' => 42], 200);
+        });
+
+        $deal = $this->createDeal();
+        $quote = Document::generateFor($deal, $this->createTemplate('quote'));
+
+        $operations = $quote->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertSame(ExternalOperation::STATUS_SUCCESS, $operations['smove']->status);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/Contacts') && $request->method() !== 'GET');
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns') && in_array(869408278, $request->data()['toMembersById'] ?? [], true));
+    }
+
+    public function test_sending_a_document_with_no_valid_recipient_email_never_touches_smove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake();
+
+        $deal = $this->createDeal();
+        $quote = Document::generateFor($deal, $this->createTemplate('quote'));
+
+        $operations = $quote->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => null]],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertNull($operations['smove']);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/Campaigns'));
     }
 
     // ----- explicit Deal actions: card charge / standing-order registration -----
