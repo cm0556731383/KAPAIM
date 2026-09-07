@@ -683,6 +683,46 @@ class DocumentsEngineTest extends TestCase
         $response->assertOk();
     }
 
+    // ----- manually marking a PDF-sent document as signed (⚡deal-detail.blade.php) -----
+
+    public function test_marking_a_pdf_sent_document_signed_confirms_it(): void
+    {
+        $deal = $this->createDeal();
+        $document = Document::generateFor($deal, $this->createTemplate('order_form'));
+        $document->update(['sent_at' => now(), 'format' => 'pdf']);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->call('markDocumentSigned', $document->id);
+
+        $document->refresh();
+        $this->assertNotNull($document->confirmed_at);
+        $this->assertNotNull($document->received_at);
+    }
+
+    public function test_marking_a_digitally_sent_document_signed_is_not_offered(): void
+    {
+        $deal = $this->createDeal();
+        $document = $this->generateQuote($deal);
+        $document->update(['sent_at' => now(), 'format' => 'digital']);
+
+        $response = $this->actingAs($this->owner)->get("/deals/{$deal->id}");
+
+        $response->assertOk()->assertDontSee('סמן כנחתם');
+    }
+
+    public function test_marking_a_document_signed_requires_a_document_belonging_to_the_deal(): void
+    {
+        $deal = $this->createDeal();
+        $otherDeal = $this->createDeal();
+        $document = Document::generateFor($otherDeal, $this->createTemplate('quote'));
+        $document->update(['sent_at' => now(), 'format' => 'pdf']);
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->call('markDocumentSigned', $document->id);
+    }
+
     public function test_document_print_view_renders(): void
     {
         $document = $this->generateInvoice($this->signedContractDeal());

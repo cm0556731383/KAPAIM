@@ -223,6 +223,32 @@ class extends Component
         $this->redirect(route('document-view', $document), navigate: false);
     }
 
+    /**
+     * 2026-09-08 request: a document sent as a plain PDF has no online sign
+     * form (signUrl() is only generated for a 'digital' send — see
+     * Document::sendTo()), so there's no way for confirm() to ever fire on
+     * its own; the customer signs on paper and staff records it here
+     * instead. Reuses Document::confirm() as-is (same confirmed_at/
+     * received_at/signed_at side effects a real online confirmation would
+     * have triggered) rather than a parallel "mark signed" concept.
+     */
+    public function markDocumentSigned(int $documentId, ActivityLogger $activityLogger): void
+    {
+        $this->documentError = null;
+
+        $document = $this->deal->documents()->findOrFail($documentId);
+
+        try {
+            $document->confirm([], $activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+
+            return;
+        }
+
+        unset($this->documents);
+    }
+
     #[Computed]
     public function documents()
     {
@@ -559,11 +585,20 @@ class extends Component
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>סוג</th><th>סטטוס</th><th>נשלח</th><th>התקבל</th><th>נחתם</th><th></th></tr></thead>
+                <thead><tr><th>סוג</th><th>אופן שליחה</th><th>סטטוס</th><th>נשלח</th><th>התקבל</th><th>נחתם</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->documents as $document)
                         <tr>
                             <td>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</td>
+                            <td>
+                                @if (! $document->sent_at)
+                                    <span class="text-text-secondary">—</span>
+                                @elseif ($document->format === 'pdf')
+                                    <span class="badge badge-neutral">קובץ PDF</span>
+                                @else
+                                    <span class="badge badge-neutral">טופס מקוון</span>
+                                @endif
+                            </td>
                             <td>
                                 @if ($document->engagementStatusLabel())
                                     <span class="badge badge-neutral">{{ $document->engagementStatusLabel() }}</span>
@@ -574,7 +609,12 @@ class extends Component
                             <td class="ltr-num">{{ $document->sent_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->received_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->signed_at?->format('d/m/Y') ?? '—' }}</td>
-                            <td><a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a></td>
+                            <td style="display:flex; gap:6px">
+                                <a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a>
+                                @if ($document->format === 'pdf' && $document->sent_at && ! $document->confirmed_at && ! in_array($document->document_type, ['invoice', 'credit_note'], true))
+                                    <button type="button" wire:click="markDocumentSigned({{ $document->id }})" wire:confirm="לסמן את המסמך כנחתם? פעולה זו מדמה חתימה מקוונת של הלקוחה." class="btn btn-secondary btn-sm">סמן כנחתם</button>
+                                @endif
+                            </td>
                         </tr>
                     @endforeach
                 </tbody>

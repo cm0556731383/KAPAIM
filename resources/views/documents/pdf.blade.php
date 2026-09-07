@@ -17,8 +17,6 @@
         }
         .sheet {
             background: #FFFFFF;
-            border: 1px solid #DAD7C7;
-            border-radius: 14px;
             padding: 40px;
         }
         .brand { margin-bottom: 24px; }
