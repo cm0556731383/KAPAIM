@@ -4,25 +4,31 @@
     <meta charset="UTF-8">
     <title>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — עסקה #{{ $document->deal_id }} — כפיים</title>
     <style>
-        {{-- mpdf has no network access for Google Fonts and limited CSS support (no flexbox/grid) — DejaVu Sans is bundled with mpdf and covers Hebrew correctly (dompdf, tried first, does not apply the Unicode bidi algorithm at all and renders Hebrew unreadable — see routes/web.php's documents.pdf route). --}}
+        {{-- mpdf has no network access for Google Fonts and limited CSS support (no flexbox/grid) — DejaVu Sans is bundled with mpdf and covers Hebrew correctly (dompdf, tried first, does not apply the Unicode bidi algorithm at all and renders Hebrew unreadable — see routes/web.php's documents.pdf route). Colors/spacing below are otherwise a deliberate match of resources/views/layouts/public.blade.php (the online sign form), per the 2026-09-08 request that a downloaded/emailed PDF read as the same document, not a plainer one — right down to the same --color-* values, just as literal hex since mpdf's CSS support doesn't extend to custom properties. --}}
         * { box-sizing: border-box; }
         body {
             font-family: 'DejaVu Sans', sans-serif;
             color: #20241F;
+            background: #FFFFFF;
             margin: 0;
-            padding: 32px;
+            padding: 24px;
             line-height: 1.7;
             direction: rtl;
         }
+        .sheet {
+            background: #FFFFFF;
+            border: 1px solid #DAD7C7;
+            border-radius: 14px;
+            padding: 40px;
+        }
         .brand { margin-bottom: 24px; }
-        .brand img { height: 40px; }
-        h1 { font-weight: normal; font-size: 24px; margin: 0 0 4px; }
-        .meta { color: #5C6B5F; font-size: 13px; margin-bottom: 28px; }
-        {{-- font-size/line-height matches resources/views/layouts/public.blade.php's .content exactly, so the printed/downloaded document reads the same as the online form. --}}
-        .content { white-space: pre-wrap; font-size: 16px; line-height: 1.9; margin-bottom: 28px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
-        th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #DAD7C7; }
-        .total-row td { font-weight: bold; font-size: 15px; border-top: 2px solid #20241F; border-bottom: none; }
+        .brand img { height: 48px; }
+        h1 { font-weight: bold; font-size: 24px; margin: 0 0 4px; }
+        .meta { color: #5C6B5F; font-size: 14px; margin-bottom: 28px; }
+        .content { white-space: pre-wrap; font-size: 16px; margin-bottom: 28px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 24px; }
+        th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid #DAD7C7; }
+        .total-row td { font-weight: bold; font-size: 17px; border-top: 2px solid #20241F; border-bottom: none; }
         .ltr-num { direction: ltr; unicode-bidi: embed; }
         .signature { margin-top: 56px; font-size: 14px; color: #5C6B5F; }
         .signature table { border-collapse: collapse; }
@@ -30,6 +36,7 @@
     </style>
 </head>
 <body>
+<div class="sheet">
     {{-- Embedded as a base64 data URI, not a public_path()/asset() URL — mpdf's file/network access is
          locked down by default, and a data URI always works regardless of that config. --}}
     <div class="brand"><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('images/logo.png'))) }}"></div>
@@ -41,8 +48,17 @@
     </p>
 
     {{-- printFriendlyContent(), not rendered_content: any field still empty gets a blank line to fill by
-         hand right where it sits in the text, instead of the online form's interactive input (FR-4.10/4.11). --}}
-    <div class="content">{!! $document->printFriendlyContent() !!}</div>
+         hand right where it sits in the text, instead of the online form's interactive input box
+         (FR-4.10/4.11) — a printed/downloaded PDF has no interactive input to show.
+
+         nl2br(), not `white-space: pre-wrap` alone: confirmed 2026-09-08 that mpdf's HTML engine
+         collapses the template's authored line breaks (single `\n` between a sign-off's name/title,
+         double `\n\n` between paragraphs — the exact spacing set in ⚡document-templates.blade.php's
+         editor and already correct on-screen there and in the online form, both real browsers) into
+         one run-on paragraph, `pre-wrap` CSS support notwithstanding. Turning every literal newline
+         into an explicit `<br>` before handing the HTML to mpdf renders identically to how the
+         template author actually laid it out. --}}
+    <div class="content">{!! nl2br($document->printFriendlyContent()) !!}</div>
 
     @if ($document->document_type === 'invoice')
         <table>
@@ -75,5 +91,6 @@
             </tr>
         </table>
     </div>
+</div>
 </body>
 </html>

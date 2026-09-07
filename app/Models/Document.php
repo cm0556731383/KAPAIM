@@ -419,12 +419,12 @@ class Document extends Model
 
     /**
      * The "קבלת המסמך כ-PDF" button on a digital-form send (SmoveClient::
-     * sendDocumentEmail()'s $requestPdfUrl) — unlike pdfUrl() above, this
-     * doesn't link to the file directly; it hits documents.email-pdf, which
-     * emails $email a brand-new message with the PDF actually attached (see
-     * emailPdfTo() and DocumentPdfMail). The recipient isn't logged in when
-     * clicking this, so who to send to travels signed in the URL itself,
-     * same as every other document/materials link.
+     * sendDocumentEmail()'s $requestPdfUrl) — hits documents.email-pdf,
+     * which sends $email a brand-new Smove campaign with the PDF actually
+     * attached (see requestPdfBySmove() and smoveAttachmentUrl()). The
+     * recipient isn't logged in when clicking this, so who to send to
+     * travels signed in the URL itself, same as every other document/
+     * materials link.
      */
     public function emailPdfUrl(string $email, string $name): string
     {
@@ -432,11 +432,59 @@ class Document extends Model
     }
 
     /**
+     * The URL handed to Smove's `campaignAttachments` (SmoveClient::
+     * sendCampaign()) — Smove's servers fetch this URL themselves and attach
+     * the actual bytes, so it must be reachable with no auth. Confirmed
+     * empirically against Smove's real API (2026-09-07): a query string
+     * anywhere in the URL — even a harmless `?x=1` — makes the whole
+     * campaign call fail with `ErrAttachments`, and the path must end in a
+     * real file extension (`.pdf`); Laravel's normal `signed` middleware
+     * (query-string based, used by pdfUrl()/signUrl() above) is therefore
+     * unusable here. This carries its own HMAC+expiry baked into the path
+     * itself instead (see verifySmoveAttachmentToken(), the documents.
+     * pdf-file route in routes/web.php) — same security property as a
+     * signed route, just shaped to satisfy Smove's requirement.
+     */
+    public function smoveAttachmentUrl(): string
+    {
+        $expires = now()->addDays(14)->timestamp;
+
+        return route('documents.pdf-file', ['token' => "{$this->id}-{$expires}-".$this->smoveAttachmentHash($expires).'.pdf']);
+    }
+
+    /** documents.pdf-file's guard (routes/web.php) — returns the document if $token is a genuine, unexpired smoveAttachmentUrl() token, null otherwise. */
+    public static function verifySmoveAttachmentToken(string $token): ?self
+    {
+        if (! preg_match('/^(\d+)-(\d+)-([a-f0-9]{32})\.pdf$/', $token, $m)) {
+            return null;
+        }
+
+        [, $id, $expires, $hash] = $m;
+
+        if ((int) $expires < now()->timestamp) {
+            return null;
+        }
+
+        $document = self::find((int) $id);
+
+        if (! $document || ! hash_equals($document->smoveAttachmentHash((int) $expires), $hash)) {
+            return null;
+        }
+
+        return $document;
+    }
+
+    private function smoveAttachmentHash(int $expires): string
+    {
+        return substr(hash_hmac('sha256', "{$this->id}.{$expires}", config('app.key')), 0, 32);
+    }
+
+    /**
      * The actual PDF bytes for this document — shared by documents.pdf
-     * (direct in-browser download) and emailPdfTo() below (real-attachment
-     * email), so both stay in sync with a single mpdf setup. See
-     * documents.pdf's own docblock (routes/web.php) for why mpdf over
-     * dompdf (Hebrew bidi rendering).
+     * (direct in-browser download) and documents.pdf-file (fetched
+     * server-side by Smove for a real email attachment), so both stay in
+     * sync with a single mpdf setup. See documents.pdf's own docblock
+     * (routes/web.php) for why mpdf over dompdf (Hebrew bidi rendering).
      *
      * @return array{binary: string, fileName: string}
      */
@@ -453,22 +501,21 @@ class Document extends Model
     }
 
     /**
-     * emailPdfUrl()'s click — sends $email a brand-new message
-     * (App\Mail\DocumentPdfMail) with the real PDF file attached, via
-     * Laravel Mail rather than Smove (see that mailable's docblock for why:
-     * Smove has no real attachment endpoint at all). Not idempotency-guarded
-     * like confirm()/acknowledge() — re-clicking is a deliberate "send it to
-     * me again", not a one-time action.
+     * emailPdfUrl()'s click — sends $email a brand-new Smove campaign with
+     * the real PDF file attached via smoveAttachmentUrl() (see that
+     * method's docblock: Smove fetches the file itself, no Laravel Mail
+     * involved — "כל פעולות הדיוור מתבצעות באמצעות Smove" applies here too,
+     * per the business owner's 2026-09-07 instruction). Not idempotency-
+     * guarded like confirm()/acknowledge() — re-clicking is a deliberate
+     * "send it to me again", not a one-time action.
      */
-    public function emailPdfTo(string $email, string $name, ActivityLogger $logger): void
+    public function requestPdfBySmove(string $email, string $name, SmoveClient $smove, ActivityLogger $logger): void
     {
-        $pdf = $this->renderPdfBinary();
-
-        \Illuminate\Support\Facades\Mail::to($email, $name)->send(
-            new \App\Mail\DocumentPdfMail($this, $name, $pdf['binary'], $pdf['fileName']),
-        );
-
         $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+
+        $smove->sendDocumentAttachmentEmail(
+            $email, $name, $typeLabel, "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שביקשת.", $this->smoveAttachmentUrl(),
+        );
 
         $logger->log('document.pdf_emailed', "נשלח קובץ PDF של \"{$typeLabel}\" למייל {$email} עבור עסקה #{$this->deal_id}", [
             'document_id' => $this->id,
@@ -692,20 +739,22 @@ class Document extends Model
         $operations = ['smove' => null, 'summit' => null];
 
         if (! empty($emailRecipients) && ! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
-            $intro = "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
+            $intro = $format === 'pdf'
+                ? "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שהוכן עבורך."
+                : "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
             $formUrl = $format === 'digital' ? $this->signUrl() : null;
-            $pdfUrl = $format === 'pdf' ? $this->pdfUrl() : null;
+            $attachmentUrl = $format === 'pdf' ? $this->smoveAttachmentUrl() : null;
 
             $operations['smove'] = $runner->run(
                 'smove',
                 'document_send',
                 'app_action',
-                function () use ($smove, $emailRecipients, $typeLabel, $intro, $formUrl, $pdfUrl, $format) {
+                function () use ($smove, $emailRecipients, $typeLabel, $intro, $formUrl, $attachmentUrl, $format) {
                     $reference = '';
 
                     foreach ($emailRecipients as $recipient) {
                         $requestPdfUrl = $format === 'digital' ? $this->emailPdfUrl($recipient['email'], $recipient['name']) : null;
-                        $reference = $smove->sendDocumentEmail($recipient['email'], $recipient['name'], $typeLabel, $intro, $formUrl, $pdfUrl, $requestPdfUrl);
+                        $reference = $smove->sendDocumentEmail($recipient['email'], $recipient['name'], $typeLabel, $intro, $formUrl, $attachmentUrl, $requestPdfUrl);
                     }
 
                     return $reference;

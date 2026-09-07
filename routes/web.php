@@ -93,21 +93,49 @@ Route::get('/documents/{document}/pdf', function (\App\Models\Document $document
 })->middleware('signed')->name('documents.pdf');
 
 /**
+ * Build-plan 12 follow-up (2026-09-07) — fetched server-side by Smove
+ * itself (never opened by a person) to attach the real PDF to a document
+ * email (Document::smoveAttachmentUrl(), SmoveClient::sendCampaign()'s
+ * `campaignAttachments`). Deliberately NOT the same route as documents.pdf
+ * above: Smove's attachment fetch 400s on any URL with a query string, so
+ * Laravel's normal `signed` middleware (query-string based) can't be used
+ * here — the token carries its own HMAC+expiry in the path instead (see
+ * Document::verifySmoveAttachmentToken()), with the same security property.
+ *
+ * Content-Length is set explicitly (Laravel's response() doesn't send one
+ * for a plain string body under HTTP/2) — confirmed 2026-09-08 by direct
+ * comparison against Smove's real API: an attachment fetch with no
+ * Content-Length header 400s with `ErrAttachments` even though the exact
+ * same URL/bytes are fine for a normal browser GET; a static file (which
+ * always carries Content-Length) fetches and attaches without it.
+ */
+Route::get('/documents/pdf-file/{token}', function (string $token) {
+    $document = \App\Models\Document::verifySmoveAttachmentToken($token);
+
+    abort_if(! $document || in_array($document->document_type, ['invoice', 'credit_note'], true), 404);
+
+    $binary = $document->renderPdfBinary()['binary'];
+
+    return response($binary, 200, ['Content-Type' => 'application/pdf', 'Content-Length' => strlen($binary)]);
+})->where('token', '[0-9]+-[0-9]+-[a-f0-9]{32}\.pdf')->name('documents.pdf-file');
+
+/**
  * Build-plan 12 follow-up (2026-09-07) — the "קבלת המסמך כ-PDF" button on a
  * digital-form document send (Document::emailPdfUrl()). Unlike documents.pdf
  * above (a direct in-browser download), this sends the PDF as a real
- * attached file in a brand-new email — see Document::emailPdfTo() and
- * App\Mail\DocumentPdfMail for why this is the one send in the app that
- * goes through Laravel Mail instead of Smove (Smove has no real
- * attachment-upload endpoint at all, so this isn't a stylistic choice).
- * Same outside-auth + `signed` pattern as every other document/materials
- * link: the recipient's email/name travel signed in the URL itself since
- * they aren't logged in when clicking it.
+ * attached file in a brand-new Smove campaign — see Document::
+ * requestPdfBySmove() and SmoveClient::sendDocumentAttachmentEmail() (all
+ * business email goes through Smove, never Laravel Mail — the business
+ * owner's explicit instruction, 2026-09-07). Same outside-auth + `signed`
+ * pattern as every other document/materials link: the recipient's email/
+ * name travel signed in the URL itself since they aren't logged in when
+ * clicking it.
  */
 Route::get('/documents/{document}/email-pdf', function (
     \App\Models\Document $document,
     Request $request,
     ActivityLogger $activityLogger,
+    \App\Services\Integrations\SmoveClient $smove,
 ) {
     abort_if(in_array($document->document_type, ['invoice', 'credit_note'], true), 404);
 
@@ -116,7 +144,7 @@ Route::get('/documents/{document}/email-pdf', function (
 
     abort_unless(filter_var($email, FILTER_VALIDATE_EMAIL), 404);
 
-    $document->emailPdfTo($email, $name, $activityLogger);
+    $document->requestPdfBySmove($email, $name, $smove, $activityLogger);
 
     return view('documents.pdf-emailed', ['document' => $document]);
 })->middleware('signed')->name('documents.email-pdf');

@@ -247,6 +247,53 @@ class DocumentSigningTest extends TestCase
         $this->get($url)->assertStatus(404);
     }
 
+    // ----- documents.pdf-file (fetched server-side by Smove — Document::smoveAttachmentUrl()) -----
+
+    public function test_a_genuine_smove_attachment_token_returns_a_pdf(): void
+    {
+        $document = $this->generateQuote($this->createDeal());
+
+        $response = $this->get($document->smoveAttachmentUrl());
+
+        $response->assertOk();
+        $this->assertSame('application/pdf', $response->headers->get('content-type'));
+    }
+
+    public function test_the_smove_attachment_url_has_no_query_string_and_ends_in_pdf(): void
+    {
+        $document = $this->generateQuote($this->createDeal());
+
+        $url = $document->smoveAttachmentUrl();
+
+        $this->assertStringNotContainsString('?', $url);
+        $this->assertStringEndsWith('.pdf', $url);
+    }
+
+    public function test_a_tampered_smove_attachment_token_is_rejected(): void
+    {
+        $document = $this->generateQuote($this->createDeal());
+        $url = preg_replace('/[a-f0-9]{32}\.pdf$/', str_repeat('0', 32).'.pdf', $document->smoveAttachmentUrl());
+
+        $this->get($url)->assertStatus(404);
+    }
+
+    public function test_an_expired_smove_attachment_token_is_rejected(): void
+    {
+        $document = $this->generateQuote($this->createDeal());
+        $expired = now()->subDay()->timestamp;
+        $hash = substr(hash_hmac('sha256', "{$document->id}.{$expired}", config('app.key')), 0, 32);
+        $url = route('documents.pdf-file', ['token' => "{$document->id}-{$expired}-{$hash}.pdf"]);
+
+        $this->get($url)->assertStatus(404);
+    }
+
+    public function test_a_smove_attachment_token_404s_for_an_invoice(): void
+    {
+        $document = $this->generateInvoice($this->signedContractDeal());
+
+        $this->get($document->smoveAttachmentUrl())->assertStatus(404);
+    }
+
     // ----- test helpers (mirrors DocumentsEngineTest.php) -----
 
     private function createDeal(): Deal

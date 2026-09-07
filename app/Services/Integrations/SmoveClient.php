@@ -18,14 +18,19 @@ use RuntimeException;
  * caught, recorded, and never propagated into the local business action that
  * triggered it (FR-8.16-FR-8.18).
  *
- * Smove has no "transactional single email with attachment" endpoint — the
- * closest real primitive is a one-off email campaign sent to a single
- * recipient (POST /Campaigns?sendnow=true). sendMaterialsEmail() therefore
- * takes ready-made links (build-plan 12: MaterialDelivery::sendFor() now
- * stores the uploaded file permanently and signs a download URL per
- * attachment — see MaterialDeliveryAttachment::downloadUrl()) rather than
- * raw file bytes, and embeds them in the email body instead of attaching
- * them.
+ * Smove DOES support real file attachments on a campaign — `POST /Campaigns`
+ * takes a `campaignAttachments` field (an array of URLs Smove's own servers
+ * fetch and attach), just entirely undocumented in the Swagger description
+ * text; this was missed in the original build-plan-12 wiring and is used
+ * starting 2026-09-07 (see sendCampaign()'s docblock for the exact URL shape
+ * Smove requires). sendMaterialsEmail() still embeds links in the body
+ * rather than attaching (build-plan 12: MaterialDelivery::sendFor() signs a
+ * download URL per attachment — see MaterialDeliveryAttachment::
+ * downloadUrl()) purely because a material send can carry several files of
+ * arbitrary type/size to several recipients at once — attaching them all is
+ * unnecessary weight when a link works fine there; a single document's PDF
+ * (sendDocumentEmail()/sendDocumentAttachmentEmail() below) is exactly the
+ * case where a real attachment is worth it.
  *
  * Auth: Smove's Swagger types its "Token" field as an apiKey-in-header named
  * Authorization — a real "Bearer <key>" value 401'd against production
@@ -153,36 +158,59 @@ class SmoveClient
      * Build-plan 12 follow-up (FR-4.2/FR-4.7): a document send (quote/order
      * form/contract/invoice/credit note) — $formUrl links to the online
      * form (documents.sign, no login required — view the content, fill in
-     * any template fields, click "אישור וחתימה") and $pdfUrl links to the
-     * generated PDF (documents.pdf); Document::sendTo() passes exactly one
-     * of the two, matching the digital/PDF choice already in the send UI.
-     * $requestPdfUrl (digital sends only — see Document::sendTo()) is a
-     * separate, additional button: "קבלת המסמך כ-PDF במייל" hits
-     * documents.email-pdf, which emails the recipient a brand-new message
-     * with the actual PDF file attached (2026-09-07 request) — unlike
-     * $pdfUrl, which only links to an in-browser download. Every link here
-     * is rendered as a branded BrandedEmail::button() rather than a plain
-     * `<a>` — these are the actions the recipient actually needs to take.
+     * any template fields, click "אישור וחתימה") for a 'digital' send;
+     * $attachmentUrl is the real PDF file (Document::smoveAttachmentUrl(),
+     * fetched and attached by Smove itself — see sendCampaign()'s docblock)
+     * for a 'pdf' send. Document::sendTo() passes exactly one of the two,
+     * matching the digital/PDF choice already in the send UI. $requestPdfUrl
+     * (digital sends only — see Document::sendTo()) is a separate,
+     * additional button: "קבלת המסמך כ-PDF במייל" hits documents.email-pdf,
+     * which triggers a follow-up sendDocumentAttachmentEmail() call.
+     * $formUrl is the action the recipient actually needs to take, so it's
+     * rendered as BrandedEmail::primaryButton() (large, prominent);
+     * $requestPdfUrl is a minor convenience, rendered as the deliberately
+     * de-emphasized BrandedEmail::subtleButton() below the sign-off rather
+     * than competing with the main action (2026-09-08 request).
      */
-    public function sendDocumentEmail(string $toEmail, string $toName, string $subject, string $introText, ?string $formUrl, ?string $pdfUrl, ?string $requestPdfUrl = null): string
+    public function sendDocumentEmail(string $toEmail, string $toName, string $subject, string $introText, ?string $formUrl, ?string $attachmentUrl, ?string $requestPdfUrl = null): string
     {
         $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
 
         if ($formUrl) {
-            $body .= BrandedEmail::button($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון');
-        }
-
-        if ($pdfUrl) {
-            $body .= BrandedEmail::button($pdfUrl, 'להורדת המסמך כקובץ PDF');
-        }
-
-        if ($requestPdfUrl) {
-            $body .= BrandedEmail::button($requestPdfUrl, 'קבלת המסמך כקובץ PDF במייל');
+            $body .= BrandedEmail::primaryButton($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון');
         }
 
         $body .= '<p>בברכה, כפיים</p>';
 
-        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($body));
+        if ($requestPdfUrl) {
+            $body .= BrandedEmail::subtleButton($requestPdfUrl, 'חסומה? קבלי את המסמך כקובץ PDF');
+        }
+
+        return $this->sendCampaign(
+            [['email' => $toEmail, 'name' => $toName]],
+            $subject,
+            BrandedEmail::wrap($body),
+            $attachmentUrl ? [$attachmentUrl] : [],
+        );
+    }
+
+    /**
+     * The "קבלת המסמך כ-PDF במייל" button's click (documents.email-pdf,
+     * Document::requestPdfBySmove()) — a standalone follow-up send, not part
+     * of the original sendDocumentEmail() campaign, since the recipient
+     * decides whether they want this copy only after already receiving that
+     * first email.
+     */
+    public function sendDocumentAttachmentEmail(string $toEmail, string $toName, string $typeLabel, string $introText, string $attachmentUrl): string
+    {
+        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p><p>בברכה, כפיים</p>';
+
+        return $this->sendCampaign(
+            [['email' => $toEmail, 'name' => $toName]],
+            "{$typeLabel} — קובץ PDF",
+            BrandedEmail::wrap($body),
+            [$attachmentUrl],
+        );
     }
 
     /**
@@ -211,8 +239,17 @@ class SmoveClient
      * plain create has nothing to preserve), but without claiming
      * canReceiveEmails — the flag has no real effect via the API anyway, and
      * a brand-new contact has no consent to assert.
+     *
+     * $attachmentUrls -> `campaignAttachments`: confirmed empirically against
+     * Smove's real API (2026-09-07) that this field silently rejects
+     * (`400 ErrAttachments`) any URL carrying a query string — even a
+     * harmless `?x=1` — and requires the path itself to end in a real file
+     * extension (`.pdf`). A URL with neither of those problems (any
+     * reachable https URL, including a third-party domain) is fetched and
+     * genuinely attached — confirmed by real test sends. See Document::
+     * smoveAttachmentUrl() for the URL shape used to satisfy this.
      */
-    private function sendCampaign(array $recipients, string $subject, string $bodyHtml): string
+    private function sendCampaign(array $recipients, string $subject, string $bodyHtml, array $attachmentUrls = []): string
     {
         $this->assertConfigured();
 
@@ -225,11 +262,12 @@ class SmoveClient
             throw new RuntimeException('אין נמען עם כתובת דוא"ל תקינה לשליחה דרך Smove.');
         }
 
-        $response = $this->http()->post('/Campaigns?sendnow=true', [
+        $response = $this->http()->post('/Campaigns?sendnow=true', array_filter([
             'subject' => $subject,
             'body' => $bodyHtml,
             'toMembersById' => $memberIds,
-        ]);
+            'campaignAttachments' => $attachmentUrls ?: null,
+        ], fn ($v) => $v !== null));
 
         return $this->referenceOrFail($response);
     }

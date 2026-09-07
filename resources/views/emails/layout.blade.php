@@ -10,7 +10,7 @@
 <tr><td align="center" style="padding:24px 16px;">
 <table role="presentation" width="600" border="0" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#FFFFFF; border:1px solid #DAD7C7; border-radius:12px; overflow:hidden;">
 <tr>
-<td align="center" style="background-color:#286E9A; padding:20px 32px;">
+<td align="center" style="background-color:#FFFFFF; padding:24px 32px; border-bottom:1px solid #DAD7C7;">
 <img src="{{ $logoUrl }}" width="150" height="63" alt="כפיים" style="display:block; border:0; outline:none; max-width:150px; height:auto;">
 </td>
 </tr>

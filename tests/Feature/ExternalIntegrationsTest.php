@@ -511,6 +511,82 @@ class ExternalIntegrationsTest extends TestCase
         Http::assertNotSent(fn ($request) => str_contains($request->url(), '/Campaigns'));
     }
 
+    /**
+     * 2026-09-07 fix: `campaignAttachments` (undocumented in Smove's Swagger
+     * description text, confirmed empirically against the real API) is what
+     * makes "שליחה כ-PDF" actually attach the real file — the business
+     * owner explicitly wants every document email sent through Smove only,
+     * never a separate Laravel Mail send.
+     */
+    public function test_sending_a_document_as_pdf_attaches_the_real_file_via_smove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(function ($request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
+                return Http::response([], 200);
+            }
+
+            return Http::response(['id' => 42], 200);
+        });
+
+        $deal = $this->createDeal();
+        $quote = Document::generateFor($deal, $this->createTemplate('quote'));
+
+        $operations = $quote->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'pdf',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertSame(ExternalOperation::STATUS_SUCCESS, $operations['smove']->status);
+        Http::assertSent(function ($request) use ($quote) {
+            if (! str_contains($request->url(), '/Campaigns')) {
+                return false;
+            }
+
+            $attachments = $request->data()['campaignAttachments'] ?? [];
+
+            return count($attachments) === 1
+                && str_contains($attachments[0], '/documents/pdf-file/')
+                && ! str_contains($attachments[0], '?')
+                && str_ends_with($attachments[0], '.pdf');
+        });
+    }
+
+    /** The "קבלת המסמך כ-PDF במייל" button — routes/web.php's documents.email-pdf — now sends through Smove (campaignAttachments), never Laravel Mail. */
+    public function test_the_request_pdf_by_email_link_sends_a_smove_campaign_with_the_attachment(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(function ($request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
+                return Http::response([], 200);
+            }
+
+            return Http::response(['id' => 42], 200);
+        });
+
+        $deal = $this->createDeal();
+        $quote = Document::generateFor($deal, $this->createTemplate('quote'));
+        $url = $quote->emailPdfUrl('billing@example.com', 'לקוחה');
+
+        $response = $this->get($url);
+
+        $response->assertOk();
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/Campaigns')) {
+                return false;
+            }
+
+            $attachments = $request->data()['campaignAttachments'] ?? [];
+
+            return count($attachments) === 1 && str_contains($attachments[0], '/documents/pdf-file/');
+        });
+        $this->assertTrue(\App\Models\ActivityLog::where('activity_type', 'document.pdf_emailed')->where('document_id', $quote->id)->exists());
+    }
+
     // ----- explicit Deal actions: card charge / standing-order registration -----
 
     public function test_charging_a_card_requires_summit_to_be_configured(): void
