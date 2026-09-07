@@ -486,6 +486,21 @@ class Document extends Model
      * sync with a single mpdf setup. See documents.pdf's own docblock
      * (routes/web.php) for why mpdf over dompdf (Hebrew bidi rendering).
      *
+     * error_reporting() is lowered only around the two mpdf calls below,
+     * always restored in `finally`: confirmed 2026-09-08 against a real
+     * contract (rich HTML pasted from Word, several nested dir="LTR"/
+     * dir="RTL" spans around a `<br>`) that mpdf's bidi-override bookkeeping
+     * (Mpdf\Tag\Br) throws a plain PHP warning ("Undefined array key 0") on
+     * that shape — mpdf's own long-standing behavior on older/looser PHP,
+     * harmless there, but Laravel's HandleExceptions escalates it to a
+     * fatal ErrorException in a real request (not in a CLI/tinker run,
+     * which is why this went unnoticed until a real contract hit it in
+     * production — a 500 instead of the attached PDF). The render itself is
+     * unaffected either way — same correct, complete PDF bytes with or
+     * without the warning surfacing — so suppressing mpdf's noise here is
+     * the standard workaround for this library rather than chasing every
+     * individual internal warning site.
+     *
      * @return array{binary: string, fileName: string}
      */
     public function renderPdfBinary(): array
@@ -495,9 +510,17 @@ class Document extends Model
         $fileName = (self::TYPE_LABELS[$this->document_type] ?? $this->document_type).'-'.$this->id.'.pdf';
 
         $mpdf = new \Mpdf\Mpdf(['default_font' => 'dejavusans', 'directionality' => 'rtl']);
-        $mpdf->WriteHTML(view('documents.pdf', ['document' => $this])->render());
 
-        return ['binary' => $mpdf->Output($fileName, \Mpdf\Output\Destination::STRING_RETURN), 'fileName' => $fileName];
+        $previousErrorReporting = error_reporting(E_ERROR | E_PARSE | E_COMPILE_ERROR | E_CORE_ERROR);
+
+        try {
+            $mpdf->WriteHTML(view('documents.pdf', ['document' => $this])->render());
+            $binary = $mpdf->Output($fileName, \Mpdf\Output\Destination::STRING_RETURN);
+        } finally {
+            error_reporting($previousErrorReporting);
+        }
+
+        return ['binary' => $binary, 'fileName' => $fileName];
     }
 
     /**

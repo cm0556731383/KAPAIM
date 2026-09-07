@@ -340,6 +340,137 @@ class ExternalIntegrationsTest extends TestCase
         });
     }
 
+    /**
+     * 2026-09-08 fix: a customer can have more than one CONTACT row, but
+     * addCustomer() used to push only the first primary contact to Smove —
+     * a second contact never got its own Smove record, so a mailing-list
+     * send never reached them. addCustomer() now pushes every contact with
+     * an email on the membership's first activation.
+     */
+    public function test_joining_a_list_pushes_every_contact_not_just_the_first(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        MailingList::primaryList()->update(['smove_list_id' => 111]);
+
+        Http::fake(function ($request) {
+            return $request->method() === 'GET'
+                ? Http::response([], 200)
+                : Http::response(['id' => 'ext-123'], 200);
+        });
+
+        $customer = $this->createCustomer();
+        $customer->contacts()->create([
+            'school_id' => $customer->school_id, 'customer_id' => $customer->id,
+            'name' => 'איש קשר שני', 'email' => 'second'.random_int(1, 999999).'@example.com',
+        ]);
+
+        MailingList::primaryList()->update(['smove_list_id' => 111]); // re-trigger a fresh join below
+        MailingMembership::where('mailing_list_id', MailingList::primaryList()->id)->where('customer_id', $customer->id)->delete();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        $emailsPushed = collect(Http::recorded())
+            ->filter(fn ($pair) => $pair[0]->method() === 'POST' && str_contains($pair[0]->url(), '/Contacts'))
+            ->map(fn ($pair) => $pair[0]->data()['email'] ?? null)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $this->assertCount(2, $emailsPushed);
+    }
+
+    /**
+     * 2026-09-08 request: adding an additional contact to an already-active
+     * customer must reach Smove too — addCustomer() alone no-ops once the
+     * membership is already active, so ⚡customer-detail.blade.php's
+     * addContact() also calls MailingMembership::syncContact(), which must
+     * join the new contact to every list the customer is currently on,
+     * tagged with its own externalId so Smove keeps a distinct record per
+     * contact rather than merging them.
+     */
+    public function test_syncing_a_new_contact_joins_it_to_every_active_list_with_its_own_external_id(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        MailingList::primaryList()->update(['smove_list_id' => 111]);
+
+        $program = Program::create(['name' => 'תוכנית לבדיקת אנשי קשר', 'price' => 100, 'is_active' => true]);
+        MailingList::forProgram($program)->update(['smove_list_id' => 222]);
+
+        Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
+
+        $customer = $this->createCustomer();
+        MailingMembership::addCustomer(MailingList::forProgram($program), $customer);
+
+        Http::fake(function ($request) {
+            return $request->method() === 'GET'
+                ? Http::response([], 200)
+                : Http::response(['id' => 'ext-456'], 200);
+        });
+
+        $newContact = $customer->contacts()->create([
+            'school_id' => $customer->school_id, 'customer_id' => $customer->id,
+            'name' => 'הורה נוסף', 'email' => 'parent'.random_int(1, 999999).'@example.com',
+        ]);
+
+        MailingMembership::syncContact($customer, $newContact);
+
+        Http::assertSent(function ($request) use ($newContact) {
+            if ($request->method() !== 'POST' || ! str_contains($request->url(), '/Contacts')) {
+                return false;
+            }
+
+            $data = $request->data();
+
+            return ($data['email'] ?? null) === $newContact->email
+                && ($data['externalId'] ?? null) === "contact-{$newContact->id}";
+        });
+    }
+
+    /** End-to-end: adding a contact through the actual UI action (⚡customer-detail.blade.php) reaches Smove, not just the model method in isolation. */
+    public function test_adding_a_contact_through_the_customer_screen_reaches_smove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        MailingList::primaryList()->update(['smove_list_id' => 111]);
+
+        Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
+
+        $customer = $this->createCustomer();
+
+        Http::fake(function ($request) {
+            return $request->method() === 'GET'
+                ? Http::response([], 200)
+                : Http::response(['id' => 'ext-456'], 200);
+        });
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('contactName', 'הורה שני')
+            ->set('contactEmail', 'second-parent'.random_int(1, 999999).'@example.com')
+            ->call('addContact');
+
+        $newContact = $customer->contacts()->latest('id')->first();
+
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && str_contains($request->url(), '/Contacts')
+            && ($request->data()['email'] ?? null) === $newContact->email
+            && ($request->data()['externalId'] ?? null) === "contact-{$newContact->id}");
+    }
+
+    public function test_syncing_a_contact_with_no_email_touches_nothing(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
+
+        $customer = $this->createCustomer();
+        $noEmailContact = $customer->contacts()->create([
+            'school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'ללא מייל',
+        ]);
+
+        Http::fake();
+
+        MailingMembership::syncContact($customer, $noEmailContact);
+
+        Http::assertNothingSent();
+    }
+
     // ----- invoice send pushes to Summit (Document::sendTo()) -----
 
     public function test_sending_an_invoice_pushes_it_to_summit(): void

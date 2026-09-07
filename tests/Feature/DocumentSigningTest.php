@@ -247,6 +247,37 @@ class DocumentSigningTest extends TestCase
         $this->get($url)->assertStatus(404);
     }
 
+    /**
+     * 2026-09-08 production incident: a real contract whose template content
+     * was pasted from Word (real HTML — several nested dir="LTR"/dir="RTL"
+     * bidi-override spans around a `<br>`, exactly the shape below) 500'd on
+     * this route — mpdf's bidi bookkeeping (Mpdf\Tag\Br) throws a plain PHP
+     * warning on that shape, escalated to a fatal ErrorException by
+     * Laravel's HandleExceptions in a real request (never reproduced in a
+     * CLI/tinker render, which is why it went unnoticed). Fixed by lowering
+     * error_reporting around the mpdf calls in Document::renderPdfBinary()
+     * — this pins that fix with the actual content shape that broke it.
+     */
+    public function test_a_pdf_with_nested_bidi_spans_and_a_br_renders_without_erroring(): void
+    {
+        $deal = $this->createDeal();
+        $template = DocumentTemplate::create([
+            'document_type' => 'quote',
+            'name' => 'תבנית וורד לבדיקת חתימה '.random_int(1, 999999),
+            'content' => '<p dir="RTL"><span lang="HE">טקסט לפני</span>'
+                .'<span dir="LTR"></span><span dir="LTR"></span>'
+                .'<span dir="LTR">, <br></span>'
+                .'<span lang="HE">טקסט אחרי</span></p>',
+            'is_active' => true,
+        ]);
+        $document = Document::generateFor($deal, $template);
+
+        $response = $this->get($document->smoveAttachmentUrl());
+
+        $response->assertOk();
+        $this->assertSame('application/pdf', $response->headers->get('content-type'));
+    }
+
     // ----- documents.pdf-file (fetched server-side by Smove — Document::smoveAttachmentUrl()) -----
 
     public function test_a_genuine_smove_attachment_token_returns_a_pdf(): void

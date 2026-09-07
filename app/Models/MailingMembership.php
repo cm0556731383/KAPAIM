@@ -112,6 +112,14 @@ class MailingMembership extends Model
      * Smove push itself is skipped when the membership was already active —
      * same reasoning applies here for the several "re-push to refresh the
      * Smove display name" callers in ⚡customer-detail.blade.php).
+     *
+     * 2026-09-08 fix: pushes EVERY contact with an email (contactsToSync()),
+     * not just the first primary one — a customer can have more than one
+     * contact (FR-2.8: "one or more" primary), and each needs its own Smove
+     * contact for a mailing-list send to actually reach them. See
+     * syncContact() below for the equally-necessary other half: a contact
+     * added *after* this membership is already active, which this method
+     * alone would never re-push (by design, per the docblock above).
      */
     public static function addCustomer(MailingList $list, Customer $customer): self
     {
@@ -130,14 +138,61 @@ class MailingMembership extends Model
             return $membership;
         }
 
-        $primaryContact = $customer->contacts()->where('is_primary', true)->first();
-
-        self::pushToSmove('join', $list, [
-            'email' => $primaryContact?->email,
-            'name' => $customer->school?->name ?? $primaryContact?->name,
-        ], ['customer_id' => $customer->id]);
+        foreach (self::contactsToSync($customer) as $contact) {
+            self::pushToSmove('join', $list, $contact, ['customer_id' => $customer->id]);
+        }
 
         return $membership;
+    }
+
+    /**
+     * 2026-09-08 request: "when adding another contact to a customer, send
+     * them to Smove too, so an email to the customer reaches every
+     * contact." addCustomer()/removeCustomer() only push at the moment the
+     * CUSTOMER's overall list membership changes — adding a second (or
+     * third) CONTACT row to an already-active customer never touches Smove
+     * at all otherwise (addCustomer() deliberately no-ops once already
+     * active). Call this right after creating a new Contact
+     * (⚡customer-detail.blade.php's addContact()) to join it, individually,
+     * to every list $customer is CURRENTLY an active member of — tagged
+     * with its own externalId (contactsToSync()) so Smove holds one
+     * traceable record per Contact row rather than merging them under a
+     * single shared name/email.
+     */
+    public static function syncContact(Customer $customer, Contact $contact): void
+    {
+        if (empty($contact->email)) {
+            return;
+        }
+
+        $lists = self::where('customer_id', $customer->id)
+            ->where('membership_status', self::STATUS_ACTIVE)
+            ->with('mailingList')
+            ->get()
+            ->pluck('mailingList')
+            ->filter();
+
+        foreach ($lists as $list) {
+            self::pushToSmove('join', $list, [
+                'email' => $contact->email,
+                'name' => $contact->name,
+                'external_id' => "contact-{$contact->id}",
+            ], ['customer_id' => $customer->id, 'contact_id' => $contact->id]);
+        }
+    }
+
+    /** Every CONTACT row (2026-09-08: all of them, not just the primary) with a real email, shaped for pushToSmove()'s $contact param — tagged with a per-contact externalId so Smove keeps one distinct record per row. */
+    private static function contactsToSync(Customer $customer): array
+    {
+        return $customer->contacts()
+            ->get()
+            ->filter(fn (Contact $contact) => filled($contact->email))
+            ->map(fn (Contact $contact) => [
+                'email' => $contact->email,
+                'name' => $contact->name,
+                'external_id' => "contact-{$contact->id}",
+            ])
+            ->all();
     }
 
     /**
@@ -172,6 +227,11 @@ class MailingMembership extends Model
      * FR-5.24: a logical removal only — flips membership_status, never
      * deletes the row. A no-op if $customer has no active membership on
      * $list to begin with.
+     *
+     * 2026-09-08: unsubscribes every contact (contactsToSync()), matching
+     * addCustomer() joining every contact — a secondary contact synced in
+     * by syncContact() would otherwise stay subscribed in Smove forever
+     * after the customer's own membership on this list ends.
      */
     public static function removeCustomer(MailingList $list, Customer $customer): void
     {
@@ -181,12 +241,9 @@ class MailingMembership extends Model
             ->update(['membership_status' => self::STATUS_REMOVED, 'removed_at' => now()]);
 
         if ($affected > 0) {
-            $primaryContact = $customer->contacts()->where('is_primary', true)->first();
-
-            self::pushToSmove('remove', $list, [
-                'email' => $primaryContact?->email,
-                'name' => $customer->school?->name ?? $primaryContact?->name,
-            ], ['customer_id' => $customer->id]);
+            foreach (self::contactsToSync($customer) as $contact) {
+                self::pushToSmove('remove', $list, $contact, ['customer_id' => $customer->id]);
+            }
         }
     }
 

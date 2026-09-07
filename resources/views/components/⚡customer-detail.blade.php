@@ -236,6 +236,12 @@ class extends Component
             MailingMembership::addCustomer(MailingList::primaryList(), $this->customer);
         }
 
+        // 2026-09-08 request: an *additional* contact (this customer already
+        // has at least one, so addCustomer() above no-ops for it — see its
+        // own docblock) still needs to reach Smove on its own, so a mailing
+        // sent to this customer reaches every contact, not just the first.
+        MailingMembership::syncContact($this->customer, $contact);
+
         $this->contactError = null;
         $this->resetContactForm();
         unset($this->contacts);

@@ -45,18 +45,25 @@
         · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
     </p>
 
-    {{-- printFriendlyContent(), not rendered_content: any field still empty gets a blank line to fill by
-         hand right where it sits in the text, instead of the online form's interactive input box
-         (FR-4.10/4.11) — a printed/downloaded PDF has no interactive input to show.
+    @php
+        $printFriendlyContent = $document->printFriendlyContent();
 
-         nl2br(), not `white-space: pre-wrap` alone: confirmed 2026-09-08 that mpdf's HTML engine
-         collapses the template's authored line breaks (single `\n` between a sign-off's name/title,
-         double `\n\n` between paragraphs — the exact spacing set in ⚡document-templates.blade.php's
-         editor and already correct on-screen there and in the online form, both real browsers) into
-         one run-on paragraph, `pre-wrap` CSS support notwithstanding. Turning every literal newline
-         into an explicit `<br>` before handing the HTML to mpdf renders identically to how the
-         template author actually laid it out. --}}
-    <div class="content">{!! nl2br($document->printFriendlyContent()) !!}</div>
+        // nl2br() only for genuinely plain-text content (no tags at all) — confirmed 2026-09-08
+        // that mpdf's HTML engine collapses a PLAIN template's authored line breaks (single `\n`
+        // between a sign-off's name/title, double `\n\n` between paragraphs) into one run-on
+        // paragraph, `white-space: pre-wrap` CSS notwithstanding, so those need an explicit <br>.
+        // BUT a template authored in ⚡document-templates.blade.php's rich-text editor (real HTML,
+        // e.g. content pasted from Word) already carries its own line breaks as actual <p>/<br>
+        // tags — its raw `\n` characters are just source-formatting whitespace *inside* tags and
+        // attributes (confirmed 2026-09-08 against a real contract: nl2br() on that content
+        // inserted a literal <br> mid-`style="..."` attribute, corrupting the markup enough that
+        // mpdf 500'd trying to parse it — a real production incident, not a hypothetical one).
+        // strip_tags() unchanged is the plain-text tell: real markup always differs after stripping.
+        $printFriendlyContent = strip_tags($printFriendlyContent) === $printFriendlyContent
+            ? nl2br($printFriendlyContent)
+            : $printFriendlyContent;
+    @endphp
+    <div class="content">{!! $printFriendlyContent !!}</div>
 
     @if ($document->document_type === 'invoice')
         <table>

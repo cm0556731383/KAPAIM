@@ -101,6 +101,13 @@ class SmoveClient
      * not just the one the caller actually cares about, so the contact's
      * eventual single confirmation pre-clears every future list join too.
      *
+     * $contact['external_id'] (Smove's real `externalId` field, confirmed
+     * against its Swagger) is optional and purely for traceability — set by
+     * MailingMembership::syncContact() to "contact-{id}" (2026-09-08) so a
+     * customer with several CONTACT rows gets several distinct Smove
+     * contacts, each one clearly linked back to this app instead of getting
+     * silently merged/overwritten under a single shared email.
+     *
      * @param  int|array<int>|null  $listId  A single list (always the case
      *                                        for 'remove') or several (a
      *                                        'join' broadened by the caller).
@@ -118,6 +125,7 @@ class SmoveClient
         $response = $this->http()->post('/Contacts?updateIfExists=true&restoreIfDeleted=true&restoreIfUnsubscribed=true', array_filter([
             'email' => $this->requiredEmail($contact),
             'firstName' => $contact['name'] ?? null,
+            'externalId' => $contact['external_id'] ?? null,
             'canReceiveEmails' => true,
             'lists_ToSubscribe' => $action === 'join' ? $listIds : null,
             'lists_ToUnsubscribe' => $action === 'remove' ? $listIds : null,
