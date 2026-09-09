@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\ActivityLog;
+use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
@@ -432,15 +433,15 @@ class MaterialsMailingTest extends TestCase
         $this->assertFalse(MailingMembership::where('mailing_list_id', $subscribers->id)->where('customer_id', $customer->id)->exists());
     }
 
-    public function test_buying_the_subscription_program_adds_subscribers_list_and_every_monthly_catalog_program_list(): void
+    public function test_buying_the_subscription_bundle_adds_subscribers_list_and_every_monthly_catalog_program_list(): void
     {
         $customer = $this->createCustomer();
         $monthlyA = $this->createProgram(name: 'חודשית א');
         $monthlyB = $this->createProgram(name: 'חודשית ב');
         $premium = $this->createProgram(name: 'פרימיום', isPremium: true);
-        $subscriptionProgram = $this->createSubscriptionProgram();
+        $subscriptionBundle = $this->createSubscriptionBundle();
 
-        Deal::createForCustomer($customer, $subscriptionProgram, null);
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
 
         $subscribers = MailingList::subscribersList();
         $this->assertTrue(MailingMembership::where('mailing_list_id', $subscribers->id)->where('customer_id', $customer->id)->where('membership_status', MailingMembership::STATUS_ACTIVE)->exists());
@@ -464,9 +465,9 @@ class MaterialsMailingTest extends TestCase
         $customer = $this->createCustomer();
         $monthlyA = $this->createProgram(name: 'חודשית א');
         $monthlyB = $this->createProgram(name: 'חודשית ב');
-        $subscriptionProgram = $this->createSubscriptionProgram();
+        $subscriptionBundle = $this->createSubscriptionBundle();
 
-        $deal = Deal::createForCustomer($customer, $subscriptionProgram, null);
+        $deal = Deal::createForCustomer($customer, null, $subscriptionBundle);
         $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
 
         // Mark two deliveries supplied against monthlyA before cancelling —
@@ -579,13 +580,12 @@ class MaterialsMailingTest extends TestCase
         return $customer;
     }
 
-    private function createSubscriptionProgram(?string $name = null, float $price = 4200): Program
+    private function createSubscriptionBundle(?string $name = null, float $price = 4200): Bundle
     {
-        return Program::create([
+        return Bundle::create([
             'name' => $name ?? 'מנוי שנתי לבדיקת חומרים '.random_int(1, 999999),
             'description' => null,
             'price' => $price,
-            'is_premium' => false,
             'is_subscription_type' => true,
             'is_active' => true,
         ]);
@@ -598,7 +598,6 @@ class MaterialsMailingTest extends TestCase
             'description' => null,
             'price' => $price,
             'is_premium' => $isPremium,
-            'is_subscription_type' => false,
             'is_active' => true,
         ]);
     }

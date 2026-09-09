@@ -118,7 +118,7 @@ class ProcessCollectionTasks extends Command
             'deal_id' => $deal->id,
             'task_type' => self::TASK_TYPE,
             'status' => 'open',
-            'title' => "משימת גבייה — עסקה #{$deal->id}",
+            'title' => 'משימת גבייה — '.($deal->program_name_snapshot ?? $deal->bundle_name_snapshot),
             'description' => 'העסקה נשלחה לחיוב וטרם שולמה במלואה. משימה פנימית בלבד — אין לשלוח הודעה אוטומטית ללקוחה (FR-4.37).',
             'due_at' => now()->addDays(7),
         ]);

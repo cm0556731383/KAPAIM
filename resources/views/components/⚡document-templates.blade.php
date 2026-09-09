@@ -92,12 +92,15 @@ class extends Component
         // keeps the two in sync so managing a template's fields is part of
         // editing it, not a separate disconnected step.
         $this->fieldTemplateId = $template->id;
+
+        $this->dispatch('open-modal', name: 'template');
     }
 
     public function cancelEdit(): void
     {
         $this->reset(['editingTemplateId', 'templateName', 'templateContent']);
         $this->templateDocumentType = 'quote';
+        $this->dispatch('close-modals');
     }
 
     /**
@@ -156,6 +159,8 @@ class extends Component
         $this->reset(['fieldName', 'fieldLinkedField', 'fieldIsRequired']);
         $this->fieldType = 'free_text';
         unset($this->templates);
+
+        $this->dispatch('close-modals');
     }
 
     /**
@@ -265,6 +270,138 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>כל התבניות</h2>
+            <div style="display:flex; gap:var(--sp-sm)">
+                <x-modal name="template" trigger-label="+ תבנית חדשה" :title="$editingTemplateId ? 'עריכת תבנית' : 'תבנית חדשה'">
+                    <form wire:submit="saveTemplate" class="form-grid">
+                        <div>
+                            <label for="templateName">שם התבנית</label>
+                            <input type="text" id="templateName" wire:model="templateName">
+                            @error('templateName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="templateDocumentType">סוג מסמך</label>
+                            <select id="templateDocumentType" wire:model="templateDocumentType">
+                                @foreach ($this->documentTypes() as $value => $label)
+                                    <option value="{{ $value }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="full">
+                            <label for="templateContent">מלל התבנית</label>
+                            <div class="rte-toolbar" style="display:flex; align-items:center; gap:4px; margin-bottom:6px">
+                                <button type="button" class="btn btn-ghost btn-sm" style="font-weight:700" onmousedown="event.preventDefault()" onclick="document.execCommand('bold')">B</button>
+                                <button type="button" class="btn btn-ghost btn-sm" style="font-style:italic" onmousedown="event.preventDefault()" onclick="document.execCommand('italic')">I</button>
+                                <button type="button" class="btn btn-ghost btn-sm" style="text-decoration:underline" onmousedown="event.preventDefault()" onclick="document.execCommand('underline')">U</button>
+                                <select
+                                    style="width:auto"
+                                    onmousedown="event.preventDefault(); this._sel = window.getSelection().getRangeAt(0)"
+                                    onchange="
+                                        if (this._sel) { window.getSelection().removeAllRanges(); window.getSelection().addRange(this._sel); }
+                                        document.execCommand('styleWithCSS', false, true);
+                                        document.execCommand('fontSize', false, this.value);
+                                        $wire.set('templateContent', $refs.templateContentInput.innerHTML);
+                                        this.selectedIndex = 0;
+                                    "
+                                >
+                                    <option value="" disabled selected>גודל גופן</option>
+                                    <option value="2">קטן</option>
+                                    <option value="3">רגיל</option>
+                                    <option value="5">גדול</option>
+                                    <option value="7">גדול מאוד</option>
+                                </select>
+                            </div>
+                            <div
+                                id="templateContent"
+                                x-ref="templateContentInput"
+                                contenteditable="true"
+                                class="rte-content"
+                                style="min-height:180px; border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-sm); font-size:var(--fs-body); line-height:1.9; white-space:pre-wrap"
+                                x-on:input.debounce.500ms="$wire.set('templateContent', $el.innerHTML)"
+                            >{!! $templateContent !!}</div>
+                            @error('templateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+
+                        @if ($editingTemplateId)
+                            <div class="full">
+                                <label for="linkedFieldSearch">הוספת שדה מכרטיס הלקוחה לתוך המלל</label>
+                                <input type="text" id="linkedFieldSearch" wire:model.live="linkedFieldSearch" placeholder="חיפוש: שם, כתובת, עיר, טלפון, דוא&quot;ל...">
+                                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px">
+                                    @forelse ($this->customerCardLinkedFieldOptions() as $key => $label)
+                                        <button
+                                            type="button"
+                                            class="btn btn-ghost btn-sm"
+                                            onmousedown="event.preventDefault(); window._templateInsertRange = window.getSelection().rangeCount ? window.getSelection().getRangeAt(0) : null"
+                                            x-on:click="
+                                                $wire.ensureLinkedField('{{ $key }}').then(token => {
+                                                    if (!token) return;
+                                                    $refs.templateContentInput.focus();
+                                                    let sel = window.getSelection();
+                                                    sel.removeAllRanges();
+                                                    if (window._templateInsertRange) { sel.addRange(window._templateInsertRange); }
+                                                    document.execCommand('insertHTML', false, token);
+                                                    $wire.set('templateContent', $refs.templateContentInput.innerHTML);
+                                                })
+                                            "
+                                        >+ {{ $label }}</button>
+                                    @empty
+                                        <span class="text-text-secondary" style="font-size:var(--fs-small)">אין שדה תואם בכרטיס הלקוחה.</span>
+                                    @endforelse
+                                </div>
+                            </div>
+                        @endif
+
+                        <div class="full" style="display:flex; gap:var(--sp-sm)">
+                            <button type="submit" class="btn btn-primary">{{ $editingTemplateId ? 'שמירת שינויים' : 'יצירת תבנית' }}</button>
+                            @if ($editingTemplateId)
+                                <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול עריכה</button>
+                            @endif
+                        </div>
+                    </form>
+                </x-modal>
+                <x-modal trigger-label="+ הוספת שדה לתבנית" trigger-class="btn btn-secondary" title="הוספת שדה לתבנית">
+                    <form wire:submit="addField" class="form-grid">
+                        <div class="full">
+                            <label for="fieldTemplateId">תבנית</label>
+                            <select id="fieldTemplateId" wire:model="fieldTemplateId">
+                                <option value="">בחרו תבנית</option>
+                                @foreach ($this->templates as $template)
+                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                            @error('fieldTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="fieldName">שם השדה</label>
+                            <input type="text" id="fieldName" wire:model="fieldName">
+                            @error('fieldName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="fieldType">סוג שדה</label>
+                            <select id="fieldType" wire:model.live="fieldType">
+                                <option value="free_text">טקסט חופשי</option>
+                                <option value="linked">מקושר למידע קיים</option>
+                            </select>
+                        </div>
+                        @if ($fieldType === 'linked')
+                            <div class="full">
+                                <label for="fieldLinkedField">שדה מקושר</label>
+                                <select id="fieldLinkedField" wire:model="fieldLinkedField">
+                                    <option value="">בחרו שדה מקושר</option>
+                                    @foreach ($this->linkedFieldOptions() as $value => $label)
+                                        <option value="{{ $value }}">{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                @error('fieldLinkedField') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                        @endif
+                        <div class="full checkbox-row">
+                            <input type="checkbox" id="fieldIsRequired" wire:model="fieldIsRequired">
+                            <label for="fieldIsRequired" style="margin:0">שדה חובה</label>
+                        </div>
+                        <div class="full"><button type="submit" class="btn btn-primary">הוספת שדה</button></div>
+                    </form>
+                </x-modal>
+            </div>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-lg)">
             <div class="table-scroll">
@@ -303,141 +440,6 @@ class extends Component
             </div>
         </div>
 
-        <div class="cols2">
-            <div class="card template-editor">
-                <h3>{{ $editingTemplateId ? 'עריכת תבנית' : 'תבנית חדשה' }}</h3>
-                <form wire:submit="saveTemplate" class="form-grid">
-                    <div>
-                        <label for="templateName">שם התבנית</label>
-                        <input type="text" id="templateName" wire:model="templateName">
-                        @error('templateName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="templateDocumentType">סוג מסמך</label>
-                        <select id="templateDocumentType" wire:model="templateDocumentType">
-                            @foreach ($this->documentTypes() as $value => $label)
-                                <option value="{{ $value }}">{{ $label }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-                    <div class="full">
-                        <label for="templateContent">מלל התבנית</label>
-                        <div class="rte-toolbar" style="display:flex; align-items:center; gap:4px; margin-bottom:6px">
-                            <button type="button" class="btn btn-ghost btn-sm" style="font-weight:700" onmousedown="event.preventDefault()" onclick="document.execCommand('bold')">B</button>
-                            <button type="button" class="btn btn-ghost btn-sm" style="font-style:italic" onmousedown="event.preventDefault()" onclick="document.execCommand('italic')">I</button>
-                            <button type="button" class="btn btn-ghost btn-sm" style="text-decoration:underline" onmousedown="event.preventDefault()" onclick="document.execCommand('underline')">U</button>
-                            <select
-                                style="width:auto"
-                                onmousedown="event.preventDefault(); this._sel = window.getSelection().getRangeAt(0)"
-                                onchange="
-                                    if (this._sel) { window.getSelection().removeAllRanges(); window.getSelection().addRange(this._sel); }
-                                    document.execCommand('styleWithCSS', false, true);
-                                    document.execCommand('fontSize', false, this.value);
-                                    $wire.set('templateContent', $refs.templateContentInput.innerHTML);
-                                    this.selectedIndex = 0;
-                                "
-                            >
-                                <option value="" disabled selected>גודל גופן</option>
-                                <option value="2">קטן</option>
-                                <option value="3">רגיל</option>
-                                <option value="5">גדול</option>
-                                <option value="7">גדול מאוד</option>
-                            </select>
-                        </div>
-                        <div
-                            id="templateContent"
-                            x-ref="templateContentInput"
-                            contenteditable="true"
-                            class="rte-content"
-                            style="min-height:180px; border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-sm); font-size:var(--fs-body); line-height:1.9; white-space:pre-wrap"
-                            x-on:input.debounce.500ms="$wire.set('templateContent', $el.innerHTML)"
-                        >{!! $templateContent !!}</div>
-                        @error('templateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-
-                    @if ($editingTemplateId)
-                        <div class="full">
-                            <label for="linkedFieldSearch">הוספת שדה מכרטיס הלקוחה לתוך המלל</label>
-                            <input type="text" id="linkedFieldSearch" wire:model.live="linkedFieldSearch" placeholder="חיפוש: שם, כתובת, עיר, טלפון, דוא&quot;ל...">
-                            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px">
-                                @forelse ($this->customerCardLinkedFieldOptions() as $key => $label)
-                                    <button
-                                        type="button"
-                                        class="btn btn-ghost btn-sm"
-                                        onmousedown="event.preventDefault(); window._templateInsertRange = window.getSelection().rangeCount ? window.getSelection().getRangeAt(0) : null"
-                                        x-on:click="
-                                            $wire.ensureLinkedField('{{ $key }}').then(token => {
-                                                if (!token) return;
-                                                $refs.templateContentInput.focus();
-                                                let sel = window.getSelection();
-                                                sel.removeAllRanges();
-                                                if (window._templateInsertRange) { sel.addRange(window._templateInsertRange); }
-                                                document.execCommand('insertHTML', false, token);
-                                                $wire.set('templateContent', $refs.templateContentInput.innerHTML);
-                                            })
-                                        "
-                                    >+ {{ $label }}</button>
-                                @empty
-                                    <span class="text-text-secondary" style="font-size:var(--fs-small)">אין שדה תואם בכרטיס הלקוחה.</span>
-                                @endforelse
-                            </div>
-                        </div>
-                    @endif
-
-                    <div class="full" style="display:flex; gap:var(--sp-sm)">
-                        <button type="submit" class="btn btn-primary">{{ $editingTemplateId ? 'שמירת שינויים' : 'יצירת תבנית' }}</button>
-                        @if ($editingTemplateId)
-                            <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול עריכה</button>
-                        @endif
-                    </div>
-                </form>
-            </div>
-
-            <div class="card">
-                <h3>הוספת שדה לתבנית</h3>
-                <form wire:submit="addField" class="form-grid">
-                    <div class="full">
-                        <label for="fieldTemplateId">תבנית</label>
-                        <select id="fieldTemplateId" wire:model="fieldTemplateId">
-                            <option value="">בחרו תבנית</option>
-                            @foreach ($this->templates as $template)
-                                <option value="{{ $template->id }}">{{ $template->name }}</option>
-                            @endforeach
-                        </select>
-                        @error('fieldTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="fieldName">שם השדה</label>
-                        <input type="text" id="fieldName" wire:model="fieldName">
-                        @error('fieldName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="fieldType">סוג שדה</label>
-                        <select id="fieldType" wire:model.live="fieldType">
-                            <option value="free_text">טקסט חופשי</option>
-                            <option value="linked">מקושר למידע קיים</option>
-                        </select>
-                    </div>
-                    @if ($fieldType === 'linked')
-                        <div class="full">
-                            <label for="fieldLinkedField">שדה מקושר</label>
-                            <select id="fieldLinkedField" wire:model="fieldLinkedField">
-                                <option value="">בחרו שדה מקושר</option>
-                                @foreach ($this->linkedFieldOptions() as $value => $label)
-                                    <option value="{{ $value }}">{{ $label }}</option>
-                                @endforeach
-                            </select>
-                            @error('fieldLinkedField') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                    @endif
-                    <div class="full checkbox-row">
-                        <input type="checkbox" id="fieldIsRequired" wire:model="fieldIsRequired">
-                        <label for="fieldIsRequired" style="margin:0">שדה חובה</label>
-                    </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">הוספת שדה</button></div>
-                </form>
-            </div>
-        </div>
     </section>
 
     <section class="settings-section">

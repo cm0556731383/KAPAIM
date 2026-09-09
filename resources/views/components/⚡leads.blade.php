@@ -87,7 +87,7 @@ class extends Component
                 $existingLead = Lead::where('school_id', $exactSchool->id)->latest()->first();
 
                 if ($existingLead) {
-                    $this->leadError = "קיים כבר ליד עבור \"{$exactSchool->name}\" (ליד #{$existingLead->id}) — הפנייה נרשמה על הליד הקיים ולא נוצר ליד כפול.";
+                    $this->leadError = "קיים כבר ליד עבור \"{$exactSchool->name}\" — הפנייה נרשמה על הליד הקיים ולא נוצר ליד כפול.";
 
                     $activityLogger->log('lead.repeat_inquiry', "פנייה חוזרת מ\"{$exactSchool->name}\" נרשמה על ליד קיים #{$existingLead->id}", [
                         'lead_id' => $existingLead->id,
@@ -139,6 +139,7 @@ class extends Component
         $this->reset(['newSchoolName', 'newSchoolPhone', 'newEmail', 'newPhone', 'newSourceId', 'newNotes']);
         unset($this->leads);
 
+        $this->dispatch('close-modals');
         $this->notifySuccess('ליד חדש נוצר בהצלחה.');
     }
 
@@ -157,7 +158,13 @@ class extends Component
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
             ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
             ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
-            ->when($this->filterStatusId !== '', fn ($q) => $q->where('status_id', $this->filterStatusId))
+            ->when(
+                $this->filterStatusId !== '',
+                fn ($q) => $q->where('status_id', $this->filterStatusId),
+                // No status explicitly chosen: default to hiding closed-lost
+                // leads rather than showing every status unfiltered.
+                fn ($q) => $q->whereHas('status', fn ($sq) => $sq->where('name', '!=', Lead::CLOSED_NO_SALE_STATUS_NAME)),
+            )
             ->orderByDesc('updated_at')
             ->get();
     }
@@ -201,31 +208,6 @@ class extends Component
         return StatusDefinition::where('scope', 'lead')->where('is_active', true)->orderBy('sort_order')->get();
     }
 
-    #[Computed]
-    public function statusCounts()
-    {
-        $user = auth()->user();
-
-        return Lead::query()
-            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
-            ->selectRaw('status_id, count(*) as aggregate')
-            ->groupBy('status_id')
-            ->pluck('aggregate', 'status_id');
-    }
-
-    /**
-     * Same leads.manage/leads.view scope as leads()/statusCounts() above —
-     * backs the "הכל (N)" chip.
-     */
-    #[Computed]
-    public function totalLeadsCount()
-    {
-        $user = auth()->user();
-
-        return Lead::query()
-            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
-            ->count();
-    }
 };
 ?>
 
@@ -235,6 +217,44 @@ class extends Component
             <h1 class="mb-0.5">לידים</h1>
             <p class="text-text-secondary m-0">SCHOOL, LEAD — קליטת פניות וניהול תהליך המכירה מול בתי ספר</p>
         </div>
+        <x-modal trigger-label="+ ליד חדש" title="ליד חדש">
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">מייל וטלפון הם השדות היחידים שחובה למלא — שאר הפרטים ניתנים להשלמה בכרטיס הליד</p>
+            <form wire:submit="addLead" class="form-grid">
+                <div>
+                    <label for="newEmail">דוא"ל</label>
+                    <input type="text" id="newEmail" wire:model="newEmail" class="ltr-num" dir="ltr" placeholder="contact@example.com">
+                    @error('newEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="newPhone">טלפון</label>
+                    <input type="text" id="newPhone" wire:model="newPhone" class="ltr-num" dir="ltr" placeholder="050-0000000">
+                    @error('newPhone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="newSchoolName">שם בית הספר (אופציונלי)</label>
+                    <input type="text" id="newSchoolName" wire:model="newSchoolName" placeholder="למשל: בית ספר יובלים">
+                    @error('newSchoolName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="newSchoolPhone">טלפון בית הספר (אופציונלי)</label>
+                    <input type="text" id="newSchoolPhone" wire:model="newSchoolPhone" class="ltr-num" dir="ltr">
+                </div>
+                <div>
+                    <label for="newSourceId">מקור פנייה</label>
+                    <select id="newSourceId" wire:model="newSourceId">
+                        <option value="">— ללא —</option>
+                        @foreach ($this->sources as $source)
+                            <option value="{{ $source->id }}">{{ $source->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="full">
+                    <label for="newNotes">הערות</label>
+                    <textarea id="newNotes" wire:model="newNotes" rows="2"></textarea>
+                </div>
+                <div class="full"><button type="submit" class="btn btn-primary">+ ליד חדש</button></div>
+            </form>
+        </x-modal>
     </div>
 
     <x-business-error-banner :message="$leadError" />
@@ -278,13 +298,6 @@ class extends Component
                 @endforeach
             </select>
         </div>
-    </div>
-
-    <div class="filters">
-        <span class="chip {{ $filterStatusId === '' ? 'active' : '' }}" wire:click="$set('filterStatusId', '')">הכל ({{ $this->totalLeadsCount }})</span>
-        @foreach ($this->statuses as $status)
-            <span class="chip {{ (string) $filterStatusId === (string) $status->id ? 'active' : '' }}" wire:click="$set('filterStatusId', '{{ $status->id }}')">{{ $status->name }} ({{ $this->statusCounts[$status->id] ?? 0 }})</span>
-        @endforeach
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-lg)">
@@ -334,48 +347,4 @@ class extends Component
         </div>
     </div>
 
-    {{-- ===== ליד חדש ===== --}}
-    <section class="settings-section">
-        <div class="section-head">
-            <h2>ליד חדש</h2>
-            <p class="hint">מייל וטלפון הם השדות היחידים שחובה למלא — שאר הפרטים ניתנים להשלמה בכרטיס הליד</p>
-        </div>
-        <div class="card" style="max-width:640px">
-            <form wire:submit="addLead" class="form-grid">
-                <div>
-                    <label for="newEmail">דוא"ל</label>
-                    <input type="text" id="newEmail" wire:model="newEmail" class="ltr-num" dir="ltr" placeholder="contact@example.com">
-                    @error('newEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="newPhone">טלפון</label>
-                    <input type="text" id="newPhone" wire:model="newPhone" class="ltr-num" dir="ltr" placeholder="050-0000000">
-                    @error('newPhone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="newSchoolName">שם בית הספר (אופציונלי)</label>
-                    <input type="text" id="newSchoolName" wire:model="newSchoolName" placeholder="למשל: בית ספר יובלים">
-                    @error('newSchoolName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="newSchoolPhone">טלפון בית הספר (אופציונלי)</label>
-                    <input type="text" id="newSchoolPhone" wire:model="newSchoolPhone" class="ltr-num" dir="ltr">
-                </div>
-                <div>
-                    <label for="newSourceId">מקור פנייה</label>
-                    <select id="newSourceId" wire:model="newSourceId">
-                        <option value="">— ללא —</option>
-                        @foreach ($this->sources as $source)
-                            <option value="{{ $source->id }}">{{ $source->name }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div class="full">
-                    <label for="newNotes">הערות</label>
-                    <textarea id="newNotes" wire:model="newNotes" rows="2"></textarea>
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">+ ליד חדש</button></div>
-            </form>
-        </div>
-    </section>
 </div>

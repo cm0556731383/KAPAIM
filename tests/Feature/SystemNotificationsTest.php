@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
@@ -197,21 +198,21 @@ class SystemNotificationsTest extends TestCase
 
     /**
      * Regression-proofs the markup extraction against ProgramsCatalogTest's
-     * gate (only one active subscription-type program) — same business rule
+     * gate (only one active subscription-type bundle) — same business rule
      * as before, now rendered through <x-business-error-banner>.
      */
-    public function test_business_error_banner_still_blocks_and_explains_a_duplicate_subscription_program(): void
+    public function test_business_error_banner_still_blocks_and_explains_a_duplicate_subscription_bundle(): void
     {
-        Program::create(['name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        Bundle::create(['name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
 
         Livewire::actingAs($this->owner)->test('programs-catalog')
-            ->set('programName', 'מנוי שני')
-            ->set('programPrice', '4500')
-            ->set('programIsSubscriptionType', true)
-            ->call('addProgram')
-            ->assertSee('קיימת כבר תוכנית מנוי אחת פעילה בקטלוג. יש להשבית אותה לפני יצירת תוכנית מנוי חדשה.');
+            ->set('bundleName', 'מנוי שני')
+            ->set('bundlePrice', '4500')
+            ->set('bundleIsSubscriptionType', true)
+            ->call('addBundle')
+            ->assertSee('קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני יצירת מארז מנוי חדש.');
 
-        $this->assertDatabaseMissing('programs', ['name' => 'מנוי שני']);
+        $this->assertDatabaseMissing('bundles', ['name' => 'מנוי שני']);
     }
 
     /** Same regression, second gate: the deal-status optimistic-lock conflict banner (DealsManagementTest). */
@@ -275,13 +276,12 @@ class SystemNotificationsTest extends TestCase
         return $lead->convertToCustomer(app(\App\Services\ActivityLogger::class));
     }
 
-    private function createProgram(float $price = 400, bool $isSubscription = false): Program
+    private function createProgram(float $price = 400): Program
     {
         return Program::create([
             'name' => 'תוכנית בדיקת הודעות '.random_int(1, 999999),
             'price' => $price,
             'is_premium' => false,
-            'is_subscription_type' => $isSubscription,
             'is_active' => true,
         ]);
     }
@@ -297,8 +297,13 @@ class SystemNotificationsTest extends TestCase
     private function openSubscription(float $agreedAmount = 4200): Subscription
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createProgram($agreedAmount, isSubscription: true);
-        $deal = Deal::createForCustomer($customer, $subscriptionProgram, null, $agreedAmount);
+        $subscriptionBundle = Bundle::create([
+            'name' => 'מנוי בדיקת הודעות '.random_int(1, 999999),
+            'price' => $agreedAmount,
+            'is_subscription_type' => true,
+            'is_active' => true,
+        ]);
+        $deal = Deal::createForCustomer($customer, null, $subscriptionBundle, $agreedAmount);
 
         return Subscription::where('deal_id', $deal->id)->firstOrFail();
     }

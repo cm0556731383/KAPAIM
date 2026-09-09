@@ -42,7 +42,7 @@ class ProgramsCatalogTest extends TestCase
             ->call('addProgram');
 
         $this->assertDatabaseHas('programs', [
-            'name' => 'תוכנית בדיקה', 'is_active' => true, 'is_subscription_type' => false,
+            'name' => 'תוכנית בדיקה', 'is_active' => true,
         ]);
     }
 
@@ -79,38 +79,38 @@ class ProgramsCatalogTest extends TestCase
         $this->assertFalse($program->fresh()->is_active);
     }
 
-    public function test_only_one_active_subscription_type_program_is_allowed(): void
+    public function test_only_one_active_subscription_type_bundle_is_allowed(): void
     {
-        Program::create([
+        Bundle::create([
             'name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true,
         ]);
 
         Livewire::actingAs($this->owner)->test('programs-catalog')
-            ->set('programName', 'מנוי שני')
-            ->set('programPrice', '4500')
-            ->set('programIsSubscriptionType', true)
-            ->call('addProgram');
+            ->set('bundleName', 'מנוי שני')
+            ->set('bundlePrice', '4500')
+            ->set('bundleIsSubscriptionType', true)
+            ->call('addBundle');
 
-        $this->assertDatabaseMissing('programs', ['name' => 'מנוי שני']);
+        $this->assertDatabaseMissing('bundles', ['name' => 'מנוי שני']);
     }
 
-    public function test_activating_a_second_subscription_type_program_is_blocked(): void
+    public function test_activating_a_second_subscription_type_bundle_is_blocked(): void
     {
-        Program::create(['name' => 'מנוי פעיל', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
-        $secondSub = Program::create(['name' => 'מנוי מושבת', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
+        Bundle::create(['name' => 'מנוי פעיל', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        $secondSub = Bundle::create(['name' => 'מנוי מושבת', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
 
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleProgram', $secondSub->id);
+        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $secondSub->id);
 
         $this->assertFalse($secondSub->fresh()->is_active);
     }
 
-    public function test_disabling_the_active_subscription_program_allows_activating_another(): void
+    public function test_disabling_the_active_subscription_bundle_allows_activating_another(): void
     {
-        $first = Program::create(['name' => 'מנוי א', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
-        $second = Program::create(['name' => 'מנוי ב', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
+        $first = Bundle::create(['name' => 'מנוי א', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        $second = Bundle::create(['name' => 'מנוי ב', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
 
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleProgram', $first->id);
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleProgram', $second->id);
+        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $first->id);
+        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $second->id);
 
         $this->assertFalse($first->fresh()->is_active);
         $this->assertTrue($second->fresh()->is_active);

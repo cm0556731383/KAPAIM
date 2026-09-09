@@ -159,7 +159,7 @@ class extends Component
                     <a class="list-item" href="{{ route('customer-detail', $customer) }}" style="text-decoration:none; color:inherit">
                         <div style="display:flex; align-items:center; gap:10px">
                             <span class="icon-chip tone-primary" style="width:30px; height:30px; border-radius:8px"><svg style="width:15px;height:15px"><use href="#icon-deals"></use></svg></span>
-                            {{ $customer->school?->name ?? 'לקוחה #'.$customer->id }} — רכשה
+                            {{ $customer->school?->name ?? '—' }} — רכשה
                         </div>
                     </a>
                 @empty
@@ -168,7 +168,7 @@ class extends Component
                     <a class="list-item" href="{{ route('lead-detail', $lead) }}" style="text-decoration:none; color:inherit">
                         <div style="display:flex; align-items:center; gap:10px">
                             <span class="icon-chip tone-secondary" style="width:30px; height:30px; border-radius:8px"><svg style="width:15px;height:15px"><use href="#icon-star"></use></svg></span>
-                            {{ $lead->school?->name ?? 'ליד #'.$lead->id }} — התעניינה
+                            {{ $lead->school?->name ?? $lead->email }} — התעניינה
                         </div>
                     </a>
                 @empty

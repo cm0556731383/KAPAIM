@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\FollowUp;
 use App\Models\Lead;
@@ -35,8 +36,8 @@ class LeadsDemoSeeder extends Seeder
         $closedLostStatus = StatusDefinition::where('scope', 'lead')->where('name', 'נסגר ללא מכירה')->first();
 
         $premiumProgram = Program::where('is_premium', true)->first();
-        $monthlyProgram = Program::where('is_premium', false)->where('is_subscription_type', false)->first();
-        $subscriptionProgram = Program::where('is_subscription_type', true)->first();
+        $monthlyProgram = Program::where('is_premium', false)->first();
+        $subscriptionBundle = Bundle::where('is_subscription_type', true)->first();
 
         // ----- בית ספר יובלים — בתהליך מכירה, אינטראקציה + Up Follow מתועדים -----
         $yuvalim = School::create([
@@ -77,8 +78,8 @@ class LeadsDemoSeeder extends Seeder
             'school_id' => $haela->id, 'assigned_user_id' => $owner?->id, 'lead_source_id' => $referral?->id,
             'status_id' => $newStatus->id, 'email' => 'dana@haela.example', 'phone' => '054-2223334',
         ]);
-        if ($subscriptionProgram) {
-            $haelaLead->interestedPrograms()->attach($subscriptionProgram->id);
+        if ($subscriptionBundle) {
+            $haelaLead->interestedBundles()->attach($subscriptionBundle->id);
         }
 
         // ----- בית ספר הדקל — ממתין לשיחה חוזרת (צהוב + תת-סטטוס) -----

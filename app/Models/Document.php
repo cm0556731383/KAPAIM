@@ -297,7 +297,7 @@ class Document extends Model
 
         $document = self::generateFor($deal, $template, 'digital', $invoice?->business_entity_id);
 
-        $document->addLine('זיכוי בגין ביטול מנוי — עסקה #'.$deal->id, $creditAmount);
+        $document->addLine('זיכוי בגין ביטול מנוי', $creditAmount);
 
         return $document;
     }

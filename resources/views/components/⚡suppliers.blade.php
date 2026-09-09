@@ -78,6 +78,8 @@ class extends Component
 
         $this->cancelEdit();
         unset($this->suppliers);
+
+        $this->dispatch('close-modals');
     }
 
     public function editSupplier(int $id): void
@@ -91,6 +93,8 @@ class extends Component
         $this->phone = (string) $supplier->phone;
         $this->email = (string) $supplier->email;
         $this->notes = (string) $supplier->notes;
+
+        $this->dispatch('open-modal', name: 'supplier');
     }
 
     public function cancelEdit(): void
@@ -98,6 +102,7 @@ class extends Component
         $this->reset(['editingSupplierId', 'name', 'companyNumber', 'phone', 'email', 'notes']);
         $this->classification = 'עוסק פטור';
         $this->resetErrorBag();
+        $this->dispatch('close-modals');
     }
 
     #[Computed]
@@ -120,6 +125,48 @@ class extends Component
             <h1 style="margin-bottom:2px">ספקים</h1>
             <p class="text-text-secondary m-0">כלל הספקים המשמשים לייצור ואספקת התוכניות</p>
         </div>
+        <x-modal name="supplier" trigger-label="+ ספק חדש" :title="$editingSupplierId ? 'עריכת ספק' : 'ספק חדש'">
+            <form wire:submit="saveSupplier" class="form-grid">
+                <div class="full">
+                    <label for="name">שם הספק</label>
+                    <input type="text" id="name" wire:model="name" placeholder="למשל: דפוס הראל בע&quot;מ">
+                    @error('name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="companyNumber">מספר חברה</label>
+                    <input type="text" id="companyNumber" wire:model="companyNumber" class="ltr-num" dir="ltr" placeholder="514392201">
+                    @error('companyNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="classification">סיווג עסקי</label>
+                    <select id="classification" wire:model="classification">
+                        @foreach ($this->classifications as $option)
+                            <option value="{{ $option }}">{{ $option }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label for="phone">טלפון</label>
+                    <input type="text" id="phone" wire:model="phone" class="ltr-num" dir="ltr" placeholder="03-1234567">
+                    @error('phone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div class="full">
+                    <label for="email">דוא"ל</label>
+                    <input type="email" id="email" wire:model="email" placeholder="supplier@example.com">
+                    @error('email') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div class="full">
+                    <label for="notes">הערות</label>
+                    <textarea id="notes" wire:model="notes" rows="3" placeholder="הערות חופשיות על הספק..."></textarea>
+                </div>
+                <div class="full" style="display:flex; gap:var(--sp-sm)">
+                    <button type="submit" class="btn btn-primary">{{ $editingSupplierId ? 'עדכון ספק' : 'שמירת ספק' }}</button>
+                    @if ($editingSupplierId)
+                        <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול</button>
+                    @endif
+                </div>
+            </form>
+        </x-modal>
     </div>
 
     <div class="tabs">
@@ -165,47 +212,4 @@ class extends Component
         </div>
     </div>
 
-    <div class="card" style="max-width:640px">
-        <h3>{{ $editingSupplierId ? 'עריכת ספק' : '+ ספק חדש' }}</h3>
-        <form wire:submit="saveSupplier" class="form-grid">
-            <div class="full">
-                <label for="name">שם הספק</label>
-                <input type="text" id="name" wire:model="name" placeholder="למשל: דפוס הראל בע&quot;מ">
-                @error('name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div>
-                <label for="companyNumber">מספר חברה</label>
-                <input type="text" id="companyNumber" wire:model="companyNumber" class="ltr-num" dir="ltr" placeholder="514392201">
-                @error('companyNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div>
-                <label for="classification">סיווג עסקי</label>
-                <select id="classification" wire:model="classification">
-                    @foreach ($this->classifications as $option)
-                        <option value="{{ $option }}">{{ $option }}</option>
-                    @endforeach
-                </select>
-            </div>
-            <div>
-                <label for="phone">טלפון</label>
-                <input type="text" id="phone" wire:model="phone" class="ltr-num" dir="ltr" placeholder="03-1234567">
-                @error('phone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div class="full">
-                <label for="email">דוא"ל</label>
-                <input type="email" id="email" wire:model="email" placeholder="supplier@example.com">
-                @error('email') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div class="full">
-                <label for="notes">הערות</label>
-                <textarea id="notes" wire:model="notes" rows="3" placeholder="הערות חופשיות על הספק..."></textarea>
-            </div>
-            <div class="full" style="display:flex; gap:var(--sp-sm)">
-                <button type="submit" class="btn btn-primary">{{ $editingSupplierId ? 'עדכון ספק' : 'שמירת ספק' }}</button>
-                @if ($editingSupplierId)
-                    <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול</button>
-                @endif
-            </div>
-        </form>
-    </div>
 </div>

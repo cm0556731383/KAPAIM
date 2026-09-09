@@ -334,6 +334,7 @@ class extends Component
         $this->resetContactForm();
         unset($this->contacts);
 
+        $this->dispatch('close-modals');
         $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה.");
     }
 
@@ -468,6 +469,8 @@ class extends Component
 
         $this->reset(['interactionType', 'interactionSummary', 'interactionResult']);
         unset($this->interactions, $this->timeline);
+
+        $this->dispatch('close-modals');
     }
 
     // ----- Up Follow (FOLLOW_UP) -----
@@ -493,6 +496,8 @@ class extends Component
 
         $this->reset(['followUpSummary', 'followUpResult', 'followUpNextAt']);
         unset($this->followUps, $this->timeline);
+
+        $this->dispatch('close-modals');
     }
 
     // ----- תזכורות אישיות (TASK) -----
@@ -519,6 +524,8 @@ class extends Component
 
         $this->reset(['taskTitle', 'taskDescription', 'taskDueAt']);
         unset($this->tasks);
+
+        $this->dispatch('close-modals');
     }
 
     public function completeTask(int $id, ActivityLogger $activityLogger): void
@@ -677,8 +684,8 @@ class extends Component
     <div class="topbar">
         <div>
             <span class="badge {{ \App\Models\Lead::badgeClassForStatusName($lead->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $lead->status?->name }}@if ($lead->sub_status) · {{ $lead->sub_status }} @endif</span>
-            <h1>{{ $lead->school?->name ?? 'ליד #'.$lead->id.' (ללא בית ספר)' }}</h1>
-            <p style="color:var(--color-text-secondary); margin:0">ליד #{{ $lead->id }} · נפתח <span class="ltr-num">{{ $lead->created_at->format('d/m/Y') }}</span> · מטפלת: {{ $lead->assignedUser?->name ?? '—' }}</p>
+            <h1>{{ $lead->school?->name ?? $lead->email.' (ללא בית ספר)' }}</h1>
+            <p style="color:var(--color-text-secondary); margin:0">נפתח <span class="ltr-num">{{ $lead->created_at->format('d/m/Y') }}</span> · מטפלת: {{ $lead->assignedUser?->name ?? '—' }}</p>
         </div>
         <div style="display:flex; gap:var(--sp-sm)">
             <a href="{{ route('leads') }}" class="btn btn-ghost">חזרה לרשימה</a>
@@ -827,7 +834,26 @@ class extends Component
 
             {{-- ===== אנשי קשר ===== --}}
             <div class="card">
-                <h3>אנשי קשר</h3>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                    <h3 style="margin:0">אנשי קשר</h3>
+                    @if (! $editingContactId)
+                        <x-modal trigger-label="+ איש קשר חדש" trigger-class="btn btn-secondary btn-sm" title="איש קשר חדש">
+                            <form wire:submit="addContact" class="form-grid">
+                                <div><label>שם מלא</label><input type="text" wire:model="contactName">@error('contactName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                <div><label>תפקיד</label><input type="text" wire:model="contactRole"></div>
+                                <div><label>טלפון ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhone"></div>
+                                <div><label>טלפון נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhoneSecondary"></div>
+                                <div><label>דוא"ל ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmail"></div>
+                                <div><label>דוא"ל נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmailSecondary"></div>
+                                <div class="full checkbox-row" style="gap:var(--sp-lg)">
+                                    <span class="checkbox-row"><input type="checkbox" id="newContactIsPrimary" wire:model="contactIsPrimary"><label for="newContactIsPrimary" style="margin:0">איש קשר ראשי</label></span>
+                                    <span class="checkbox-row"><input type="checkbox" id="newContactIsAccountingContact" wire:model="contactIsAccountingContact"><label for="newContactIsAccountingContact" style="margin:0">גורם חשבונאי</label></span>
+                                </div>
+                                <div class="full"><button type="submit" class="btn btn-primary">+ הוספת איש קשר</button></div>
+                            </form>
+                        </x-modal>
+                    @endif
+                </div>
 
                 @forelse ($this->contacts as $contact)
                     @if ($editingContactId === $contact->id)
@@ -871,25 +897,6 @@ class extends Component
                 @empty
                     <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין אנשי קשר לבית ספר זה.</p>
                 @endforelse
-
-                @if (! $editingContactId)
-                    <div class="contact-item">
-                        <div class="contact-edit-head"><span class="tag">איש קשר חדש</span></div>
-                        <form wire:submit="addContact" class="form-grid">
-                            <div><label>שם מלא</label><input type="text" wire:model="contactName">@error('contactName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                            <div><label>תפקיד</label><input type="text" wire:model="contactRole"></div>
-                            <div><label>טלפון ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhone"></div>
-                            <div><label>טלפון נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhoneSecondary"></div>
-                            <div><label>דוא"ל ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmail"></div>
-                            <div><label>דוא"ל נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmailSecondary"></div>
-                            <div class="full checkbox-row" style="gap:var(--sp-lg)">
-                                <span class="checkbox-row"><input type="checkbox" id="newContactIsPrimary" wire:model="contactIsPrimary"><label for="newContactIsPrimary" style="margin:0">איש קשר ראשי</label></span>
-                                <span class="checkbox-row"><input type="checkbox" id="newContactIsAccountingContact" wire:model="contactIsAccountingContact"><label for="newContactIsAccountingContact" style="margin:0">גורם חשבונאי</label></span>
-                            </div>
-                            <div class="full"><button type="submit" class="btn btn-secondary">+ הוספת איש קשר</button></div>
-                        </form>
-                    </div>
-                @endif
             </div>
         </div>
 
@@ -908,39 +915,48 @@ class extends Component
                 </div>
             </div>
 
-            {{-- ===== אינטראקציה חדשה ===== --}}
-            <div class="card" style="margin-bottom:var(--sp-lg)">
-                <h3>תיעוד אינטראקציה</h3>
-                <form wire:submit="addInteraction" class="form-grid">
-                    <div class="full">
-                        <label for="interactionType">סוג</label>
-                        <input type="text" id="interactionType" wire:model="interactionType" placeholder="למשל: שיחת טלפון, פגישה, מייל">
-                        @error('interactionType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div class="full"><label for="interactionSummary">סיכום</label><textarea id="interactionSummary" wire:model="interactionSummary" rows="2"></textarea></div>
-                    <div class="full"><label for="interactionResult">תוצאה</label><input type="text" id="interactionResult" wire:model="interactionResult"></div>
-                    <div class="full"><button type="submit" class="btn btn-secondary">שמירת אינטראקציה</button></div>
-                </form>
-            </div>
+            {{-- ===== אינטראקציה חדשה / Up Follow חדש ===== --}}
+            <div class="card" style="margin-bottom:var(--sp-lg); display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                <x-modal trigger-label="+ תיעוד אינטראקציה" trigger-class="btn btn-secondary" title="תיעוד אינטראקציה">
+                    <form wire:submit="addInteraction" class="form-grid">
+                        <div class="full">
+                            <label for="interactionType">סוג</label>
+                            <input type="text" id="interactionType" wire:model="interactionType" placeholder="למשל: שיחת טלפון, פגישה, מייל">
+                            @error('interactionType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="full"><label for="interactionSummary">סיכום</label><textarea id="interactionSummary" wire:model="interactionSummary" rows="2"></textarea></div>
+                        <div class="full"><label for="interactionResult">תוצאה</label><input type="text" id="interactionResult" wire:model="interactionResult"></div>
+                        <div class="full"><button type="submit" class="btn btn-primary">שמירת אינטראקציה</button></div>
+                    </form>
+                </x-modal>
 
-            {{-- ===== Up Follow חדש ===== --}}
-            <div class="card" style="margin-bottom:var(--sp-lg)">
-                <h3>Up Follow חדש</h3>
-                <form wire:submit="addFollowUp" class="form-grid">
-                    <div class="full"><label for="followUpSummary">סיכום</label><textarea id="followUpSummary" wire:model="followUpSummary" rows="2"></textarea></div>
-                    <div class="full"><label for="followUpResult">תוצאה</label><input type="text" id="followUpResult" wire:model="followUpResult"></div>
-                    <div class="full">
-                        <label for="followUpNextAt">מועד Up Follow הבא (אופציונלי)</label>
-                        <input type="date" id="followUpNextAt" wire:model="followUpNextAt">
-                        @error('followUpNextAt') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div class="full"><button type="submit" class="btn btn-secondary">שמירת Up Follow</button></div>
-                </form>
+                <x-modal trigger-label="+ Up Follow חדש" trigger-class="btn btn-secondary" title="Up Follow חדש">
+                    <form wire:submit="addFollowUp" class="form-grid">
+                        <div class="full"><label for="followUpSummary">סיכום</label><textarea id="followUpSummary" wire:model="followUpSummary" rows="2"></textarea></div>
+                        <div class="full"><label for="followUpResult">תוצאה</label><input type="text" id="followUpResult" wire:model="followUpResult"></div>
+                        <div class="full">
+                            <label for="followUpNextAt">מועד Up Follow הבא (אופציונלי)</label>
+                            <input type="date" id="followUpNextAt" wire:model="followUpNextAt">
+                            @error('followUpNextAt') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="full"><button type="submit" class="btn btn-primary">שמירת Up Follow</button></div>
+                    </form>
+                </x-modal>
             </div>
 
             {{-- ===== תזכורות אישיות ===== --}}
             <div class="card">
-                <h3>תזכורות אישיות</h3>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                    <h3 style="margin:0">תזכורות אישיות</h3>
+                    <x-modal trigger-label="+ הוספת תזכורת" trigger-class="btn btn-secondary btn-sm" title="תזכורת אישית חדשה">
+                        <form wire:submit="addTask" class="form-grid">
+                            <div class="full"><label for="taskTitle">כותרת</label><input type="text" id="taskTitle" wire:model="taskTitle">@error('taskTitle') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                            <div class="full"><label for="taskDescription">תיאור</label><textarea id="taskDescription" wire:model="taskDescription" rows="2"></textarea></div>
+                            <div><label for="taskDueAt">מועד יעד</label><input type="date" id="taskDueAt" wire:model="taskDueAt"></div>
+                            <div class="full"><button type="submit" class="btn btn-primary">+ הוספת תזכורת</button></div>
+                        </form>
+                    </x-modal>
+                </div>
                 @forelse ($this->tasks as $task)
                     <div class="list-item">
                         <div>
@@ -959,13 +975,6 @@ class extends Component
                 @empty
                     <p class="text-text-secondary" style="font-size:var(--fs-small)">אין תזכורות פתוחות.</p>
                 @endforelse
-
-                <form wire:submit="addTask" class="form-grid" style="margin-top:var(--sp-md)">
-                    <div class="full"><label for="taskTitle">כותרת</label><input type="text" id="taskTitle" wire:model="taskTitle">@error('taskTitle') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                    <div class="full"><label for="taskDescription">תיאור</label><textarea id="taskDescription" wire:model="taskDescription" rows="2"></textarea></div>
-                    <div><label for="taskDueAt">מועד יעד</label><input type="date" id="taskDueAt" wire:model="taskDueAt"></div>
-                    <div class="full"><button type="submit" class="btn btn-secondary">+ הוספת תזכורת</button></div>
-                </form>
             </div>
 
             @if ($this->recentlyRemovedContacts->isNotEmpty() || $this->recentlyRemovedTasks->isNotEmpty())

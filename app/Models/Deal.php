@@ -208,22 +208,19 @@ class Deal extends Model
         ]);
 
         if ($program) {
-            $deal->openSubscriptionIfApplicable($program);
             $deal->assignMailingListsForProgramPurchase($program);
+        } elseif ($bundle) {
+            $deal->openSubscriptionIfApplicable($bundle);
+            $deal->assignMailingListsForBundlePurchase($bundle);
         }
 
         return $deal;
     }
 
     /**
-     * Build-plan 10 (FR-5.22/FR-5.23): purchasing a plain program joins the
-     * customer to that program's own mailing list. Purchasing the
-     * subscription-type program additionally joins the "subscribers" list
-     * plus every list in Program::scopeMonthlyCatalog() — see that scope's
-     * docblock for exactly what "every program included in the subscription"
-     * means here (this stage's judgment call, independent of build-plan 09's
-     * per-slot delivery picks). Never touched for a bundle purchase — FR-5.22
-     * only ever concerns a program.
+     * Build-plan 10 (FR-5.22): purchasing a plain program joins the customer
+     * to that program's own mailing list. Never touched for a bundle
+     * purchase — FR-5.22 only ever concerns a program.
      *
      * Build-plan 12: MailingMembership::addCustomer() below now also pushes
      * each membership change to Smove for real (docs/erd.md: "קריאות
@@ -233,8 +230,20 @@ class Deal extends Model
     private function assignMailingListsForProgramPurchase(Program $program): void
     {
         MailingMembership::addCustomer(MailingList::forProgram($program), $this->customer);
+    }
 
-        if (! $program->is_subscription_type) {
+    /**
+     * Build-plan 10 (FR-5.23), moved here 2026-09-09 along with
+     * is_subscription_type itself (Program -> Bundle): purchasing the
+     * subscription-type bundle joins the "subscribers" list plus every list
+     * in Program::scopeMonthlyCatalog() — see that scope's docblock for
+     * exactly what "every program included in the subscription" means here.
+     * A plain (non-subscription-type) bundle purchase never joins any list
+     * (FR-5.22 only ever concerns a program, or now the subscription bundle).
+     */
+    private function assignMailingListsForBundlePurchase(Bundle $bundle): void
+    {
+        if (! $bundle->is_subscription_type) {
             return;
         }
 
@@ -246,20 +255,21 @@ class Deal extends Model
     }
 
     /**
-     * FR-3.4/FR-3.12/FR-3.13: when the deal's program is the subscription-
-     * type program (build-plan 03's is_subscription_type discriminator),
-     * deal creation opens a real SUBSCRIPTION row plus exactly 10
-     * SUBSCRIPTION_DELIVERY rows (one per future program slot) — the
-     * specific catalog program for each slot is chosen later, at the moment
-     * it's marked supplied (Subscription::markDeliverySupplied()), not
-     * upfront. The deal itself is always created normally either way — this
-     * only ever adds to it, never changes deal creation itself.
+     * FR-3.4/FR-3.12/FR-3.13: when the deal's bundle is the subscription-
+     * type bundle (build-plan 03's is_subscription_type discriminator, moved
+     * from Program to Bundle 2026-09-09), deal creation opens a real
+     * SUBSCRIPTION row plus exactly 10 SUBSCRIPTION_DELIVERY rows (one per
+     * future program slot) — the specific catalog program for each slot is
+     * chosen later, at the moment it's marked supplied
+     * (Subscription::markDeliverySupplied()), not upfront. The deal itself
+     * is always created normally either way — this only ever adds to it,
+     * never changes deal creation itself.
      */
-    public function openSubscriptionIfApplicable(?Program $program = null): void
+    public function openSubscriptionIfApplicable(?Bundle $bundle = null): void
     {
-        $program ??= $this->program;
+        $bundle ??= $this->bundle;
 
-        if (! $program?->is_subscription_type) {
+        if (! $bundle?->is_subscription_type) {
             return;
         }
 
@@ -517,3 +527,4 @@ class Deal extends Model
         return $payment;
     }
 }
+

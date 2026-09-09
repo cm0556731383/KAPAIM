@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Bundle;
 use App\Models\BusinessEntity;
 use App\Models\Customer;
 use App\Models\Deal;
@@ -41,12 +42,12 @@ class SubscriptionsTest extends TestCase
 
     // ----- FR-3.12/FR-3.13: opening a subscription -----
 
-    public function test_creating_a_deal_for_the_subscription_program_opens_a_subscription_with_ten_undelivered_rows(): void
+    public function test_creating_a_deal_for_the_subscription_bundle_opens_a_subscription_with_ten_undelivered_rows(): void
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createSubscriptionProgram();
+        $subscriptionBundle = $this->createSubscriptionBundle();
 
-        $deal = Deal::createForCustomer($customer, $subscriptionProgram, null);
+        $deal = Deal::createForCustomer($customer, null, $subscriptionBundle);
 
         $subscription = Subscription::where('deal_id', $deal->id)->first();
 
@@ -74,8 +75,8 @@ class SubscriptionsTest extends TestCase
     public function test_premium_program_gets_10_percent_off_for_a_customer_with_an_active_subscription(): void
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createSubscriptionProgram();
-        Deal::createForCustomer($customer, $subscriptionProgram, null);
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
 
         $premiumProgram = $this->createProgram(price: 1000, isPremium: true);
         $deal = Deal::createForCustomer($customer, $premiumProgram, null);
@@ -96,8 +97,8 @@ class SubscriptionsTest extends TestCase
     public function test_premium_discount_is_overridable_by_an_explicit_agreed_amount(): void
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createSubscriptionProgram();
-        Deal::createForCustomer($customer, $subscriptionProgram, null);
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
 
         $premiumProgram = $this->createProgram(price: 1000, isPremium: true);
         $deal = Deal::createForCustomer($customer, $premiumProgram, null, 750.0);
@@ -108,8 +109,8 @@ class SubscriptionsTest extends TestCase
     public function test_premium_discount_does_not_apply_once_the_subscription_is_cancelled(): void
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createSubscriptionProgram();
-        $subscriptionDeal = Deal::createForCustomer($customer, $subscriptionProgram, null);
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        $subscriptionDeal = Deal::createForCustomer($customer, null, $subscriptionBundle);
         Subscription::where('deal_id', $subscriptionDeal->id)->first()->cancel();
 
         $premiumProgram = $this->createProgram(price: 1000, isPremium: true);
@@ -119,16 +120,6 @@ class SubscriptionsTest extends TestCase
     }
 
     // ----- FR-3.14/FR-8.19: marking a delivery supplied -----
-
-    public function test_marking_a_delivery_supplied_requires_an_active_non_subscription_program(): void
-    {
-        $subscription = $this->openSubscription();
-        $delivery = $subscription->deliveries()->first();
-        $subscriptionProgram = $this->createSubscriptionProgram(name: 'מנוי אחר לבדיקה');
-
-        $this->expectException(RuntimeException::class);
-        $subscription->markDeliverySupplied($subscription->version, $delivery->id, $subscriptionProgram->id, $this->owner);
-    }
 
     public function test_marking_a_delivery_supplied_rejects_a_disabled_program(): void
     {
@@ -260,14 +251,14 @@ class SubscriptionsTest extends TestCase
     /** Proves the credit is based on THIS customer's agreed price, not catalog list price. */
     public function test_cancellation_credit_uses_the_agreed_price_not_the_catalog_price(): void
     {
-        $subscriptionProgram = $this->createSubscriptionProgram(price: 4200);
+        $subscriptionBundle = $this->createSubscriptionBundle(price: 4200);
 
         $customerA = $this->createCustomer();
-        $dealA = Deal::createForCustomer($customerA, $subscriptionProgram, null, 3000.0);
+        $dealA = Deal::createForCustomer($customerA, null, $subscriptionBundle, 3000.0);
         $subscriptionA = Subscription::where('deal_id', $dealA->id)->firstOrFail();
 
         $customerB = $this->createCustomer();
-        $dealB = Deal::createForCustomer($customerB, $subscriptionProgram, null, 6000.0);
+        $dealB = Deal::createForCustomer($customerB, null, $subscriptionBundle, 6000.0);
         $subscriptionB = Subscription::where('deal_id', $dealB->id)->firstOrFail();
 
         $creditA = $subscriptionA->cancel()->cancellation_credit;
@@ -361,7 +352,7 @@ class SubscriptionsTest extends TestCase
 
     public function test_price_exceeded_alert_appears_when_standalone_purchases_exceed_the_subscription_price(): void
     {
-        $this->createSubscriptionProgram(price: 1000);
+        $this->createSubscriptionBundle(price: 1000);
         $customer = $this->createCustomer();
 
         Deal::createForCustomer($customer, $this->createProgram(price: 600), null);
@@ -372,7 +363,7 @@ class SubscriptionsTest extends TestCase
 
     public function test_price_exceeded_alert_does_not_appear_below_the_threshold(): void
     {
-        $this->createSubscriptionProgram(price: 1000);
+        $this->createSubscriptionBundle(price: 1000);
         $customer = $this->createCustomer();
 
         Deal::createForCustomer($customer, $this->createProgram(price: 600), null);
@@ -382,10 +373,10 @@ class SubscriptionsTest extends TestCase
 
     public function test_bundle_deals_never_count_toward_the_price_exceeded_alert(): void
     {
-        $this->createSubscriptionProgram(price: 500);
+        $this->createSubscriptionBundle(price: 500);
         $customer = $this->createCustomer();
 
-        $bundle = \App\Models\Bundle::create([
+        $bundle = Bundle::create([
             'name' => 'מארז בדיקה '.random_int(1, 999999),
             'description' => null,
             'price' => 999999,
@@ -396,12 +387,12 @@ class SubscriptionsTest extends TestCase
         $this->assertFalse($customer->exceedsSubscriptionPriceAlert());
     }
 
-    public function test_the_subscription_type_program_itself_never_counts_as_a_standalone_purchase(): void
+    public function test_the_subscription_type_bundle_itself_never_counts_as_a_standalone_purchase(): void
     {
-        $subscriptionProgram = $this->createSubscriptionProgram(price: 1000);
+        $subscriptionBundle = $this->createSubscriptionBundle(price: 1000);
         $customer = $this->createCustomer();
 
-        Deal::createForCustomer($customer, $subscriptionProgram, null);
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
 
         $this->assertFalse($customer->exceedsSubscriptionPriceAlert());
     }
@@ -481,8 +472,8 @@ class SubscriptionsTest extends TestCase
     private function openSubscription(float $agreedAmount = 4200): Subscription
     {
         $customer = $this->createCustomer();
-        $subscriptionProgram = $this->createSubscriptionProgram();
-        $deal = Deal::createForCustomer($customer, $subscriptionProgram, null, $agreedAmount);
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        $deal = Deal::createForCustomer($customer, null, $subscriptionBundle, $agreedAmount);
 
         return Subscription::where('deal_id', $deal->id)->firstOrFail();
     }
@@ -530,13 +521,12 @@ class SubscriptionsTest extends TestCase
         return $lead->convertToCustomer(app(\App\Services\ActivityLogger::class));
     }
 
-    private function createSubscriptionProgram(?string $name = null, float $price = 4200, bool $isActive = true): Program
+    private function createSubscriptionBundle(?string $name = null, float $price = 4200, bool $isActive = true): Bundle
     {
-        return Program::create([
+        return Bundle::create([
             'name' => $name ?? 'מנוי שנתי לבדיקה '.random_int(1, 999999),
             'description' => null,
             'price' => $price,
-            'is_premium' => false,
             'is_subscription_type' => true,
             'is_active' => $isActive,
         ]);
@@ -553,7 +543,6 @@ class SubscriptionsTest extends TestCase
             'description' => null,
             'price' => $price,
             'is_premium' => $isPremium,
-            'is_subscription_type' => false,
             'is_active' => $isActive,
         ]);
     }

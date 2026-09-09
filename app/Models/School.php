@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * CUSTOMER card for the lifetime of the relationship (build-plan 05) — see
  * customer() below.
  */
-#[Fillable(['name', 'phone', 'email', 'city', 'address'])]
+#[Fillable(['name', 'phone', 'email', 'city', 'address', 'syllable', 'classes_per_grade', 'logo_path', 'notes'])]
 class School extends Model
 {
     use HasFactory;

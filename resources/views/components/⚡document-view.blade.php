@@ -217,11 +217,11 @@ class extends Component
 ?>
 
 <div>
-    <a href="{{ route('deal-detail', $document->deal_id) }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← חזרה לעסקה #{{ $document->deal_id }}</a>
+    <a href="{{ route('deal-detail', $document->deal_id) }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← חזרה לעסקה</a>
 
     <div class="topbar">
         <div>
-            <h1 style="margin-bottom:2px">{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — עסקה #{{ $document->deal_id }}</h1>
+            <h1 style="margin-bottom:2px">{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">{{ $document->deal->customer->school?->name }} · נוצר <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span></p>
         </div>
         <div style="display:flex; gap:var(--sp-sm); align-items:center">

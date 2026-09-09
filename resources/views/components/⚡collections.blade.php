@@ -90,8 +90,8 @@ class extends Component
                     @foreach ($this->openCollectionTasks as $task)
                         @php $deal = $task->deal; @endphp
                         <tr class="row-link" onclick="location.href='{{ route('deal-detail', $deal) }}'">
-                            <td>{{ $deal->customer->school?->name ?? 'לקוחה #'.$deal->customer_id }}</td>
-                            <td class="ltr-num">#{{ $deal->id }}</td>
+                            <td>{{ $deal->customer->school?->name ?? '—' }}</td>
+                            <td>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
                             <td class="ltr-num">₪{{ number_format($deal->totalPaid(), 0) }}</td>
                             <td class="ltr-num" style="color:var(--color-error); font-weight:700">₪{{ number_format($deal->outstandingBalance(), 0) }}</td>
@@ -119,7 +119,7 @@ class extends Component
                     @foreach ($this->pendingChecks as $payment)
                         <tr>
                             <td>{{ $payment->deal->customer->school?->name ?? '—' }}</td>
-                            <td><a href="{{ route('deal-detail', $payment->deal) }}">#{{ $payment->deal_id }}</a></td>
+                            <td><a href="{{ route('deal-detail', $payment->deal) }}">{{ $payment->deal->program_name_snapshot ?? $payment->deal->bundle_name_snapshot }}</a></td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
                             <td><span class="badge badge-warning">ממתין לפירעון</span></td>

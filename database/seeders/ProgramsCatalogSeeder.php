@@ -21,7 +21,6 @@ class ProgramsCatalogSeeder extends Seeder
             'description' => 'תוכנית חודשית לעונת הסתיו.',
             'price' => 420,
             'is_premium' => false,
-            'is_subscription_type' => false,
             'is_active' => true,
         ]);
 
@@ -30,19 +29,6 @@ class ProgramsCatalogSeeder extends Seeder
             'description' => 'תוכנית חודשית לעונת החורף.',
             'price' => 420,
             'is_premium' => false,
-            'is_subscription_type' => false,
-            'is_active' => true,
-        ]);
-
-        // At most one active is_subscription_type=true program at a time
-        // (build-plan 03) — enforced for real in ⚡programs-catalog.blade.php,
-        // not just by this seeder only creating one.
-        Program::create([
-            'name' => 'מנוי שנתי — 10 תוכניות',
-            'description' => 'מנוי שנתי המקנה זכאות ל-10 תוכניות חודשיות (FR-3.12).',
-            'price' => 4200,
-            'is_premium' => false,
-            'is_subscription_type' => true,
             'is_active' => true,
         ]);
 
@@ -51,7 +37,6 @@ class ProgramsCatalogSeeder extends Seeder
             'description' => 'תוכנית פרימיום לפי פנייה בלבד (FR-3.10).',
             'price' => 650,
             'is_premium' => true,
-            'is_subscription_type' => false,
             'is_active' => true,
         ]);
 
@@ -62,7 +47,6 @@ class ProgramsCatalogSeeder extends Seeder
             'description' => 'תוכנית פרימיום לפי פנייה בלבד (FR-3.10).',
             'price' => 780,
             'is_premium' => true,
-            'is_subscription_type' => false,
             'is_active' => false,
         ]);
 
@@ -81,5 +65,19 @@ class ProgramsCatalogSeeder extends Seeder
             'is_active' => true,
         ]);
         $sofShana->programs()->attach([$nitzanei->id]);
+
+        // At most one active is_subscription_type=true bundle at a time
+        // (build-plan 03, moved here from Program 2026-09-09) — enforced for
+        // real in ⚡programs-catalog.blade.php, not just by this seeder only
+        // creating one.
+        $manuiShnati = Bundle::create([
+            'name' => 'מנוי שנתי — 10 תוכניות',
+            'description' => 'מנוי שנתי המקנה זכאות ל-10 תוכניות חודשיות (FR-3.12).',
+            'price' => 4200,
+            'is_subscription_type' => true,
+            'is_active' => true,
+        ]);
+        $manuiShnati->programs()->attach([$rimonim->id, $nitzanei->id]);
     }
 }
+

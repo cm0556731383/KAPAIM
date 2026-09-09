@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — עסקה #{{ $document->deal_id }} — כפיים</title>
+    <title>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — כפיים</title>
     <style>
         {{-- mpdf has no network access for Google Fonts and limited CSS support (no flexbox/grid) — DejaVu Sans is bundled with mpdf and covers Hebrew correctly (dompdf, tried first, does not apply the Unicode bidi algorithm at all and renders Hebrew unreadable — see routes/web.php's documents.pdf route). Colors/spacing below are otherwise a deliberate match of resources/views/layouts/public.blade.php (the online sign form), per the 2026-09-08 request that a downloaded/emailed PDF read as the same document, not a plainer one — right down to the same --color-* values, just as literal hex since mpdf's CSS support doesn't extend to custom properties. --}}
         * { box-sizing: border-box; }
@@ -40,7 +40,7 @@
     <div class="brand"><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('images/logo.png'))) }}"></div>
     <h1>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
     <p class="meta">
-        עסקה #{{ $document->deal_id }} · {{ $document->deal->customer->school?->name }}
+        {{ $document->deal->customer->school?->name }}
         @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
         · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
     </p>

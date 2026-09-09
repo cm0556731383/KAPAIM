@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — עסקה #{{ $document->deal_id }} — כפיים</title>
+    <title>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} — כפיים</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -56,7 +56,7 @@
     <div class="sheet">
         <h1>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
         <p class="meta">
-            עסקה #{{ $document->deal_id }} · {{ $document->deal->customer->school?->name }}
+            {{ $document->deal->customer->school?->name }}
             @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
             · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
         </p>

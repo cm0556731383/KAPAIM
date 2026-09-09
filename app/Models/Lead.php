@@ -43,18 +43,20 @@ class Lead extends Model
 
     public const NEW_STATUS_NAME = 'חדש';
 
+    public const CLOSED_NO_SALE_STATUS_NAME = 'נסגר ללא מכירה';
+
     private const TRAFFIC_LIGHT_COLORS = [
         'חדש' => 'yellow',
         'בתהליך מכירה' => 'yellow',
         'מוכנה לסגור / רוצה לרכוש' => 'green',
-        'נסגר ללא מכירה' => 'red',
+        self::CLOSED_NO_SALE_STATUS_NAME => 'red',
     ];
 
     private const BADGE_CLASSES = [
         'חדש' => 'badge-info',
         'בתהליך מכירה' => 'badge-warning',
         'מוכנה לסגור / רוצה לרכוש' => 'badge-success',
-        'נסגר ללא מכירה' => 'badge-error',
+        self::CLOSED_NO_SALE_STATUS_NAME => 'badge-error',
     ];
 
     protected function casts(): array
@@ -102,6 +104,11 @@ class Lead extends Model
     public function interestedPrograms(): BelongsToMany
     {
         return $this->belongsToMany(Program::class, 'lead_program');
+    }
+
+    public function interestedBundles(): BelongsToMany
+    {
+        return $this->belongsToMany(Bundle::class, 'bundle_lead');
     }
 
     /**
@@ -417,3 +424,4 @@ class Lead extends Model
         );
     }
 }
+

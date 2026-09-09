@@ -278,7 +278,7 @@ class DashboardSummaryTest extends TestCase
 
         $items = $this->dashboard->attentionItems($this->owner);
 
-        $match = $items->first(fn ($item) => str_contains($item['subtitle'], "עסקה #{$deal->id}") && $item['badge'] === 'באיחור');
+        $match = $items->first(fn ($item) => str_contains($item['subtitle'], $deal->program_name_snapshot) && $item['badge'] === 'באיחור');
         $this->assertNotNull($match);
     }
 

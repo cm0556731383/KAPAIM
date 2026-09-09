@@ -12,7 +12,7 @@ use Illuminate\Database\Seeder;
 /**
  * Build-plan 09 demo data. DealsDemoSeeder's existing demo deal for בית ספר
  * יובלים already purchases "מנוי שנתי — 10 תוכניות" (the seeded
- * is_subscription_type program) — now that
+ * is_subscription_type bundle, moved here from Program 2026-09-09) — now that
  * Deal::openSubscriptionIfApplicable() is wired for real, that single deal
  * already produced a real SUBSCRIPTION row with 10 SUBSCRIPTION_DELIVERY
  * rows during DealsDemoSeeder, with no second deal needed here.
@@ -35,7 +35,7 @@ class SubscriptionsDemoSeeder extends Seeder
             return;
         }
 
-        $suppliablePrograms = Program::where('is_active', true)->where('is_subscription_type', false)->orderBy('id')->get();
+        $suppliablePrograms = Program::where('is_active', true)->orderBy('id')->get();
 
         if ($suppliablePrograms->isEmpty()) {
             return;
@@ -58,3 +58,4 @@ class SubscriptionsDemoSeeder extends Seeder
         ]);
     }
 }
+

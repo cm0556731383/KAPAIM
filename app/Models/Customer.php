@@ -103,27 +103,28 @@ class Customer extends Model
 
     /**
      * FR-8.23's prerequisite: sum of agreed_amount across this customer's own
-     * standalone program purchases — program-based deals only, excluding any
-     * deal against the subscription-type program itself (that one opens a
-     * subscription, it isn't a "standalone program purchase"), and excluding
-     * bundle deals entirely (FR-3.8).
+     * standalone program purchases — program-based deals only, excluding
+     * bundle deals entirely (FR-3.8). A program deal can never itself be the
+     * subscription-granting purchase any more (that discriminator moved to
+     * Bundle::is_subscription_type, 2026-09-09), so every program deal here
+     * is definitionally a standalone one.
      */
     public function standaloneProgramsTotal(): float
     {
         return (float) $this->deals()
             ->whereNotNull('program_id')
-            ->whereHas('program', fn ($q) => $q->where('is_subscription_type', false))
             ->sum('agreed_amount');
     }
 
     /**
      * FR-8.23: purely informational — compares the total above to the
-     * current active subscription-type program's list price (build-plan 03's
-     * at-most-one-active-at-a-time discriminator/uniqueness guarantee).
+     * current active subscription-type bundle's list price (build-plan 03's
+     * at-most-one-active-at-a-time discriminator/uniqueness guarantee, moved
+     * from Program to Bundle 2026-09-09).
      */
     public function exceedsSubscriptionPriceAlert(): bool
     {
-        $subscriptionPrice = Program::where('is_subscription_type', true)->where('is_active', true)->first()?->price;
+        $subscriptionPrice = Bundle::where('is_subscription_type', true)->where('is_active', true)->first()?->price;
 
         if (! $subscriptionPrice) {
             return false;
@@ -137,3 +138,4 @@ class Customer extends Model
         return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
     }
 }
+

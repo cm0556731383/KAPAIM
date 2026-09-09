@@ -303,3 +303,14 @@ td.mono { display: table-cell; }
 
   .kpis { grid-template-columns: 1fr; }
 }
+
+[x-cloak] { display: none !important; }
+
+/* Reusable <x-modal> — teleported to <body> so it always sits above page
+   content regardless of which card/table it was triggered from. */
+.modal-overlay { position: fixed; inset: 0; background: rgba(32, 36, 31, .5); display: flex; align-items: center; justify-content: center; padding: var(--sp-lg); z-index: 100; }
+.modal-panel { background: var(--color-surface); border-radius: var(--radius-modal); box-shadow: var(--shadow-modal); padding: var(--sp-lg); width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-md); margin-bottom: var(--sp-md); }
+.modal-header h2 { margin: 0; }
+.modal-close { flex-shrink: 0; background: none; border: none; cursor: pointer; font-size: 22px; line-height: 1; color: var(--color-text-secondary); padding: 4px 10px; border-radius: var(--radius-control); }
+.modal-close:hover { background: var(--color-background); color: var(--color-text-primary); }

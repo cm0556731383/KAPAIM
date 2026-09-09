@@ -13,8 +13,9 @@ use RuntimeException;
 /**
  * Build-plan 09 — SUBSCRIPTION. Opened only by
  * Deal::openSubscriptionIfApplicable() (called from Deal::createForCustomer()
- * when the purchased program is build-plan 03's is_subscription_type
- * discriminator) — never created directly by UI/controller code, the same
+ * when the purchased bundle is build-plan 03's is_subscription_type
+ * discriminator, moved from Program to Bundle 2026-09-09) — never created
+ * directly by UI/controller code, the same
  * "sole creation point" convention as Deal::createForCustomer(),
  * Document::generateFor(), and Receipt::issueFor().
  *
@@ -166,8 +167,8 @@ class Subscription extends Model
 
         $program = Program::find($programId);
 
-        if (! $program || ! $program->is_active || $program->is_subscription_type) {
-            throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה (שאינה תוכנית מנוי) עבור שורת האספקה.');
+        if (! $program || ! $program->is_active) {
+            throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה עבור שורת האספקה.');
         }
 
         return DB::transaction(function () use ($expectedVersion, $delivery, $program, $user) {
@@ -286,3 +287,4 @@ class Subscription extends Model
         return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit);
     }
 }
+

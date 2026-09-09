@@ -222,7 +222,7 @@ class DashboardSummary
                 $badge = $this->badgeForDate($followUp->next_at);
 
                 return [
-                    'label' => 'לחזור ל'.($lead->school?->name ?? "ליד #{$lead->id}").' — Up Follow',
+                    'label' => 'לחזור ל'.($lead->school?->name ?? $lead->email).' — Up Follow',
                     'subtitle' => 'ליד · '.($lead->assignedUser?->name ?? '—'),
                     'badge' => $badge['badge'],
                     'badgeClass' => $badge['badgeClass'],
@@ -279,8 +279,8 @@ class DashboardSummary
             ->get()
             ->filter(fn (Task $task) => $task->deal !== null)
             ->map(fn (Task $task) => [
-                'label' => ($task->deal->customer->school?->name ?? 'לקוחה #'.$task->deal->customer_id).' — נשלחה חשבונית, ממתינה לתשלום',
-                'subtitle' => "עסקה #{$task->deal->id} · משימת גבייה",
+                'label' => ($task->deal->customer->school?->name ?? '—').' — נשלחה חשבונית, ממתינה לתשלום',
+                'subtitle' => ($task->deal->program_name_snapshot ?? $task->deal->bundle_name_snapshot).' · משימת גבייה',
                 'badge' => 'באיחור',
                 'badgeClass' => 'badge-error',
                 'url' => route('deal-detail', $task->deal),
@@ -303,8 +303,8 @@ class DashboardSummary
                 return $invoice && ! Receipt::where('document_id', $invoice->id)->exists();
             })
             ->map(fn (Deal $deal) => [
-                'label' => ($deal->customer->school?->name ?? 'לקוחה #'.$deal->customer_id).' — התקבל תשלום, ממתינה להפקת קבלה',
-                'subtitle' => "עסקה #{$deal->id}",
+                'label' => ($deal->customer->school?->name ?? '—').' — התקבל תשלום, ממתינה להפקת קבלה',
+                'subtitle' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
                 'badge' => 'לביצוע',
                 'badgeClass' => 'badge-info',
                 'url' => route('deal-detail', $deal),
@@ -331,8 +331,8 @@ class DashboardSummary
                 ->where('program_id', $deal->program_id)
                 ->exists())
             ->map(fn (Deal $deal) => [
-                'label' => ($deal->customer->school?->name ?? 'לקוחה #'.$deal->customer_id).' — עסקה הושלמה, טרם נשלחו חומרים',
-                'subtitle' => "עסקה #{$deal->id}",
+                'label' => ($deal->customer->school?->name ?? '—').' — עסקה הושלמה, טרם נשלחו חומרים',
+                'subtitle' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
                 'badge' => 'לשליחה',
                 'badgeClass' => 'badge-primary',
                 'url' => route('customer-detail', $deal->customer),

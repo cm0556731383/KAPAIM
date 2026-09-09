@@ -1,7 +1,10 @@
 <?php
 
 use App\Models\Customer;
+use App\Models\Program;
+use App\Models\School;
 use App\Models\StatusDefinition;
+use App\Models\Subscription;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -15,6 +18,11 @@ new
 #[Layout('layouts.app', ['title' => 'לקוחות — כפיים'])]
 class extends Component
 {
+    // ===== סינון =====
+    public string $filterName = '';
+    public string $filterCity = '';
+    public string $filterProgramId = '';
+    public string $filterSubscription = '';
     public string $filterStatusId = '';
 
     public function mount(): void
@@ -27,21 +35,51 @@ class extends Component
     {
         return Customer::query()
             ->with(['school', 'status', 'contacts', 'subscriptions.status'])
+            ->when($this->filterName !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('name', 'like', '%'.$this->filterName.'%')))
+            ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
+            ->when($this->filterProgramId !== '', function ($q) {
+                $programId = $this->filterProgramId;
+
+                // A program filter also catches an active subscriber whose
+                // subscription bundle includes that program — not only a
+                // customer who bought it as its own standalone deal.
+                $q->where(function ($outer) use ($programId) {
+                    $outer->whereHas('deals', fn ($dq) => $dq->where('program_id', $programId))
+                        ->orWhereHas('subscriptions', function ($sq) use ($programId) {
+                            $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
+                                ->whereHas('deal.bundle.programs', fn ($pq) => $pq->where('programs.id', $programId));
+                        });
+                });
+            })
+            ->when($this->filterSubscription === 'yes', fn ($q) => $q->whereHas(
+                'subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
+            ))
+            ->when($this->filterSubscription === 'no', fn ($q) => $q->whereDoesntHave(
+                'subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
+            ))
             ->when($this->filterStatusId !== '', fn ($q) => $q->where('status_id', $this->filterStatusId))
             ->orderByDesc('converted_at')
             ->get();
     }
 
     #[Computed]
-    public function statuses()
+    public function cities()
     {
-        return StatusDefinition::where('scope', 'customer')->where('is_active', true)->orderBy('sort_order')->get();
+        return School::whereNotNull('city')->where('city', '!=', '')
+            ->whereHas('customer')
+            ->distinct()->orderBy('city')->pluck('city');
     }
 
     #[Computed]
-    public function statusCounts()
+    public function programs()
     {
-        return Customer::query()->selectRaw('status_id, count(*) as aggregate')->groupBy('status_id')->pluck('aggregate', 'status_id');
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function statuses()
+    {
+        return StatusDefinition::where('scope', 'customer')->where('is_active', true)->orderBy('sort_order')->get();
     }
 };
 ?>
@@ -54,11 +92,47 @@ class extends Component
         </div>
     </div>
 
-    <div class="filters">
-        <span class="chip {{ $filterStatusId === '' ? 'active' : '' }}" wire:click="$set('filterStatusId', '')">הכל ({{ Customer::count() }})</span>
-        @foreach ($this->statuses as $status)
-            <span class="chip {{ (string) $filterStatusId === (string) $status->id ? 'active' : '' }}" wire:click="$set('filterStatusId', '{{ $status->id }}')">{{ $status->name }} ({{ $this->statusCounts[$status->id] ?? 0 }})</span>
-        @endforeach
+    {{-- ===== סינון ===== --}}
+    <div class="filter-row">
+        <div>
+            <label for="filterName">שם בית ספר</label>
+            <input type="text" id="filterName" wire:model.live.debounce.400ms="filterName" placeholder="חיפוש לפי שם...">
+        </div>
+        <div>
+            <label for="filterCity">עיר</label>
+            <select id="filterCity" wire:model.live="filterCity">
+                <option value="">כל הערים</option>
+                @foreach ($this->cities as $city)
+                    <option value="{{ $city }}">{{ $city }}</option>
+                @endforeach
+            </select>
+        </div>
+        <div>
+            <label for="filterProgramId">תכנית שנרכשה</label>
+            <select id="filterProgramId" wire:model.live="filterProgramId">
+                <option value="">כל התוכניות</option>
+                @foreach ($this->programs as $program)
+                    <option value="{{ $program->id }}">{{ $program->name }}</option>
+                @endforeach
+            </select>
+        </div>
+        <div>
+            <label for="filterSubscription">מנוי</label>
+            <select id="filterSubscription" wire:model.live="filterSubscription">
+                <option value="">הכל</option>
+                <option value="yes">יש מנוי פעיל</option>
+                <option value="no">אין מנוי פעיל</option>
+            </select>
+        </div>
+        <div>
+            <label for="filterStatusId">סטטוס</label>
+            <select id="filterStatusId" wire:model.live="filterStatusId">
+                <option value="">כל הסטטוסים</option>
+                @foreach ($this->statuses as $status)
+                    <option value="{{ $status->id }}">{{ $status->name }}</option>
+                @endforeach
+            </select>
+        </div>
     </div>
 
     <div class="card" style="padding:0; overflow:hidden">

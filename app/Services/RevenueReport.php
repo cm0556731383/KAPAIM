@@ -18,10 +18,11 @@ use Illuminate\Support\Collection;
  * ⚡cashflow-report.blade.php formats it for display.
  *
  * FR-6.4, the one genuinely tricky rule: a deal against the catalog's
- * is_subscription_type program does NOT recognize its revenue in the
- * month(s) its Payment rows actually landed. Every such deal has exactly
- * one Subscription row (Deal::openSubscriptionIfApplicable(), build-plan
- * 09) — that subscription's agreed_price is instead spread evenly
+ * is_subscription_type bundle (moved from Program to Bundle 2026-09-09)
+ * does NOT recognize its revenue in the month(s) its Payment rows actually
+ * landed. Every such deal has exactly one Subscription row
+ * (Deal::openSubscriptionIfApplicable(), build-plan 09) — that
+ * subscription's agreed_price is instead spread evenly
  * (agreed_price / 12) across the 12 calendar months starting at
  * Subscription.start_date, independent of the deal's real payment history.
  * This is deliberately independent of whether the subscription was later
@@ -79,7 +80,7 @@ class RevenueReport
         });
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$revenue) {
-            $label = $subscription->deal->program?->name ?? self::BUNDLE_BUCKET_LABEL;
+            $label = $subscription->deal->program?->name ?? $subscription->deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL;
             $revenue[$label] = ($revenue[$label] ?? 0) + (float) $subscription->agreed_price;
         });
 
@@ -145,16 +146,16 @@ class RevenueReport
         return $expenses;
     }
 
-    /** Every real Payment whose deal is NOT against the subscription-type program — those are handled by subscriptionMonthlySlices() instead. */
+    /** Every real Payment whose deal is NOT against the subscription-type bundle — those are handled by subscriptionMonthlySlices() instead. */
     private function nonSubscriptionPayments(): Collection
     {
-        return Payment::with('deal.program')->get()
-            ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->program?->is_subscription_type);
+        return Payment::with('deal.bundle')->get()
+            ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type);
     }
 
     private function subscriptions(): Collection
     {
-        return Subscription::with('deal.program')->get();
+        return Subscription::with('deal.program', 'deal.bundle')->get();
     }
 
     /** @return array<string, float> 'Y-m' => agreed_price/12 for each of the 12 months starting at start_date (FR-6.4) */
@@ -176,3 +177,4 @@ class RevenueReport
         return $deal->program?->name ?? self::BUNDLE_BUCKET_LABEL;
     }
 }
+

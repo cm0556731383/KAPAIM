@@ -68,6 +68,7 @@ class extends Component
         $this->reset(['supplierId', 'programId', 'amount', 'expenseDate', 'notes']);
         unset($this->expenses);
 
+        $this->dispatch('close-modals');
         $this->notifySuccess('ההוצאה נוצרה בהצלחה.');
     }
 
@@ -123,6 +124,49 @@ class extends Component
             <h1 style="margin-bottom:2px">הוצאות</h1>
             <p class="text-text-secondary m-0">רישום הוצאות ידני וזיהוי הוצאות שחסרה להן חשבונית</p>
         </div>
+        <x-modal trigger-label="+ הוצאה חדשה" title="הוצאה חדשה">
+            <form wire:submit="addExpense" class="form-grid">
+                <div>
+                    <label for="expenseDate">תאריך</label>
+                    <input type="date" id="expenseDate" wire:model="expenseDate" class="ltr-num" dir="ltr">
+                    @error('expenseDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="amount">סכום</label>
+                    <input type="text" id="amount" wire:model="amount" class="ltr-num" dir="ltr" placeholder="₪0">
+                    @error('amount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="supplierId">ספק</label>
+                    <select id="supplierId" wire:model="supplierId">
+                        <option value="">בחרו ספק</option>
+                        @foreach ($this->suppliers as $supplier)
+                            <option value="{{ $supplier->id }}">{{ $supplier->name }}</option>
+                        @endforeach
+                    </select>
+                    @error('supplierId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="programId">תוכנית (לא חובה)</label>
+                    <select id="programId" wire:model="programId">
+                        <option value="">ללא שיוך לתוכנית</option>
+                        @foreach ($this->programs as $program)
+                            <option value="{{ $program->id }}">{{ $program->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="full">
+                    <label for="notes">הערות</label>
+                    <textarea id="notes" wire:model="notes" rows="2" placeholder="הערות חופשיות..."></textarea>
+                </div>
+                <div class="full">
+                    <button type="submit" class="btn btn-primary">שמירת הוצאה</button>
+                </div>
+            </form>
+            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">
+                צירוף חשבונית מתבצע מרשימת ההוצאות למעלה, לאחר שמירת ההוצאה.
+            </p>
+        </x-modal>
     </div>
 
     <div class="tabs">
@@ -178,48 +222,4 @@ class extends Component
         </div>
     </div>
 
-    <div class="card" style="max-width:640px">
-        <h3>+ הוצאה חדשה</h3>
-        <form wire:submit="addExpense" class="form-grid">
-            <div>
-                <label for="expenseDate">תאריך</label>
-                <input type="date" id="expenseDate" wire:model="expenseDate" class="ltr-num" dir="ltr">
-                @error('expenseDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div>
-                <label for="amount">סכום</label>
-                <input type="text" id="amount" wire:model="amount" class="ltr-num" dir="ltr" placeholder="₪0">
-                @error('amount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div>
-                <label for="supplierId">ספק</label>
-                <select id="supplierId" wire:model="supplierId">
-                    <option value="">בחרו ספק</option>
-                    @foreach ($this->suppliers as $supplier)
-                        <option value="{{ $supplier->id }}">{{ $supplier->name }}</option>
-                    @endforeach
-                </select>
-                @error('supplierId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-            </div>
-            <div>
-                <label for="programId">תוכנית (לא חובה)</label>
-                <select id="programId" wire:model="programId">
-                    <option value="">ללא שיוך לתוכנית</option>
-                    @foreach ($this->programs as $program)
-                        <option value="{{ $program->id }}">{{ $program->name }}</option>
-                    @endforeach
-                </select>
-            </div>
-            <div class="full">
-                <label for="notes">הערות</label>
-                <textarea id="notes" wire:model="notes" rows="2" placeholder="הערות חופשיות..."></textarea>
-            </div>
-            <div class="full">
-                <button type="submit" class="btn btn-primary">שמירת הוצאה</button>
-            </div>
-        </form>
-        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">
-            צירוף חשבונית מתבצע מרשימת ההוצאות למעלה, לאחר שמירת ההוצאה.
-        </p>
-    </div>
 </div>

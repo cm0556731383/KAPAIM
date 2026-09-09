@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Models\Bundle;
 use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\Expense;
@@ -88,8 +89,8 @@ class RevenueReportTest extends TestCase
     {
         Carbon::setTestNow('2026-01-15');
 
-        $program = $this->createSubscriptionProgram();
-        $deal = $this->dealWithPaymentMethod(agreedAmount: 4800, program: $program);
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 4800, bundle: $bundle);
         // Paid in full immediately, in the very same month the subscription starts.
         $deal->recordPayment($deal->version, 4800);
 
@@ -110,8 +111,8 @@ class RevenueReportTest extends TestCase
     {
         Carbon::setTestNow('2026-01-15');
 
-        $program = $this->createSubscriptionProgram();
-        $deal = $this->dealWithPaymentMethod(agreedAmount: 1200, program: $program);
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1200, bundle: $bundle);
         // Only a small partial payment has actually been received...
         $deal->recordPayment($deal->version, 100);
 
@@ -121,7 +122,7 @@ class RevenueReportTest extends TestCase
         $this->assertEqualsWithDelta(1200.0, array_sum($revenue), 0.01);
 
         $byProgram = $this->report->revenueByProgram();
-        $this->assertEqualsWithDelta(1200.0, $byProgram[$program->name], 0.01);
+        $this->assertEqualsWithDelta(1200.0, $byProgram[$bundle->name], 0.01);
     }
 
     // ----- profit = revenue minus program-attributed expenses -----
@@ -176,18 +177,16 @@ class RevenueReportTest extends TestCase
             'description' => null,
             'price' => 500,
             'is_premium' => false,
-            'is_subscription_type' => false,
             'is_active' => true,
         ]);
     }
 
-    private function createSubscriptionProgram(): Program
+    private function createSubscriptionBundle(): Bundle
     {
-        return Program::create([
+        return Bundle::create([
             'name' => 'מנוי שנתי לבדיקת דוח '.random_int(1, 999999),
             'description' => null,
             'price' => 1200,
-            'is_premium' => false,
             'is_subscription_type' => true,
             'is_active' => true,
         ]);
@@ -213,11 +212,11 @@ class RevenueReportTest extends TestCase
         return $lead->convertToCustomer(app(ActivityLogger::class));
     }
 
-    private function dealWithPaymentMethod(float $agreedAmount, ?Program $program = null): Deal
+    private function dealWithPaymentMethod(float $agreedAmount, ?Program $program = null, ?Bundle $bundle = null): Deal
     {
         $customer = $this->createCustomer();
-        $program ??= $this->createProgram();
-        $deal = Deal::createForCustomer($customer, $program, null, $agreedAmount);
+        $program ??= ($bundle ? null : $this->createProgram());
+        $deal = Deal::createForCustomer($customer, $program, $bundle, $agreedAmount);
 
         $method = PaymentMethod::create(['name' => 'אמצעי לבדיקת דוח '.random_int(1, 999999), 'type' => 'bank_transfer', 'is_active' => true]);
         $deal->updatePaymentMethod($method->id);

@@ -246,6 +246,7 @@ class extends Component
         $this->resetContactForm();
         unset($this->contacts);
 
+        $this->dispatch('close-modals');
         $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה.");
     }
 
@@ -469,7 +470,7 @@ class extends Component
     #[Computed]
     public function availableDeliveryPrograms()
     {
-        return Program::where('is_active', true)->where('is_subscription_type', false)->orderBy('name')->get();
+        return Program::where('is_active', true)->orderBy('name')->get();
     }
 
     /**
@@ -929,7 +930,7 @@ class extends Component
             @if ($this->outstandingBalance > 0)
                 <span class="badge badge-error" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">חוב פתוח: ₪{{ number_format($this->outstandingBalance, 0) }}</span>
             @endif
-            <h1>{{ $customer->school?->name ?? 'לקוחה #'.$customer->id }}</h1>
+            <h1>{{ $customer->school?->name ?? '—' }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">
                 לקוחה מאז <span class="ltr-num">{{ $customer->converted_at->format('d/m/Y') }}</span>
                 @if ($this->contacts->firstWhere('is_primary', true))
@@ -1010,7 +1011,26 @@ class extends Component
             <div>
                 {{-- ===== אנשי קשר ===== --}}
                 <div class="card">
-                    <h3>אנשי קשר</h3>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                        <h3 style="margin:0">אנשי קשר</h3>
+                        @if (! $editingContactId)
+                            <x-modal trigger-label="+ איש קשר חדש" trigger-class="btn btn-secondary btn-sm" title="איש קשר חדש">
+                                <form wire:submit="addContact" class="form-grid">
+                                    <div><label>שם מלא</label><input type="text" wire:model="contactName">@error('contactName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>תפקיד</label><input type="text" wire:model="contactRole"></div>
+                                    <div><label>טלפון ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhone"></div>
+                                    <div><label>טלפון נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhoneSecondary"></div>
+                                    <div><label>דוא"ל ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmail"></div>
+                                    <div><label>דוא"ל נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmailSecondary"></div>
+                                    <div class="full checkbox-row" style="gap:var(--sp-lg)">
+                                        <span class="checkbox-row"><input type="checkbox" id="newContactIsPrimary" wire:model="contactIsPrimary"><label for="newContactIsPrimary" style="margin:0">איש קשר ראשי</label></span>
+                                        <span class="checkbox-row"><input type="checkbox" id="newContactIsAccountingContact" wire:model="contactIsAccountingContact"><label for="newContactIsAccountingContact" style="margin:0">גורם חשבונאי</label></span>
+                                    </div>
+                                    <div class="full"><button type="submit" class="btn btn-primary">+ הוספת איש קשר</button></div>
+                                </form>
+                            </x-modal>
+                        @endif
+                    </div>
 
                     @forelse ($this->contacts as $contact)
                         @if ($editingContactId === $contact->id)
@@ -1054,25 +1074,6 @@ class extends Component
                     @empty
                         <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין אנשי קשר ללקוחה זו.</p>
                     @endforelse
-
-                    @if (! $editingContactId)
-                        <div class="contact-item">
-                            <div class="contact-edit-head"><span class="tag">איש קשר חדש</span></div>
-                            <form wire:submit="addContact" class="form-grid">
-                                <div><label>שם מלא</label><input type="text" wire:model="contactName">@error('contactName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                <div><label>תפקיד</label><input type="text" wire:model="contactRole"></div>
-                                <div><label>טלפון ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhone"></div>
-                                <div><label>טלפון נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactPhoneSecondary"></div>
-                                <div><label>דוא"ל ראשי</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmail"></div>
-                                <div><label>דוא"ל נוסף</label><input type="text" class="ltr-num" dir="ltr" wire:model="contactEmailSecondary"></div>
-                                <div class="full checkbox-row" style="gap:var(--sp-lg)">
-                                    <span class="checkbox-row"><input type="checkbox" id="newContactIsPrimary" wire:model="contactIsPrimary"><label for="newContactIsPrimary" style="margin:0">איש קשר ראשי</label></span>
-                                    <span class="checkbox-row"><input type="checkbox" id="newContactIsAccountingContact" wire:model="contactIsAccountingContact"><label for="newContactIsAccountingContact" style="margin:0">גורם חשבונאי</label></span>
-                                </div>
-                                <div class="full"><button type="submit" class="btn btn-secondary">+ הוספת איש קשר</button></div>
-                            </form>
-                        </div>
-                    @endif
                     <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון.</p>
                 </div>
 
@@ -1111,7 +1112,7 @@ class extends Component
         @forelse ($this->subscriptions as $subscription)
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <div class="contact-edit-head">
-                    <h3 style="margin:0">מנוי #{{ $subscription->id }} — עסקה #{{ $subscription->deal_id }}</h3>
+                    <h3 style="margin:0">{{ $subscription->deal->program_name_snapshot ?? $subscription->deal->bundle_name_snapshot }}</h3>
                     <span class="badge {{ \App\Models\Subscription::badgeClassForStatusName($subscription->status?->name) }}">{{ $subscription->status?->name }}</span>
                 </div>
 
@@ -1222,31 +1223,10 @@ class extends Component
         @endforelse
     @elseif ($activeTab === 'deals')
         <x-business-error-banner :message="$dealError" />
-        <div class="cols2">
-            <div>
-                <div class="card">
-                    <h3>עסקאות הלקוחה</h3>
-                    @forelse ($this->deals as $deal)
-                        <div class="deal-row">
-                            <div>
-                                <div style="font-weight:600">עסקה #{{ $deal->id }} — {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</div>
-                                <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">נפתחה <span class="ltr-num">{{ $deal->purchased_at->format('d/m/Y') }}</span></div>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:var(--sp-md)">
-                                <span class="amount ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</span>
-                                <span class="badge {{ \App\Models\Deal::badgeClassForStatusName($deal->status?->name) }}">{{ $deal->status?->name }}</span>
-                                <a href="{{ route('deal-detail', $deal) }}" class="btn btn-ghost btn-sm">פתיחת עסקה</a>
-                            </div>
-                        </div>
-                    @empty
-                        <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין עסקאות ללקוחה זו.</p>
-                    @endforelse
-                </div>
-            </div>
-
-            <div>
-                <div class="card">
-                    <h3>עסקה חדשה</h3>
+        <div class="card">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                <h3 style="margin:0">עסקאות הלקוחה</h3>
+                <x-modal trigger-label="+ עסקה חדשה" title="עסקה חדשה">
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">תוכנית אחת או מארז אחד בלבד לעסקה — רכישת כמה תוכניות יוצרת כמה עסקאות נפרדות.</p>
                     <form wire:submit="createDeal" class="form-grid">
                         <div class="full">
@@ -1290,8 +1270,23 @@ class extends Component
                         </div>
                         <div class="full"><button type="submit" class="btn btn-primary">יצירת עסקה</button></div>
                     </form>
-                </div>
+                </x-modal>
             </div>
+            @forelse ($this->deals as $deal)
+                <div class="deal-row">
+                    <div>
+                        <div style="font-weight:600">{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</div>
+                        <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">נפתחה <span class="ltr-num">{{ $deal->purchased_at->format('d/m/Y') }}</span></div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:var(--sp-md)">
+                        <span class="amount ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</span>
+                        <span class="badge {{ \App\Models\Deal::badgeClassForStatusName($deal->status?->name) }}">{{ $deal->status?->name }}</span>
+                        <a href="{{ route('deal-detail', $deal) }}" class="btn btn-ghost btn-sm">פתיחת עסקה</a>
+                    </div>
+                </div>
+            @empty
+                <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין עסקאות ללקוחה זו.</p>
+            @endforelse
         </div>
     @elseif ($activeTab === 'billing')
         <div class="card">
@@ -1320,7 +1315,7 @@ class extends Component
                 <tbody>
                     @forelse ($this->deals as $deal)
                         <tr>
-                            <td>#{{ $deal->id }} — {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
+                            <td>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
                             <td class="ltr-num">₪{{ number_format($deal->totalPaid(), 0) }}</td>
                             <td class="ltr-num" style="{{ $deal->outstandingBalance() > 0 ? 'color:var(--color-error); font-weight:700' : '' }}">₪{{ number_format($deal->outstandingBalance(), 0) }}</td>

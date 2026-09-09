@@ -447,9 +447,9 @@ class extends Component
     <div class="topbar">
         <div>
             <span class="badge {{ \App\Models\Deal::badgeClassForStatusName($deal->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $deal->status?->name }}</span>
-            <h1>עסקה #{{ $deal->id }} — {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</h1>
+            <h1>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">
-                לקוחה: {{ $deal->customer->school?->name ?? 'לקוחה #'.$deal->customer_id }}
+                לקוחה: {{ $deal->customer->school?->name ?? '—' }}
                 @if ($deal->customer->hasActiveSubscription())
                     <span class="badge badge-primary" style="margin-inline-start:4px">מנויה פעילה</span>
                 @endif
