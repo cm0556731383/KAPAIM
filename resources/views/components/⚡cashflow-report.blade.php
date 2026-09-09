@@ -66,7 +66,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">דוח הכנסות ורווח</h1>
-            <p class="text-text-secondary m-0">הכנסות, הוצאות ורווחיות לפי חודש ותוכנית</p>
         </div>
     </div>
 

@@ -150,11 +150,8 @@ class extends Component
 
         return Lead::query()
             ->with(['school', 'status', 'source', 'assignedUser', 'interestedPrograms', 'followUps'])
-            // Build-plan 13 (FR-7.2): a leads.manage holder sees every lead,
-            // unfiltered — a leads.view-only holder (future "עובדת מכירות")
-            // only sees leads assigned to them that have not yet converted
-            // (FR-7.4), scoped directly in the query, not filtered in PHP.
-            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
+            ->whereNull('converted_at')
+            ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id))
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
             ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
             ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
@@ -215,10 +212,8 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">לידים</h1>
-            <p class="text-text-secondary m-0">SCHOOL, LEAD — קליטת פניות וניהול תהליך המכירה מול בתי ספר</p>
         </div>
         <x-modal trigger-label="+ ליד חדש" title="ליד חדש">
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">מייל וטלפון הם השדות היחידים שחובה למלא — שאר הפרטים ניתנים להשלמה בכרטיס הליד</p>
             <form wire:submit="addLead" class="form-grid">
                 <div>
                     <label for="newEmail">דוא"ל</label>

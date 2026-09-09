@@ -123,7 +123,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">ספקים</h1>
-            <p class="text-text-secondary m-0">כלל הספקים המשמשים לייצור ואספקת התוכניות</p>
         </div>
         <x-modal name="supplier" trigger-label="+ ספק חדש" :title="$editingSupplierId ? 'עריכת ספק' : 'ספק חדש'">
             <form wire:submit="saveSupplier" class="form-grid">
@@ -173,10 +172,6 @@ class extends Component
         <a href="{{ route('suppliers') }}" class="active">ספקים</a>
         <a href="{{ route('expenses') }}">הוצאות</a>
         <a href="{{ route('cashflow-report') }}">דוח הכנסות ורווח</a>
-    </div>
-
-    <div class="mb-8" style="display:flex; align-items:center; gap:10px; background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-        פתיחת ספק חדש מצרפת אותו אוטומטית לרשימת התפוצה "ספקים" — אין צורך בשיוך ידני.
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">

@@ -73,16 +73,7 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">יומן פעילות</h1>
-            <p class="text-text-secondary m-0">רשומה כרונולוגית של כל פעולה משמעותית במערכת — ידנית ואוטומטית כאחד.</p>
         </div>
-    </div>
-
-    <div class="immutable-banner">
-        <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="5" y="11" width="14" height="9" rx="2"/>
-            <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
-        </svg>
-        <div>רשומות יומן הפעילות <strong>אינן ניתנות לעריכה או למחיקה</strong> — כל אירוע כולל לפחות מועד, משתמשת ותיאור הפעולה.</div>
     </div>
 
     <div class="filter-row">

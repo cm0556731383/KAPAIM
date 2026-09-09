@@ -57,7 +57,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1>גבייה ותשלומים</h1>
-            <p style="color:var(--color-text-secondary); margin:0">כל עסקה שנשלחה עליה חשבונית ולא שולמה, וכל צ'ק שטרם נפרע.</p>
         </div>
     </div>
 
@@ -68,10 +67,6 @@ class extends Component
         <div class="card">
             <div class="field"><div class="k">משימות גבייה פתוחות</div><div class="v" style="font-size:var(--fs-h2)">{{ $this->openCollectionTasks->count() }}</div></div>
         </div>
-    </div>
-
-    <div style="background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500; margin-bottom:var(--sp-lg)">
-        <strong>כלל אוטומטי:</strong> יום אחרי שעסקה עוברת לסטטוס "נשלחה חשבונית" בלי תשלום, נפתחת משימת גבייה — וחוזרת מדי שבוע עד שהעסקה מסומנת "שולמה". זו משימה <strong>פנימית למשתמשת בלבד</strong> — המערכת לא שולחת הודעת גבייה אוטומטית ללקוחה.
     </div>
 
     <div class="card" style="margin-bottom:var(--sp-lg)">
@@ -108,7 +103,6 @@ class extends Component
 
     <div class="card">
         <h3>צ'קים במעקב</h3>
-        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">קבלה מופקת רק לאחר פירעון בפועל — לא בעת קבלת הצ'ק.</p>
         @if ($this->pendingChecks->isEmpty())
             <div class="empty-state">אין כרגע צ'קים הממתינים לפירעון.</div>
         @else

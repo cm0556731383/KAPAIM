@@ -71,6 +71,13 @@ class extends Component
     public string $schoolPhone = '';
     public string $schoolEmail = '';
 
+    // ===== פרטים נוספים (עריכה) =====
+    public bool $editingSchoolDetails = false;
+    public string $schoolSyllable = '';
+    public string $schoolClassesPerGrade = '';
+    public string $schoolNotes = '';
+    public $newLogo = null;
+
     // ===== אנשי קשר =====
     public string $contactName = '';
     public string $contactRole = '';
@@ -167,6 +174,9 @@ class extends Component
         $this->schoolAddress = $school?->address ?? '';
         $this->schoolPhone = $school?->phone ?? '';
         $this->schoolEmail = $school?->email ?? '';
+        $this->schoolSyllable = $school?->syllable ?? '';
+        $this->schoolClassesPerGrade = (string) ($school?->classes_per_grade ?? '');
+        $this->schoolNotes = $school?->notes ?? '';
     }
 
     // ----- פרטי בית ספר -----
@@ -202,6 +212,45 @@ class extends Component
         $this->customer->refresh()->load('school');
         $this->syncSchoolFields();
         $this->editingSchool = false;
+    }
+
+    public function saveSchoolDetails(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate([
+            'schoolSyllable' => ['nullable', 'string', 'max:255'],
+            'schoolClassesPerGrade' => ['nullable', 'integer', 'min:0'],
+            'schoolNotes' => ['nullable', 'string'],
+            'newLogo' => ['nullable', 'image', 'max:5120'],
+        ], [], ['schoolClassesPerGrade' => 'מספר כיתות בשנתון']);
+
+        $school = $this->customer->school;
+
+        $attributes = [
+            'syllable' => $data['schoolSyllable'] ?: null,
+            'classes_per_grade' => $data['schoolClassesPerGrade'] !== null && $data['schoolClassesPerGrade'] !== ''
+                ? (int) $data['schoolClassesPerGrade']
+                : null,
+            'notes' => $data['schoolNotes'] ?: null,
+        ];
+
+        if ($this->newLogo) {
+            $attributes['logo_path'] = $this->newLogo->store('school-logos', 'public');
+        }
+
+        $school->update($attributes);
+
+        $activityLogger->log('customer.school_details_updated', "עודכנו פרטים נוספים עבור בית ספר \"{$school->name}\"", [
+            'customer_id' => $this->customer->id,
+            'lead_id' => $this->customer->lead_id,
+            'school_id' => $this->customer->school_id,
+        ]);
+
+        $this->newLogo = null;
+        $this->customer->refresh()->load('school');
+        $this->syncSchoolFields();
+        $this->editingSchoolDetails = false;
+
+        $this->notifySuccess('הפרטים הנוספים נשמרו בהצלחה.');
     }
 
     // ----- אנשי קשר (CONTACT) -----
@@ -1000,10 +1049,28 @@ class extends Component
                             <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטי בית ספר</button></div>
                         </form>
                     @else
-                        <div class="field"><div class="k">שם המוסד</div><div class="v">{{ $customer->school?->name ?? '—' }}</div></div>
-                        <div class="field"><div class="k">עיר</div><div class="v">{{ $customer->school?->city ?? '—' }}</div></div>
-                        <div class="field"><div class="k">טלפון</div><div class="v ltr-num">{{ $customer->school?->phone ?? '—' }}</div></div>
-                        <div class="field"><div class="k">דוא"ל</div><div class="v ltr-num">{{ $customer->school?->email ?? '—' }}</div></div>
+                        <div class="form-grid">
+                            <div class="full">
+                                <label>שם המוסד</label>
+                                <div class="field-box">{{ $customer->school?->name ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>עיר</label>
+                                <div class="field-box">{{ $customer->school?->city ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>טלפון</label>
+                                <div class="field-box ltr-num">{{ $customer->school?->phone ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>דוא"ל</label>
+                                <div class="field-box ltr-num">{{ $customer->school?->email ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>כתובת</label>
+                                <div class="field-box">{{ $customer->school?->address ?? '—' }}</div>
+                            </div>
+                        </div>
                     @endif
                 </div>
             </div>
@@ -1077,33 +1144,71 @@ class extends Component
                     <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון.</p>
                 </div>
 
-                @if ($this->recentlyRemovedContacts->isNotEmpty() || $this->recentlyRemovedTasks->isNotEmpty())
-                    {{-- ===== פריטים שהוסרו לאחרונה (FR-8.22) ===== --}}
-                    <div class="card" style="margin-top:var(--sp-lg)">
-                        <h3>פריטים שהוסרו לאחרונה</h3>
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">פריטים שהוסרו/בוטלו בשלושים הימים האחרונים — ניתן לשחזר.</p>
-
-                        @foreach ($this->recentlyRemovedContacts as $contact)
-                            <div class="list-item">
-                                <div>
-                                    <div style="font-weight:600">{{ $contact->name }}</div>
-                                    <div class="who">איש קשר · הוסר ב-{{ $contact->deleted_at->format('d/m/Y') }}</div>
-                                </div>
-                                <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreContact({{ $contact->id }})">שחזור</button>
-                            </div>
-                        @endforeach
-
-                        @foreach ($this->recentlyRemovedTasks as $task)
-                            <div class="list-item">
-                                <div>
-                                    <div style="font-weight:600">{{ $task->title }}</div>
-                                    <div class="who">משימה · בוטלה ב-{{ $task->deleted_at->format('d/m/Y') }}</div>
-                                </div>
-                                <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreTask({{ $task->id }})">שחזור</button>
-                            </div>
-                        @endforeach
+                {{-- ===== פרטים נוספים ===== --}}
+                <div class="card" style="margin-top:var(--sp-lg)">
+                    <div class="contact-edit-head">
+                        <h3 style="margin:0">פרטים נוספים</h3>
+                        <button type="button" class="btn btn-ghost btn-sm" wire:click="$toggle('editingSchoolDetails')">{{ $editingSchoolDetails ? 'ביטול' : 'עריכה' }}</button>
                     </div>
-                @endif
+
+                    @if ($editingSchoolDetails)
+                        <form wire:submit="saveSchoolDetails" class="form-grid">
+                            <div>
+                                <label for="schoolSyllable">הברה</label>
+                                <input type="text" id="schoolSyllable" wire:model="schoolSyllable">
+                            </div>
+                            <div>
+                                <label for="schoolClassesPerGrade">מספר כיתות בשנתון</label>
+                                <input type="text" id="schoolClassesPerGrade" wire:model="schoolClassesPerGrade" class="ltr-num" dir="ltr">
+                                @error('schoolClassesPerGrade') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div class="full">
+                                <label for="newLogo">לוגו</label>
+                                <input type="file" id="newLogo" wire:model="newLogo" accept="image/*">
+                                @error('newLogo') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                @if ($newLogo)
+                                    <img src="{{ $newLogo->temporaryUrl() }}" alt="תצוגה מקדימה" style="height:56px; width:56px; object-fit:contain; border:1px solid var(--color-border); border-radius:var(--radius-control); background:var(--color-surface); margin-top:8px">
+                                @elseif ($customer->school?->logo_path)
+                                    <div style="display:flex; align-items:center; gap:var(--sp-md); margin-top:8px">
+                                        <img src="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($customer->school->logo_path) }}" alt="לוגו" style="height:56px; width:56px; object-fit:contain; border:1px solid var(--color-border); border-radius:var(--radius-control); background:var(--color-surface)">
+                                        <a href="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($customer->school->logo_path) }}" download class="btn btn-secondary btn-sm">הורדה</a>
+                                    </div>
+                                @endif
+                            </div>
+                            <div class="full">
+                                <label for="schoolNotes">הערות</label>
+                                <textarea id="schoolNotes" wire:model="schoolNotes" rows="3"></textarea>
+                            </div>
+                            <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטים נוספים</button></div>
+                        </form>
+                    @else
+                        <div class="form-grid">
+                            <div>
+                                <label>הברה</label>
+                                <div class="field-box">{{ $customer->school?->syllable ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>מספר כיתות בשנתון</label>
+                                <div class="field-box ltr-num">{{ $customer->school?->classes_per_grade ?? '—' }}</div>
+                            </div>
+                            <div class="full">
+                                <label>לוגו</label>
+                                @if ($customer->school?->logo_path)
+                                    <div style="display:flex; align-items:center; gap:var(--sp-md)">
+                                        <img src="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($customer->school->logo_path) }}" alt="לוגו" style="height:56px; width:56px; object-fit:contain; border:1px solid var(--color-border); border-radius:var(--radius-control); background:var(--color-surface)">
+                                        <a href="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($customer->school->logo_path) }}" download class="btn btn-secondary btn-sm">הורדה</a>
+                                    </div>
+                                @else
+                                    <div class="field-box">—</div>
+                                @endif
+                            </div>
+                            <div class="full">
+                                <label>הערות</label>
+                                <div class="field-box" style="white-space:pre-wrap">{{ $customer->school?->notes ?? '—' }}</div>
+                            </div>
+                        </div>
+                    @endif
+                </div>
             </div>
         </div>
     @elseif ($activeTab === 'subscription')
@@ -1185,9 +1290,6 @@ class extends Component
                     </tbody>
                 </table>
                 </div>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-                    סימון "סופקה" הוא פעולה ידנית בלבד ואינה נגזרת משליחת חומרי לימוד. לאחר סימון התוכנית העשירית המנוי מסתיים אוטומטית ואינו מתחדש — חידוש מתבצע ביצירת עסקה חדשה.
-                </p>
 
                 {{-- ===== ביטול מנוי וחישוב קיזוז (US-010) ===== --}}
                 @if ($subscription->isActive())
@@ -1219,7 +1321,7 @@ class extends Component
                 @endif
             </div>
         @empty
-            <div class="card empty-state">אין ללקוחה זו מנוי — מנוי נפתח אוטומטית עם יצירת עסקה עבור תוכנית המנוי השנתי.</div>
+            <div class="card empty-state">אין ללקוחה זו מנוי.</div>
         @endforelse
     @elseif ($activeTab === 'deals')
         <x-business-error-banner :message="$dealError" />
@@ -1227,7 +1329,6 @@ class extends Component
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
                 <h3 style="margin:0">עסקאות הלקוחה</h3>
                 <x-modal trigger-label="+ עסקה חדשה" title="עסקה חדשה">
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">תוכנית אחת או מארז אחד בלבד לעסקה — רכישת כמה תוכניות יוצרת כמה עסקאות נפרדות.</p>
                     <form wire:submit="createDeal" class="form-grid">
                         <div class="full">
                             <label for="dealItem">תוכנית / מארז</label>
@@ -1334,7 +1435,6 @@ class extends Component
         <div class="cols2">
             <div class="card">
                 <h3>שליחת חומרים</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">השליחה מתבצעת באמצעות Smove — הקבצים אינם נשמרים במערכת לאחר השליחה.</p>
 
                 <form wire:submit="sendMaterials" class="form-grid">
                     <div class="full">
@@ -1388,7 +1488,6 @@ class extends Component
 
             <div class="card">
                 <h3>היסטוריית משלוחים</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שליחה חוזרת מתועדת כמשלוח חדש.</p>
                 @if ($this->materialDeliveries->isEmpty())
                     <div class="empty-state">אין עדיין משלוחי חומרי לימוד ללקוחה זו.</div>
                 @else

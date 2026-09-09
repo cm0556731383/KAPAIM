@@ -244,9 +244,6 @@ class extends Component
             {{-- ===== תוכן המסמך (Snapshot) ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>תוכן המסמך</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">
-                    תוכן קפוא בעת ההפקה — שינוי בתבנית אינו משפיע רטרואקטיבית על מסמך זה.
-                </p>
                 <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{!! $document->rendered_content !!}</div>
 
                 @if ($document->document_type === 'invoice' && $document->businessEntity)
@@ -258,9 +255,6 @@ class extends Component
             @if ($document->documentTemplate->fields->isNotEmpty())
                 <div class="card" style="margin-bottom:var(--sp-lg)">
                     <h3>שדות הטופס</h3>
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">
-                        הלקוחה ממלאת שדות אלו בעצמה בטופס המקוון שנשלח אליה; ניתן גם לערוך אותם כאן ישירות (למשל אם הפרטים נמסרו בטלפון).
-                    </p>
                     <x-business-error-banner :message="$fieldsError" />
                     <div class="form-grid">
                         @foreach ($document->documentTemplate->fields as $field)
@@ -329,9 +323,6 @@ class extends Component
                             הופק מול Summit בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span>.
                         </p>
                     @else
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">
-                            {{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }} מופקת ישירות מול Summit — אין טופס מקוון או PDF למסמך מסוג זה.
-                        </p>
                         <div style="margin-top:var(--sp-lg)">
                             <button type="button" wire:click="send('digital')" class="btn btn-primary">הפקה מול Summit</button>
                         </div>

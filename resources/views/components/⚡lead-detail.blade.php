@@ -742,10 +742,28 @@ class extends Component
                         <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטי בית ספר</button></div>
                     </form>
                 @else
-                    <div class="field"><div class="k">שם המוסד</div><div class="v">{{ $lead->school?->name ?? '— טרם הוזן —' }}</div></div>
-                    <div class="field"><div class="k">עיר</div><div class="v">{{ $lead->school?->city ?? '—' }}</div></div>
-                    <div class="field"><div class="k">טלפון</div><div class="v ltr-num">{{ $lead->school?->phone ?? '—' }}</div></div>
-                    <div class="field"><div class="k">דוא"ל</div><div class="v ltr-num">{{ $lead->school?->email ?? '—' }}</div></div>
+                    <div class="form-grid">
+                        <div class="full">
+                            <label>שם המוסד</label>
+                            <div class="field-box">{{ $lead->school?->name ?? '— טרם הוזן —' }}</div>
+                        </div>
+                        <div>
+                            <label>עיר</label>
+                            <div class="field-box">{{ $lead->school?->city ?? '—' }}</div>
+                        </div>
+                        <div>
+                            <label>טלפון</label>
+                            <div class="field-box ltr-num">{{ $lead->school?->phone ?? '—' }}</div>
+                        </div>
+                        <div>
+                            <label>דוא"ל</label>
+                            <div class="field-box ltr-num">{{ $lead->school?->email ?? '—' }}</div>
+                        </div>
+                        <div>
+                            <label>כתובת</label>
+                            <div class="field-box">{{ $lead->school?->address ?? '—' }}</div>
+                        </div>
+                    </div>
                 @endif
             </div>
 
@@ -831,9 +849,11 @@ class extends Component
                     <div class="full"><button type="submit" class="btn btn-primary">עדכון סטטוס</button></div>
                 </form>
             </div>
+        </div>
 
+        <div>
             {{-- ===== אנשי קשר ===== --}}
-            <div class="card">
+            <div class="card" style="margin-bottom:var(--sp-lg)">
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
                     <h3 style="margin:0">אנשי קשר</h3>
                     @if (! $editingContactId)
@@ -898,9 +918,7 @@ class extends Component
                     <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין אנשי קשר לבית ספר זה.</p>
                 @endforelse
             </div>
-        </div>
 
-        <div>
             {{-- ===== היסטוריית פעילות ו-Up Follow ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>היסטוריית פעילות ו-Up Follow</h3>

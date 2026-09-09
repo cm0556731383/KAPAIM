@@ -88,7 +88,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">לקוחות</h1>
-            <p class="text-text-secondary m-0">CUSTOMER — נוצרות אך ורק מהמרת ליד; ניהול כרטיס הלקוחה בכרטיס עצמו</p>
         </div>
     </div>
 

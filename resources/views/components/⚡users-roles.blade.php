@@ -96,7 +96,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">משתמשות והרשאות</h1>
-            <p class="text-text-secondary m-0">ב-MVP לבעלת העסק ולמזכירה גישה מלאה זהה. מנגנון ההרשאות תומך בהרחבה עתידית לתפקיד מוגבל בלי שינוי ארכיטקטורה.</p>
         </div>
     </div>
 

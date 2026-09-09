@@ -195,7 +195,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">חיפוש גלובלי</h1>
-            <p class="text-text-secondary m-0">חיפוש חוצה-מערכת לפי שם, טלפון או בית ספר</p>
         </div>
     </div>
 

@@ -314,3 +314,17 @@ td.mono { display: table-cell; }
 .modal-header h2 { margin: 0; }
 .modal-close { flex-shrink: 0; background: none; border: none; cursor: pointer; font-size: 22px; line-height: 1; color: var(--color-text-secondary); padding: 4px 10px; border-radius: var(--radius-control); }
 .modal-close:hover { background: var(--color-background); color: var(--color-text-primary); }
+
+/* A "view mode" field styled to match its own <input> exactly — so toggling
+   edit on/off never shifts the layout, only whether the box is editable. */
+.field-box {
+  font-size: var(--fs-small);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  color: var(--color-text-primary);
+  min-height: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}

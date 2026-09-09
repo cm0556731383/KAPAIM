@@ -97,11 +97,10 @@ class extends Component
     <div class="topbar">
         <div>
             <h1>רשימות תפוצה</h1>
-            <p style="color:var(--color-text-secondary); margin:0">כל פעולות הדיוור בפועל מתבצעות באמצעות Smove — המערכת מנהלת רק את השיוך (שלב 12).</p>
         </div>
     </div>
 
-    <div class="cols2">
+    <div>
         <div class="card">
             <h3>הרשימות במערכת</h3>
             <div class="table-scroll">
@@ -129,21 +128,6 @@ class extends Component
                 </tbody>
             </table>
             </div>
-        </div>
-
-        <div class="card">
-            <h3>עדכון אוטומטי — לא נדרשת תחזוקה ידנית</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל שינוי במצב העסקי מעדכן את השיוך ברשימות אוטומטית.</p>
-            <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:var(--sp-md); font-size:var(--fs-small)">
-                <li><b>ליד חדש</b> ← רשימה ראשית</li>
-                <li><b>רכישת תוכנית</b> ← רשימת התוכנית שנרכשה</li>
-                <li><b>רכישת מנוי</b> ← רשימת מנויים + רשימות התוכניות החודשיות בקטלוג</li>
-                <li><b>ביטול מנוי</b> ← הסרה ממנויים ומרשימות שטרם סופקו; השארה ברשימה הראשית ובמה שכבר סופק</li>
-                <li><b>ספק חדש</b> ← רשימת ספקים (שלב 11)</li>
-            </ul>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-lg); margin-bottom:0">
-                כל שיוך מקומי דוחף גם קריאה אמיתית ל-Smove (שלב 12) — עבור רשימה שטרם קיבלה מזהה Smove בטבלה משמאל, הקריאה נכשלת בלי לחסום את השיוך המקומי (רואים זאת ביומן הפעילות).
-            </p>
         </div>
     </div>
 </div>

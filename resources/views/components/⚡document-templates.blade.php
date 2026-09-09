@@ -259,12 +259,7 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">תבניות מסמכים</h1>
-            <p class="text-text-secondary m-0">הצעת מחיר · טופס הזמנה · חוזה · חשבונית</p>
         </div>
-    </div>
-
-    <div class="mb-8" style="display:flex; align-items:center; gap:10px; background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-        <strong>שינוי תבנית משפיע רק על מסמכים חדשים.</strong> מסמכים שכבר הופקו אינם משתנים בעקבות עריכת התבנית — לכן אין כאן אפשרות מחיקה, רק יצירה, עריכה והשבתה.
     </div>
 
     <section class="settings-section">

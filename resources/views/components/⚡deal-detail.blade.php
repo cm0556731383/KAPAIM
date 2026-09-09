@@ -470,9 +470,6 @@ class extends Component
             {{-- ===== פרטי המוצר הנמכר (Snapshot) ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>פרטי המוצר בעת המכירה</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">
-                    שם ומחיר קפואים למועד יצירת העסקה — ממשיכים להופיע כאן גם אם התוכנית/המארז החי שונה או הושבת בהמשך.
-                </p>
                 @if ($deal->program_id)
                     <div class="field"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
                     <div class="field"><div class="k">מחיר תוכנית (בעת המכירה)</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}</div></div>
@@ -499,7 +496,6 @@ class extends Component
                                 <option value="{{ $method->id }}">{{ $method->name }}</option>
                             @endforeach
                         </select>
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ניתן לשנות רק כל עוד לא התקבל תשלום בפועל עבור העסקה.</p>
                     </div>
                     <div class="full">
                         <label for="specialRequest">בקשת התאמה מיוחדת</label>
@@ -532,9 +528,6 @@ class extends Component
                         >עדכון סטטוס</button>
                     </div>
                 </form>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-                    ביטול עסקה הוא שינוי סטטוס בלבד — עסקה לעולם אינה נמחקת. עדכון סטטוס במקביל משתי משתמשות אינו דורס בשקט.
-                </p>
                 @if ($deal->completed_at)
                     <div class="field" style="margin-top:var(--sp-md)"><div class="k">הושלמה בתאריך</div><div class="v ltr-num">{{ $deal->completed_at->format('d/m/Y H:i') }}</div></div>
                 @endif
@@ -545,9 +538,6 @@ class extends Component
     {{-- ===== מסמכים (DOCUMENT) — build-plan 07 ===== --}}
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>מסמכים</h3>
-        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">
-            רצף עסקי מחייב: הצעת מחיר (אופציונלי) ← טופס הזמנה ← חוזה ← חשבונית. לא ניתן לדלג על שלב.
-        </p>
 
         <x-business-error-banner :message="$documentError" />
 
@@ -646,7 +636,6 @@ class extends Component
                     @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </div>
                 <div class="full"><button type="submit" class="btn btn-primary">סליקת אשראי מול Summit</button></div>
-                <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">הסכום נסלק בפועל מול Summit, ורק לאחר אישור הסליקה נרשם תשלום מקומי (PRD §1.4).</p>
             </form>
         @else
             <form wire:submit="recordPayment" class="form-grid" style="margin-bottom:var(--sp-lg)">
@@ -669,7 +658,6 @@ class extends Component
         @if ($deal->paymentMethod?->type === 'recurring')
             <div style="display:flex; gap:var(--sp-sm); align-items:center; margin-bottom:var(--sp-lg)">
                 <button type="button" wire:click="registerStandingOrder" class="btn btn-secondary">רישום הוראת קבע מול Summit</button>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">גבייה חודשית וקבלה אוטומטית לאחריה יתבצעו מרגע זה מול Summit.</p>
             </div>
         @endif
 
@@ -715,8 +703,5 @@ class extends Component
             </table>
             </div>
         @endif
-        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">
-            תשלום חלקי אינו סוגר את העסקה — היא מסומנת "שולמה" רק כשמלוא הסכום התקבל. קבלה עבור צ'ק מופקת רק לאחר פירעון בפועל, ולא יותר מקבלה אחת לכל תשלום.
-        </p>
     </div>
 </div>

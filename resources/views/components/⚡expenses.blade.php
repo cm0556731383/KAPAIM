@@ -122,7 +122,6 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">הוצאות</h1>
-            <p class="text-text-secondary m-0">רישום הוצאות ידני וזיהוי הוצאות שחסרה להן חשבונית</p>
         </div>
         <x-modal trigger-label="+ הוצאה חדשה" title="הוצאה חדשה">
             <form wire:submit="addExpense" class="form-grid">
@@ -163,9 +162,6 @@ class extends Component
                     <button type="submit" class="btn btn-primary">שמירת הוצאה</button>
                 </div>
             </form>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">
-                צירוף חשבונית מתבצע מרשימת ההוצאות למעלה, לאחר שמירת ההוצאה.
-            </p>
         </x-modal>
     </div>
 

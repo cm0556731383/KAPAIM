@@ -225,12 +225,7 @@ class extends Component
     <div class="topbar">
         <div>
             <h1 class="mb-0.5">קטלוג תוכניות ומארזים</h1>
-            <p class="text-text-secondary m-0">PROGRAM, BUNDLE — התוכניות והמארזים שניתן למכור ללקוחות</p>
         </div>
-    </div>
-
-    <div class="mb-8" style="display:flex; align-items:center; gap:10px; background: var(--color-primary-lighter); color: var(--color-primary-hover); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-        השבתת תוכנית חוסמת <strong>רכישה חדשה</strong> שלה בלבד — היא ממשיכה להופיע בעסקאות עבר כפי שהייתה.
     </div>
 
     <x-business-error-banner :message="$catalogError" />
@@ -243,7 +238,6 @@ class extends Component
                 <p class="hint">חודשיות, פרימיום, ותוכנית המנוי השנתי</p>
             </div>
             <x-modal trigger-label="+ תוכנית חדשה" title="תוכנית חדשה">
-                <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:-6px">מחיר חייב להיות גדול מ-0</p>
                 <form wire:submit="addProgram" class="form-grid">
                     <div class="full">
                         <label for="programName">שם</label>
@@ -293,9 +287,6 @@ class extends Component
             </table>
             </div>
         </div>
-        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-bottom: var(--sp-md)">
-            תוכניות פרימיום נמכרות <strong>לפי פנייה בלבד</strong> ואינן חלק משיווק חוזר אוטומטי. ללקוחה עם מנוי פעיל — הנחה אוטומטית של 10% על פרימיום.
-        </p>
     </section>
 
     {{-- ===== מארזים ===== --}}
@@ -303,7 +294,6 @@ class extends Component
         <div class="section-head">
             <div>
                 <h2>מארזים</h2>
-                <p class="hint">רכישה חד-פעמית עצמאית, לא נכללת בחישוב קיזוז מנוי</p>
             </div>
             <div style="display:flex; gap:var(--sp-sm)">
                 <x-modal trigger-label="+ מארז חדש" title="מארז חדש">
