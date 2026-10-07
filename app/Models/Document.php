@@ -760,12 +760,14 @@ class Document extends Model
         // again later, instead of a "sent" invoice that never went anywhere.
         if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
             $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+            // SUMIT emails the issued document itself, to the first recipient with a valid address.
+            $summitEmail = collect($recipients)->pluck('email')->first(fn ($email) => filled($email) && filter_var($email, FILTER_VALIDATE_EMAIL));
 
             $operations['summit'] = $runner->run(
                 'summit',
                 $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
                 'app_action',
-                fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
+                fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this, $summitEmail) : $summit->issueCreditNote($this, $summitEmail),
                 [
                     'document_id' => $this->id,
                     'deal_id' => $this->deal_id,

@@ -2,140 +2,319 @@
 
 namespace App\Services\Integrations;
 
+use App\Models\Contact;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\ExternalIntegrationSetting;
+use App\Models\ExternalOperation;
 use App\Models\Receipt;
+use App\Models\Subscription;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
- * Build-plan 12 — real HTTP wiring to Summit (invoices, receipts, credit
- * notes, credit-card charges, standing orders), gated entirely on
- * ExternalIntegrationSetting('summit'). Every call is expected to run inside
- * ExternalOperationRunner::run() — see that class's docblock for why a
- * failure here never blocks/rolls back the local record it accompanies
- * (FR-8.16-FR-8.18).
+ * Real HTTP wiring to SUMIT (formerly OfficeGuy) — invoices, receipts,
+ * credit notes, credit-card charges, standing orders — per SUMIT's own
+ * OpenAPI contract (app.sumit.co.il/swagger/v1/swagger.json, wired
+ * 2026-10-07). Gated entirely on ExternalIntegrationSetting('summit'). Every
+ * call is expected to run inside ExternalOperationRunner::run() — see that
+ * class's docblock for why a failure here never blocks/rolls back the local
+ * record it accompanies (FR-8.16-FR-8.18).
  *
- * Endpoint paths/payload shape below are a placeholder — no real Summit API
- * contract was available while building this stage (docs/prd.md §1.4 lists
- * only *what* Summit is used for, not its API). Once the business owner has
- * Summit's real API doc, only the methods below need updating; settings
- * storage, the "not configured yet" gate, and every call site stay the same.
+ * SUMIT's API shape: one fixed host, every call a POST with a JSON body
+ * carrying `Credentials: {CompanyID, APIKey}` (no auth header), and every
+ * response wrapped as `{Status, UserErrorMessage, TechnicalErrorDetails,
+ * Data}` where Status 0 = success — an HTTP 200 alone means nothing.
+ * Enum fields (document type, customer search mode, payment type) are sent
+ * as their integer values.
+ *
+ * The SUMIT customer is matched by ExternalIdentifier ("kapaim-customer-
+ * {id}") so every document for the same customer lands on one SUMIT card.
+ *
+ * Test mode (settings.test_mode): documents are created as SUMIT drafts and
+ * card/recurring charges are authorisation-only, so the business owner can
+ * try the connection against the real account without issuing real tax
+ * documents or moving money.
  */
 class SummitClient
 {
+    private const BASE_URL = 'https://api.sumit.co.il';
+
+    // Accounting_Typed_DocumentType
+    private const DOCUMENT_INVOICE = 0;
+    private const DOCUMENT_RECEIPT = 2;
+    private const DOCUMENT_CREDIT_INVOICE = 5;
+
+    // Accounting_Typed_CustomerSearchMode
+    private const SEARCH_BY_EXTERNAL_IDENTIFIER = 2;
+
+    // Accounting_Typed_DocumentPaymentType => the Details_* object SUMIT expects with it
+    private const PAYMENT_TYPES = [
+        'card' => [5, 'Details_CreditCard'],
+        'bank_transfer' => [3, 'Details_BankTransfer'],
+        'check' => [4, 'Details_Cheque'],
+        'cash' => [2, 'Details_Cash'],
+    ];
+    private const PAYMENT_GENERAL = [1, 'Details_General'];
+
     private ?ExternalIntegrationSetting $config = null;
 
     public function isConfigured(): bool
     {
         return $this->config()->is_active
-            && filled($this->setting('base_url'))
+            && filled($this->setting('company_id'))
             && filled($this->setting('api_key'));
     }
 
-    /** Called from Document::sendTo() the moment an invoice is sent (FR-4.15/FR-4.16). */
-    public function issueInvoice(Document $document): string
+    /** Defaults to ON until the business owner saves the settings with it turned off (same default as the settings screen). */
+    public function isTestMode(): bool
     {
-        $this->assertConfigured();
-
-        $response = $this->http()->post('/invoices', [
-            'reference' => "deal-{$document->deal_id}-document-{$document->id}",
-            'business_entity_id' => $document->business_entity_id,
-            'lines' => $document->lines->map(fn ($line) => [
-                'description' => $line->description,
-                'quantity' => (float) $line->quantity,
-                'unit_price' => (float) $line->unit_price,
-                'amount' => (float) $line->amount,
-            ])->all(),
-        ]);
-
-        return $this->referenceOrFail($response);
+        return (bool) ($this->setting('test_mode') ?? true);
     }
 
-    /** Called from Document::sendTo() for a sent credit note (FR-4.5/FR-8.12). */
-    public function issueCreditNote(Document $document): string
+    /**
+     * Read-only credentials check for the settings screen — asks SUMIT for
+     * today's VAT rate, which needs valid credentials but changes nothing.
+     */
+    public function verifyCredentials(): void
     {
-        $this->assertConfigured();
+        if (blank($this->setting('company_id')) || blank($this->setting('api_key'))) {
+            throw new RuntimeException('יש להזין מספר חברה ומפתח API של SUMIT.');
+        }
 
-        $response = $this->http()->post('/credit-notes', [
-            'reference' => "deal-{$document->deal_id}-document-{$document->id}",
-            'business_entity_id' => $document->business_entity_id,
-            'amount' => $document->totalAmount(),
-        ]);
-
-        return $this->referenceOrFail($response);
+        $this->dataOrFail($this->post('/accounting/general/getvatrate/', []));
     }
 
-    /** FR-4.23-FR-4.29: called from Receipt::issueFor(). */
+    /**
+     * Called from Document::sendTo() when an invoice is sent (FR-4.15/
+     * FR-4.16). SUMIT emails the issued invoice itself to $email.
+     */
+    public function issueInvoice(Document $document, ?string $email = null): string
+    {
+        $this->assertConfigured();
+        $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
+
+        $data = $this->dataOrFail($this->post('/accounting/documents/create/', [
+            'Details' => $this->documentDetails(self::DOCUMENT_INVOICE, $document->deal, $email),
+            'Items' => $this->documentItems($document),
+            'VATIncluded' => true,
+        ]));
+
+        return (string) $data['DocumentID'];
+    }
+
+    /** Called from Document::sendTo() for a sent credit note (FR-4.5/FR-8.12), linked to the deal's SUMIT invoice. */
+    public function issueCreditNote(Document $document, ?string $email = null): string
+    {
+        $this->assertConfigured();
+        $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
+
+        $data = $this->dataOrFail($this->post('/accounting/documents/create/', array_filter([
+            'Details' => $this->documentDetails(self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
+            'Items' => $this->documentItems($document),
+            'VATIncluded' => true,
+            'OriginalDocumentID' => $this->sumitDocumentId($document->deal->issuedInvoice()),
+        ], fn ($v) => $v !== null)));
+
+        return (string) $data['DocumentID'];
+    }
+
+    /**
+     * FR-4.23-FR-4.29: called from Receipt::issueFor(). A receipt for a real
+     * payment records that payment's amount and method; a "receipt before
+     * payment" (no payment yet) is issued for the invoice total.
+     */
     public function issueReceipt(Receipt $receipt): string
     {
         $this->assertConfigured();
+        $receipt->loadMissing('payment.paymentMethod', 'document.lines', 'document.deal.customer.school', 'document.deal.customer.contacts');
 
-        $response = $this->http()->post('/receipts', [
-            'reference' => "receipt-{$receipt->id}-invoice-{$receipt->document_id}",
-            'payment_id' => $receipt->payment_id,
-            'issued_before_payment' => $receipt->issued_before_payment,
-        ]);
+        $invoice = $receipt->document;
+        $amount = $receipt->payment ? (float) $receipt->payment->amount : $invoice->totalAmount();
+        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$receipt->payment?->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
-        return $this->referenceOrFail($response);
+        $data = $this->dataOrFail($this->post('/accounting/documents/create/', array_filter([
+            'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, null),
+            'Payments' => [[
+                'Amount' => $amount,
+                'Type' => $paymentType,
+                $detailsKey => (object) [],
+            ]],
+            'OriginalDocumentID' => $this->sumitDocumentId($invoice),
+        ], fn ($v) => $v !== null)));
+
+        return (string) $data['DocumentID'];
     }
 
-    /** Explicit user-triggered action — Deal::chargeCardViaSummit(). */
+    /**
+     * Explicit user-triggered action — Deal::chargeCardViaSummit(). Charges
+     * the card already saved on the customer's SUMIT card (this app never
+     * handles card numbers). SUMIT's automatic invoice/receipt is suppressed:
+     * this app issues those itself through its own invoice/receipt flow.
+     */
     public function chargeCard(Deal $deal, float $amount): string
     {
         $this->assertConfigured();
+        $deal->loadMissing('customer.school', 'customer.contacts');
 
-        $response = $this->http()->post('/charges', [
-            'reference' => "deal-{$deal->id}",
-            'amount' => $amount,
-        ]);
+        $data = $this->dataOrFail($this->post('/billing/payments/charge/', [
+            'Customer' => $this->customer($deal),
+            'Items' => [[
+                'Item' => ['Name' => $this->itemName($deal)],
+                'Quantity' => 1,
+                'UnitPrice' => $amount,
+            ]],
+            'VATIncluded' => true,
+            'PreventDocumentCreation' => true,
+            'AuthoriseOnly' => $this->isTestMode() ?: null,
+        ]));
 
-        return $this->referenceOrFail($response);
+        $payment = $data['Payment'] ?? [];
+
+        if (! ($payment['ValidPayment'] ?? false)) {
+            throw new RuntimeException('החיוב נדחה: '.($payment['StatusDescription'] ?? 'ללא פירוט'));
+        }
+
+        return (string) ($payment['ID'] ?? '');
     }
 
     /**
      * Explicit user-triggered action — Deal::registerStandingOrderWithSummit().
-     * $deal->id is sent as Summit's own merchant reference so the later
-     * standing-order-collected webhook can echo it straight back to us — see
-     * that webhook route's docblock in routes/web.php for this assumption.
+     * Sets up a monthly recurring charge on the customer's saved SUMIT payment
+     * method: the subscription's monthly payment, for its number of
+     * deliveries (or the deal amount once, monthly, with no subscription).
      */
     public function registerStandingOrder(Deal $deal): string
     {
         $this->assertConfigured();
+        $deal->loadMissing('customer.school', 'customer.contacts', 'subscription');
 
-        $response = $this->http()->post('/standing-orders', [
-            'merchant_reference' => (string) $deal->id,
-            'monthly_amount' => $deal->subscription?->monthlyPayment() ?? (float) $deal->agreed_amount,
-        ]);
+        $subscription = $deal->subscription;
 
-        return $this->referenceOrFail($response);
+        $data = $this->dataOrFail($this->post('/billing/recurring/charge/', [
+            'Customer' => $this->customer($deal),
+            'Items' => [[
+                'Item' => ['Name' => $this->itemName($deal)],
+                'Quantity' => 1,
+                'UnitPrice' => $subscription ? $subscription->monthlyPayment() : (float) $deal->agreed_amount,
+                'Duration_Months' => 1,
+                'Recurrence' => $subscription ? Subscription::TOTAL_DELIVERIES : 1,
+                'Description' => "עסקה #{$deal->id}",
+            ]],
+            'VATIncluded' => true,
+            'AuthoriseOnly' => $this->isTestMode() ?: null,
+        ]));
+
+        return implode(',', (array) ($data['RecurringCustomerItemIDs'] ?? []));
     }
 
-    private function referenceOrFail(Response $response): string
+    private function documentDetails(int $type, Deal $deal, ?string $email): array
     {
-        if ($response->failed()) {
-            throw new RuntimeException('Summit החזירה שגיאה: '.($response->json('message') ?? $response->status()));
+        return array_filter([
+            'Type' => $type,
+            'Customer' => $this->customer($deal),
+            'Description' => $this->itemName($deal),
+            'IsDraft' => $this->isTestMode() ?: null,
+            'SendByEmail' => $email ? ['EmailAddress' => $email, 'Original' => true] : null,
+        ], fn ($v) => $v !== null);
+    }
+
+    private function documentItems(Document $document): array
+    {
+        return $document->lines->map(fn ($line) => [
+            'Item' => ['Name' => $line->description],
+            'Quantity' => (float) $line->quantity,
+            'UnitPrice' => (float) $line->unit_price,
+            'TotalPrice' => (float) $line->amount,
+        ])->values()->all();
+    }
+
+    /** The SUMIT customer for $deal — the customer card's billing details, matched by this app's own id. */
+    private function customer(Deal $deal): array
+    {
+        $customer = $deal->customer;
+        $school = $customer?->school;
+        $contacts = $customer?->contacts ?? collect();
+        $contact = $contacts->first(fn (Contact $c) => $c->is_accounting_contact && filled($c->email))
+            ?? $contacts->first(fn (Contact $c) => $c->is_primary && filled($c->email));
+
+        return array_filter([
+            'ExternalIdentifier' => 'kapaim-customer-'.$customer?->id,
+            'SearchMode' => self::SEARCH_BY_EXTERNAL_IDENTIFIER,
+            'Name' => $school?->invoice_name ?: ($school?->name ?? 'לקוחה #'.$customer?->id),
+            'CompanyNumber' => $school?->business_number,
+            'EmailAddress' => $contact?->email ?? $school?->email,
+            'Phone' => $school?->phone ?? $contact?->phone,
+            'City' => $school?->city,
+            'Address' => $school?->address,
+        ], fn ($v) => filled($v));
+    }
+
+    private function itemName(Deal $deal): string
+    {
+        return $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
+    }
+
+    /** SUMIT's DocumentID for a document this app already issued there (the issue_invoice operation's reference). */
+    private function sumitDocumentId(?Document $document): ?int
+    {
+        if (! $document) {
+            return null;
         }
 
-        return (string) ($response->json('id') ?? $response->json('reference') ?? (string) now()->timestamp);
+        $reference = ExternalOperation::where('document_id', $document->id)
+            ->where('system', 'summit')
+            ->where('operation_type', 'issue_invoice')
+            ->where('status', ExternalOperation::STATUS_SUCCESS)
+            ->latest('id')
+            ->value('external_reference');
+
+        return ctype_digit((string) $reference) ? (int) $reference : null;
+    }
+
+    private function post(string $path, array $body): Response
+    {
+        return $this->http()->post($path, array_merge($body, [
+            'Credentials' => [
+                'CompanyID' => (int) $this->setting('company_id'),
+                'APIKey' => (string) $this->setting('api_key'),
+            ],
+        ]));
+    }
+
+    /** Unwraps SUMIT's {Status, UserErrorMessage, TechnicalErrorDetails, Data} envelope — Status 0 is the only success. */
+    private function dataOrFail(Response $response): array
+    {
+        if ($response->failed()) {
+            throw new RuntimeException('SUMIT החזירה שגיאה ('.$response->status().'): '.(trim($response->body()) ?: 'ללא פירוט'));
+        }
+
+        $status = $response->json('Status');
+
+        if ($status !== 0 && $status !== '0' && ! str_starts_with((string) $status, 'Success')) {
+            $message = $response->json('UserErrorMessage') ?: $response->json('TechnicalErrorDetails') ?: 'שגיאה לא מפורטת';
+
+            throw new RuntimeException('SUMIT: '.$message);
+        }
+
+        return (array) ($response->json('Data') ?? []);
     }
 
     private function assertConfigured(): void
     {
         if (! $this->isConfigured()) {
-            throw new RuntimeException('Summit אינה מוגדרת עדיין — יש להזין כתובת שרת ומפתח API בהגדרות המערכת ולהפעיל את האינטגרציה.');
+            throw new RuntimeException('SUMIT אינה מוגדרת עדיין — יש להזין מספר חברה ומפתח API בהגדרות המערכת ולהפעיל את האינטגרציה.');
         }
     }
 
     private function http(): PendingRequest
     {
-        return Http::baseUrl((string) $this->setting('base_url'))
-            ->withToken((string) $this->setting('api_key'))
+        return Http::baseUrl(self::BASE_URL)
             ->acceptJson()
-            ->timeout(15);
+            ->asJson()
+            ->timeout(30);
     }
 
     private function setting(string $key): mixed

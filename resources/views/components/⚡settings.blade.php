@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Console\Commands\ProcessMaterialReminders;
 use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
@@ -9,6 +10,7 @@ use App\Models\LeadSource;
 use App\Models\PaymentMethod;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -18,6 +20,8 @@ new
 #[Layout('layouts.app', ['title' => 'הגדרות מערכת — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     // ===== סטטוסים (STATUS_DEFINITION) =====
     public string $statusScope = 'lead';
     public string $statusName = '';
@@ -74,8 +78,9 @@ class extends Component
     public string $smoveWebhookSecret = '';
     public string $smoveMaterialReminderHours = '48';
 
-    public string $summitBaseUrl = '';
+    public string $summitCompanyId = '';
     public string $summitApiKey = '';
+    public bool $summitTestMode = true;
     public string $summitWebhookSecret = '';
 
     public string $landingPageWebhookSecret = '';
@@ -90,8 +95,10 @@ class extends Component
         $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
 
         $summit = ExternalIntegrationSetting::where('system', 'summit')->first()?->settings ?? [];
-        $this->summitBaseUrl = (string) ($summit['base_url'] ?? '');
+        $this->summitCompanyId = (string) ($summit['company_id'] ?? '');
         $this->summitApiKey = (string) ($summit['api_key'] ?? '');
+        // Test mode defaults ON until the business owner explicitly turns it off.
+        $this->summitTestMode = (bool) ($summit['test_mode'] ?? true);
         $this->summitWebhookSecret = (string) ($summit['webhook_secret'] ?? '');
 
         $landingPage = ExternalIntegrationSetting::where('system', 'landing_page')->first()?->settings ?? [];
@@ -128,19 +135,38 @@ class extends Component
     public function saveSummitSettings(ActivityLogger $activityLogger): void
     {
         $data = $this->validate([
-            'summitBaseUrl' => ['nullable', 'url', 'max:255'],
+            'summitCompanyId' => ['nullable', 'digits_between:1,18'],
             'summitApiKey' => ['nullable', 'string', 'max:255'],
+            'summitTestMode' => ['boolean'],
             'summitWebhookSecret' => ['nullable', 'string', 'max:255'],
-        ], [], ['summitBaseUrl' => 'כתובת שרת']);
+        ], [], ['summitCompanyId' => 'מספר חברה']);
 
         ExternalIntegrationSetting::firstOrCreate(['system' => 'summit'], ['is_active' => false, 'settings' => []])->update(['settings' => [
-            'base_url' => $data['summitBaseUrl'] ?: null,
+            'company_id' => $data['summitCompanyId'] ?: null,
             'api_key' => $data['summitApiKey'] ?: null,
+            'test_mode' => (bool) $data['summitTestMode'],
             'webhook_secret' => $data['summitWebhookSecret'] ?: null,
         ]]);
 
-        $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור Summit');
+        $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור SUMIT'.($data['summitTestMode'] ? ' (מצב בדיקה)' : ''));
         unset($this->integrations);
+        $this->notifySuccess('הגדרות SUMIT נשמרו.');
+    }
+
+    /** Read-only credentials check against SUMIT (SummitClient::verifyCredentials()) — saves first so it tests what's on screen. */
+    public function testSummitConnection(ActivityLogger $activityLogger, SummitClient $summit): void
+    {
+        $this->saveSummitSettings($activityLogger);
+
+        try {
+            $summit->verifyCredentials();
+        } catch (\Throwable $e) {
+            $this->addError('summitConnection', 'החיבור ל-SUMIT נכשל: '.$e->getMessage());
+
+            return;
+        }
+
+        $this->notifySuccess('החיבור ל-SUMIT תקין — מספר החברה ומפתח ה-API אושרו.');
     }
 
     public function saveLandingPageSettings(ActivityLogger $activityLogger): void
@@ -814,22 +840,30 @@ class extends Component
             </div>
 
             <div class="card">
-                <h3>Summit — כתובת שרת ומפתח</h3>
+                <h3>SUMIT (סאמיט) — מספר חברה ומפתח API</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">שני הנתונים נמצאים ב-SUMIT בתפריט API ← מפתחות API. יש להזין את המפתח הפרטי.</p>
                 <form wire:submit="saveSummitSettings" class="form-grid">
                     <div class="full">
-                        <label for="summitBaseUrl">כתובת שרת (Base URL)</label>
-                        <input type="text" id="summitBaseUrl" wire:model="summitBaseUrl" class="ltr-num" dir="ltr" placeholder="https://api.summit.co.il">
-                        @error('summitBaseUrl') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        <label for="summitCompanyId">מספר חברה (Company ID)</label>
+                        <input type="text" id="summitCompanyId" wire:model="summitCompanyId" class="ltr-num" dir="ltr" inputmode="numeric">
+                        @error('summitCompanyId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full">
-                        <label for="summitApiKey">מפתח API</label>
+                        <label for="summitApiKey">מפתח API (פרטי)</label>
                         <input type="password" id="summitApiKey" wire:model="summitApiKey" class="ltr-num" dir="ltr">
+                    </div>
+                    <div class="full">
+                        <span class="checkbox-row"><input type="checkbox" id="summitTestMode" wire:model="summitTestMode"><label for="summitTestMode" style="margin:0">מצב בדיקה — מסמכים יופקו ב-SUMIT כטיוטה, וחיובי אשראי יבוצעו כבדיקת אישור בלבד (ללא חיוב בפועל)</label></span>
                     </div>
                     <div class="full">
                         <label for="summitWebhookSecret">סוד Webhook (לגבייה אוטומטית בהוראת קבע)</label>
                         <input type="password" id="summitWebhookSecret" wire:model="summitWebhookSecret" class="ltr-num" dir="ltr">
                     </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">שמירת הגדרות Summit</button></div>
+                    <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                        <button type="submit" class="btn btn-primary">שמירת הגדרות SUMIT</button>
+                        <button type="button" wire:click="testSummitConnection" class="btn btn-secondary">בדיקת חיבור</button>
+                    </div>
+                    @error('summitConnection') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </form>
             </div>
         </div>
