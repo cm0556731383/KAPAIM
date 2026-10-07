@@ -298,7 +298,7 @@ class DashboardSummary
         return $this->paidDeals()
             ->get()
             ->filter(function (Deal $deal) {
-                $invoice = $deal->documents->firstWhere('document_type', 'invoice');
+                $invoice = $deal->issuedInvoice();
 
                 return $invoice && ! Receipt::where('document_id', $invoice->id)->exists();
             })

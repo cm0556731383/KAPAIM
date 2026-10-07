@@ -409,7 +409,9 @@ class PaymentsCollectionsTest extends TestCase
         $contract = Document::generateFor($deal, $this->createTemplate('contract'));
         $contract->markSigned();
 
-        Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
+        $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
+        $invoice->addLine('שורת בדיקה', (float) $deal->agreed_amount);
+        $invoice->update(['sent_at' => now()]); // issued — see Deal::issuedInvoice()
 
         return $deal;
     }

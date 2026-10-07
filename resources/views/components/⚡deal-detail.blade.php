@@ -672,7 +672,7 @@ class extends Component
         @endif
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg)">
-            <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($this->documents->where('document_type', 'invoice')->isEmpty())>הפקת קבלה לפני תשלום</button>
+            <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($deal->issuedInvoice() === null)>הפקת קבלה לפני תשלום</button>
         </div>
 
         @if ($this->payments->isEmpty())

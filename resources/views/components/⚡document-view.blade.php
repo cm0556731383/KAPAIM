@@ -191,14 +191,14 @@ class extends Component
 
         $this->document->refresh()->load('recipients');
 
-        if ($operations['smove']?->status === ExternalOperation::STATUS_FAILED) {
-            $this->notifyWarning('המסמך נשלח, אך שליחת המייל דרך Smove נכשלה — ראו יומן פעילות.');
+        if ($operations['summit']?->status === ExternalOperation::STATUS_FAILED) {
+            $this->sendError = 'ההפקה מול Summit נכשלה, ולכן המסמך לא נשלח ונשאר טיוטה: '.$operations['summit']->error_message;
 
             return;
         }
 
-        if ($operations['summit']?->status === ExternalOperation::STATUS_FAILED) {
-            $this->notifyWarning('המסמך נשלח, אך ההפקה מול Summit נכשלה — ראו יומן פעילות.');
+        if ($operations['smove']?->status === ExternalOperation::STATUS_FAILED) {
+            $this->notifyWarning('המסמך נשלח, אך שליחת המייל דרך Smove נכשלה — ראו יומן פעילות.');
 
             return;
         }

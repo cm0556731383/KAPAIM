@@ -498,6 +498,28 @@ class ExternalIntegrationsTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), '/invoices'));
     }
 
+    public function test_an_invoice_whose_summit_issuance_fails_stays_an_unsent_draft(): void
+    {
+        // No Summit setting at all — exactly the "not configured yet" failure.
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+
+        $operations = $invoice->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertSame(ExternalOperation::STATUS_FAILED, $operations['summit']->status);
+        $this->assertNull($invoice->fresh()->sent_at);
+        $this->assertSame(0, $invoice->recipients()->count());
+        $this->assertNull($deal->fresh()->issuedInvoice());
+    }
+
     /**
      * An invoice/credit note is issued to Summit only — never emailed via
      * Smove (no online sign form or PDF exists for these two types, unlike
@@ -834,7 +856,9 @@ class ExternalIntegrationsTest extends TestCase
         $contract = Document::generateFor($deal, $this->createTemplate('contract'));
         $contract->markSigned();
 
-        Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
+        $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
+        $invoice->addLine('שורת בדיקה', (float) $deal->agreed_amount);
+        $invoice->update(['sent_at' => now()]); // issued — see Deal::issuedInvoice()
 
         return $deal->fresh();
     }

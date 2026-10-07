@@ -325,6 +325,26 @@ class SubscriptionsTest extends TestCase
         $subscription->fresh()->generateCreditNote();
     }
 
+    public function test_monthly_payment_counts_only_an_issued_invoice_with_an_amount(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 2000);
+        $this->assertEquals(200, $subscription->monthlyPayment());
+
+        $this->giveDealAnInvoice($subscription->deal);
+        $invoice = $subscription->deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->lines()->update(['amount' => 1500]);
+        $this->assertEquals(150, $subscription->fresh()->monthlyPayment());
+
+        // Never sent (or Summit failed) — not an issued invoice.
+        $invoice->update(['sent_at' => null]);
+        $this->assertEquals(200, $subscription->fresh()->monthlyPayment());
+
+        // Sent but empty — not an issued invoice either.
+        $invoice->update(['sent_at' => now()]);
+        $invoice->lines()->delete();
+        $this->assertEquals(200, $subscription->fresh()->monthlyPayment());
+    }
+
     public function test_credit_note_generation_succeeds_once_an_invoice_exists(): void
     {
         $this->createTemplate('credit_note');
@@ -488,6 +508,7 @@ class SubscriptionsTest extends TestCase
 
         $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
         $invoice->addLine('שורת בדיקה', (float) $deal->agreed_amount);
+        $invoice->update(['sent_at' => now()]); // issued — see Deal::issuedInvoice()
     }
 
     private function userWithOnlyCustomersPermission(): User

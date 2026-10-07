@@ -266,9 +266,7 @@ class Document extends Model
         }
 
         if ($documentType === 'credit_note') {
-            $hasInvoice = self::where('deal_id', $deal->id)->where('document_type', 'invoice')->exists();
-
-            if (! $hasInvoice) {
+            if (! $deal->issuedInvoice()) {
                 throw new RuntimeException('לא ניתן להפיק חשבונית זיכוי לעסקה שלא הופקה עבורה חשבונית.');
             }
         }
@@ -293,7 +291,7 @@ class Document extends Model
             throw new RuntimeException('לא נמצאה תבנית פעילה עבור חשבונית זיכוי — יש להגדיר תבנית תחילה במסך תבניות מסמכים.');
         }
 
-        $invoice = $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
+        $invoice = $deal->issuedInvoice();
 
         $document = self::generateFor($deal, $template, 'digital', $invoice?->business_entity_id);
 
@@ -754,6 +752,32 @@ class Document extends Model
             throw new RuntimeException('יש לבחור לפחות נמען אחד לפני השליחה.');
         }
 
+        $operations = ['smove' => null, 'summit' => null];
+
+        // An invoice/credit note is delivered by Summit itself, so it only
+        // counts as sent once Summit accepted it — a failure (e.g. Summit
+        // not configured yet) leaves it an unsent draft that can be sent
+        // again later, instead of a "sent" invoice that never went anywhere.
+        if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+
+            $operations['summit'] = $runner->run(
+                'summit',
+                $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
+                'app_action',
+                fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
+                [
+                    'document_id' => $this->id,
+                    'deal_id' => $this->deal_id,
+                    'description' => "הפקת {$typeLabel} מול Summit עבור עסקה #{$this->deal_id}",
+                ],
+            );
+
+            if ($operations['summit']->status === ExternalOperation::STATUS_FAILED) {
+                return $operations;
+            }
+        }
+
         $now = now();
 
         foreach ($recipients as $recipient) {
@@ -780,8 +804,6 @@ class Document extends Model
             fn (array $r) => ! empty($r['email']) && filter_var($r['email'], FILTER_VALIDATE_EMAIL),
         ));
 
-        $operations = ['smove' => null, 'summit' => null];
-
         if (! empty($emailRecipients) && ! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
             $intro = $format === 'pdf'
                 ? "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שהוכן עבורך."
@@ -807,20 +829,6 @@ class Document extends Model
                     'document_id' => $this->id,
                     'deal_id' => $this->deal_id,
                     'description' => "שליחת {$typeLabel} במייל עבור עסקה #{$this->deal_id}",
-                ],
-            );
-        }
-
-        if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
-            $operations['summit'] = $runner->run(
-                'summit',
-                $this->document_type === 'invoice' ? 'issue_invoice' : 'issue_credit_note',
-                'app_action',
-                fn () => $this->document_type === 'invoice' ? $summit->issueInvoice($this) : $summit->issueCreditNote($this),
-                [
-                    'document_id' => $this->id,
-                    'deal_id' => $this->deal_id,
-                    'description' => "הפקת {$typeLabel} מול Summit עבור עסקה #{$this->deal_id}",
                 ],
             );
         }

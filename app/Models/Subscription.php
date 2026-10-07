@@ -121,7 +121,7 @@ class Subscription extends Model
             return (float) $this->monthly_payment_override;
         }
 
-        $invoice = $this->deal->documents()->where('document_type', 'invoice')->latest('id')->first();
+        $invoice = $this->deal->issuedInvoice();
         $base = $invoice ? $invoice->totalAmount() : (float) $this->agreed_price;
 
         return round($base / self::TOTAL_DELIVERIES, 2);

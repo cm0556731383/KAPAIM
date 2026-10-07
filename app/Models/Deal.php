@@ -98,6 +98,23 @@ class Deal extends Model
     }
 
     /**
+     * The deal's latest invoice that was actually issued — sent (which,
+     * for an invoice, only happens once Summit accepted it; see
+     * Document::sendTo()) and with a real amount. A draft, an empty invoice,
+     * or one whose Summit issuance failed doesn't count as invoiced anywhere:
+     * monthly payment, receipts, credit notes, the dashboard.
+     */
+    public function issuedInvoice(): ?Document
+    {
+        return $this->documents()
+            ->where('document_type', 'invoice')
+            ->whereNotNull('sent_at')
+            ->get()
+            ->filter(fn (Document $invoice) => $invoice->totalAmount() > 0)
+            ->last();
+    }
+
+    /**
      * Build-plan 08: every recorded payment against this deal — see
      * recordPayment() below, the only place a Payment row is ever created.
      */

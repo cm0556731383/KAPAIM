@@ -59,10 +59,10 @@ class Receipt extends Model
      */
     public static function issueFor(Deal $deal, ?Payment $payment, ExternalOperationRunner $runner, SummitClient $summit): self
     {
-        $invoice = $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
+        $invoice = $deal->issuedInvoice();
 
         if (! $invoice) {
-            throw new RuntimeException('לא ניתן להפיק קבלה לעסקה שאין לה חשבונית.');
+            throw new RuntimeException('לא ניתן להפיק קבלה לעסקה שלא הופקה עבורה חשבונית (חשבונית שנשלחה בהצלחה ויש בה סכום).');
         }
 
         if ($payment) {
