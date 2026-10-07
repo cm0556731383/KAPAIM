@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\FollowUp;
 use App\Models\Lead;
@@ -53,8 +54,9 @@ class extends Component
     public string $selectedStatusId = '';
     public string $selectedSubStatus = '';
 
-    // ===== תוכניות מבוקשות =====
-    public string $programToAttach = '';
+    // ===== תוכניות מבוקשות (תוכניות ומארזים) =====
+    /** "program:{id}" or "bundle:{id}" — one picker for both, same encoding as the customer card's new-deal form. */
+    public string $itemToAttach = '';
 
     // ===== אנשי קשר =====
     public string $contactName = '';
@@ -284,24 +286,35 @@ class extends Component
         $this->notifySuccess("סטטוס הליד עודכן ל\"{$newStatus->name}\".");
     }
 
-    // ----- תוכניות מבוקשות (LEAD }o--o{ PROGRAM) -----
+    // ----- תוכניות מבוקשות (LEAD }o--o{ PROGRAM, LEAD }o--o{ BUNDLE) -----
 
-    public function attachProgram(ActivityLogger $activityLogger): void
+    public function attachItem(ActivityLogger $activityLogger): void
     {
-        $data = $this->validate(['programToAttach' => ['required', 'exists:programs,id']], [], ['programToAttach' => 'תוכנית']);
+        $this->validate(
+            ['itemToAttach' => ['required', 'regex:/^(program|bundle):\d+$/']],
+            ['itemToAttach.regex' => 'יש לבחור תוכנית או מארז מהרשימה.'],
+            ['itemToAttach' => 'תוכנית / מארז'],
+        );
 
-        if ($this->lead->interestedPrograms()->where('programs.id', $data['programToAttach'])->exists()) {
-            $this->reset('programToAttach');
+        [$type, $id] = explode(':', $this->itemToAttach, 2);
+        $item = $type === 'program' ? Program::find($id) : Bundle::find($id);
+
+        if (! $item) {
+            $this->addError('itemToAttach', 'הפריט שנבחר לא נמצא.');
 
             return;
         }
 
-        $this->lead->interestedPrograms()->attach($data['programToAttach']);
-        $program = Program::find($data['programToAttach']);
+        $relation = $type === 'program' ? $this->lead->interestedPrograms() : $this->lead->interestedBundles();
 
-        $activityLogger->log('lead.program_interest_added', "התעניינות בתוכנית \"{$program?->name}\" נוספה לליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+        if (! $relation->whereKey($item->id)->exists()) {
+            $relation->attach($item->id);
 
-        $this->reset('programToAttach');
+            $label = $type === 'program' ? 'בתוכנית' : 'במארז';
+            $activityLogger->log("lead.{$type}_interest_added", "התעניינות {$label} \"{$item->name}\" נוספה לליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+        }
+
+        $this->reset('itemToAttach');
         $this->lead->refresh();
     }
 
@@ -311,6 +324,16 @@ class extends Component
         $this->lead->interestedPrograms()->detach($programId);
 
         $activityLogger->log('lead.program_interest_removed', "התעניינות בתוכנית \"{$program?->name}\" הוסרה מליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+
+        $this->lead->refresh();
+    }
+
+    public function removeBundle(int $bundleId, ActivityLogger $activityLogger): void
+    {
+        $bundle = Bundle::find($bundleId);
+        $this->lead->interestedBundles()->detach($bundleId);
+
+        $activityLogger->log('lead.bundle_interest_removed', "התעניינות במארז \"{$bundle?->name}\" הוסרה מליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
 
         $this->lead->refresh();
     }
@@ -634,6 +657,14 @@ class extends Component
     }
 
     #[Computed]
+    public function availableBundles()
+    {
+        $attachedIds = $this->lead->interestedBundles()->pluck('bundles.id');
+
+        return Bundle::where('is_active', true)->whereNotIn('id', $attachedIds)->orderBy('name')->get();
+    }
+
+    #[Computed]
     public function leadStatuses()
     {
         return StatusDefinition::where('scope', 'lead')->where('is_active', true)->orderBy('sort_order')->get();
@@ -808,21 +839,37 @@ class extends Component
 
                 <h3 style="margin-top:var(--sp-lg)">תוכניות מבוקשות</h3>
                 <div class="chip-list" style="margin-bottom:var(--sp-md)">
-                    @forelse ($lead->interestedPrograms as $program)
+                    @foreach ($lead->interestedPrograms as $program)
                         <span class="chip">{{ $program->name }} <button type="button" wire:click="removeProgram({{ $program->id }})" style="background:none;border:0;cursor:pointer;color:inherit;font-weight:700;padding:0 0 0 4px" title="הסרה">×</button></span>
-                    @empty
+                    @endforeach
+                    @foreach ($lead->interestedBundles as $bundle)
+                        <span class="chip">מארז: {{ $bundle->name }} <button type="button" wire:click="removeBundle({{ $bundle->id }})" style="background:none;border:0;cursor:pointer;color:inherit;font-weight:700;padding:0 0 0 4px" title="הסרה">×</button></span>
+                    @endforeach
+                    @if ($lead->interestedPrograms->isEmpty() && $lead->interestedBundles->isEmpty())
                         <span class="text-text-secondary" style="font-size:var(--fs-caption)">— אין תוכניות מבוקשות —</span>
-                    @endforelse
+                    @endif
                 </div>
-                <form wire:submit="attachProgram" style="display:flex; gap:var(--sp-sm)">
-                    <select wire:model="programToAttach" style="flex:1">
-                        <option value="">בחרו תוכנית</option>
-                        @foreach ($this->availablePrograms as $program)
-                            <option value="{{ $program->id }}">{{ $program->name }}</option>
-                        @endforeach
+                <form wire:submit="attachItem" style="display:flex; gap:var(--sp-sm)">
+                    <select wire:model="itemToAttach" style="flex:1">
+                        <option value="">בחרו תוכנית או מארז</option>
+                        @if ($this->availablePrograms->isNotEmpty())
+                            <optgroup label="תוכניות">
+                                @foreach ($this->availablePrograms as $program)
+                                    <option value="program:{{ $program->id }}">{{ $program->name }}</option>
+                                @endforeach
+                            </optgroup>
+                        @endif
+                        @if ($this->availableBundles->isNotEmpty())
+                            <optgroup label="מארזים">
+                                @foreach ($this->availableBundles as $bundle)
+                                    <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }}</option>
+                                @endforeach
+                            </optgroup>
+                        @endif
                     </select>
                     <button type="submit" class="btn btn-secondary">הוספה</button>
                 </form>
+                @error('itemToAttach') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>
 
             {{-- ===== סטטוס ===== --}}

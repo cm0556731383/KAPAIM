@@ -134,6 +134,7 @@ class extends Component
         </div>
     </div>
 
+    <div style="margin-bottom:var(--sp-sm)"><span class="subscription-legend">מסגרת = לקוחה מנויה</span></div>
     <div class="card" style="padding:0; overflow:hidden">
         <div class="table-scroll">
         <table>
@@ -152,7 +153,7 @@ class extends Component
                         $primaryContact = $customer->contacts->firstWhere('is_primary', true);
                         $hasActiveSubscription = $customer->subscriptions->first(fn ($s) => $s->status?->name === \App\Models\Subscription::ACTIVE_STATUS_NAME) !== null;
                     @endphp
-                    <tr class="row-link" onclick="window.location='{{ route('customer-detail', $customer) }}'">
+                    <tr class="row-link {{ $hasActiveSubscription ? 'is-subscription' : '' }}" @if ($hasActiveSubscription) title="לקוחה מנויה" @endif onclick="window.location='{{ route('customer-detail', $customer) }}'">
                         <td>{{ $customer->school?->name ?? '—' }}</td>
                         <td>{{ $primaryContact ? $primaryContact->name.($primaryContact->role ? ', '.$primaryContact->role : '') : '—' }}</td>
                         <td><span class="badge {{ \App\Models\Customer::badgeClassForStatusName($customer->status?->name) }}">{{ $customer->status?->name }}</span></td>

@@ -90,6 +90,10 @@ section > .section-head p { margin: 2px 0 0; color: var(--color-text-secondary);
 .filters .chip { font-size: var(--fs-small); padding: 6px 14px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-primary); cursor: pointer; }
 .filters .chip.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 tr.row-link { cursor: pointer; }
+/* Thin frame marking a lead interested in a subscription / a subscribed customer (leads & customers lists). */
+tr.is-subscription { outline: 1.5px solid var(--color-primary); outline-offset: -2px; }
+.subscription-legend { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-caption); color: var(--color-text-secondary); }
+.subscription-legend::before { content: ""; width: 18px; height: 12px; border: 1.5px solid var(--color-primary); border-radius: 2px; }
 
 .status-picker { display: flex; gap: var(--sp-sm); flex-wrap: wrap; }
 .status-option {

@@ -130,6 +130,12 @@ class Lead extends Model
         return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
     }
 
+    /** Whether any requested item is a subscription bundle — drives the leads list's subscription frame. */
+    public function isInterestedInSubscription(): bool
+    {
+        return $this->interestedBundles->contains(fn (Bundle $bundle) => $bundle->is_subscription_type);
+    }
+
     public function trafficLightColor(): string
     {
         return self::trafficLightColorForStatusName($this->status?->name);

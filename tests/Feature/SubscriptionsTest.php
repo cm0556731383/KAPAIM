@@ -325,6 +325,17 @@ class SubscriptionsTest extends TestCase
         $subscription->fresh()->generateCreditNote();
     }
 
+    public function test_customers_list_frames_only_subscribed_customers(): void
+    {
+        $subscription = $this->openSubscription();
+        $other = $this->createCustomer();
+
+        $html = Livewire::actingAs($this->owner)->test('customers')->html();
+
+        $this->assertMatchesRegularExpression('/<tr class="row-link is-subscription"[^>]*customers\/'.$subscription->customer_id.'\b/u', $html);
+        $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*customers\/'.$other->id.'\b/u', $html);
+    }
+
     public function test_monthly_payment_counts_only_an_issued_invoice_with_an_amount(): void
     {
         $subscription = $this->openSubscription(agreedAmount: 2000);

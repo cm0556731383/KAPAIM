@@ -428,8 +428,8 @@ class LeadsManagementTest extends TestCase
         $program = Program::create(['name' => 'תוכנית לדוגמה', 'price' => 100, 'is_active' => true]);
 
         Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
-            ->set('programToAttach', (string) $program->id)
-            ->call('attachProgram');
+            ->set('itemToAttach', "program:{$program->id}")
+            ->call('attachItem');
 
         $this->assertTrue($lead->fresh()->interestedPrograms->contains($program->id));
 
@@ -437,6 +437,56 @@ class LeadsManagementTest extends TestCase
             ->call('removeProgram', $program->id);
 
         $this->assertFalse($lead->fresh()->interestedPrograms->contains($program->id));
+    }
+
+    public function test_owner_can_attach_and_remove_a_bundle_of_interest(): void
+    {
+        $lead = $this->createLead();
+        $bundle = \App\Models\Bundle::create(['name' => 'מארז לדוגמה', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        \App\Models\Bundle::create(['name' => 'מארז מושבת', 'price' => 900, 'is_subscription_type' => false, 'is_active' => false]);
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->assertSee('מארז לדוגמה')
+            ->assertDontSee('מארז מושבת')
+            ->set('itemToAttach', "bundle:{$bundle->id}")
+            ->call('attachItem')
+            ->assertHasNoErrors()
+            ->assertSee('מארז: מארז לדוגמה');
+
+        $this->assertTrue($lead->fresh()->interestedBundles->contains($bundle->id));
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'lead.bundle_interest_added', 'lead_id' => $lead->id]);
+
+        $this->actingAs($this->owner)->get('/leads')->assertSee('מארז: מארז לדוגמה');
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('removeBundle', $bundle->id);
+
+        $this->assertFalse($lead->fresh()->interestedBundles->contains($bundle->id));
+    }
+
+    public function test_leads_list_frames_only_leads_interested_in_a_subscription_bundle(): void
+    {
+        $subscriber = $this->createLead(schoolName: 'בית ספר מתעניין במנוי');
+        $regular = $this->createLead(schoolName: 'בית ספר רגיל');
+        $subscriptionBundle = \App\Models\Bundle::create(['name' => 'מנוי שנתי', 'price' => 4500, 'is_subscription_type' => true, 'is_active' => true]);
+        $plainBundle = \App\Models\Bundle::create(['name' => 'מארז רגיל', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $subscriber->interestedBundles()->attach($subscriptionBundle->id);
+        $regular->interestedBundles()->attach($plainBundle->id);
+
+        $html = Livewire::actingAs($this->owner)->test('leads')->html();
+
+        $this->assertMatchesRegularExpression('/<tr class="row-link is-subscription"[^>]*leads\/'.$subscriber->id.'\b/u', $html);
+        $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*leads\/'.$regular->id.'\b/u', $html);
+    }
+
+    public function test_attaching_an_invalid_item_is_rejected(): void
+    {
+        $lead = $this->createLead();
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->set('itemToAttach', 'bundle:999999')
+            ->call('attachItem')
+            ->assertHasErrors(['itemToAttach']);
     }
 
     public function test_leads_list_page_renders_real_seeded_data(): void

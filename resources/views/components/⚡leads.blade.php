@@ -151,7 +151,7 @@ class extends Component
         $user = auth()->user();
 
         return Lead::query()
-            ->with(['school', 'status', 'source', 'assignedUser', 'interestedPrograms', 'followUps'])
+            ->with(['school', 'status', 'source', 'assignedUser', 'interestedPrograms', 'interestedBundles', 'followUps'])
             ->whereNull('converted_at')
             ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id))
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
@@ -297,6 +297,7 @@ class extends Component
         </div>
     </div>
 
+    <div style="margin-bottom:var(--sp-sm)"><span class="subscription-legend">מסגרת = מתעניינים במנוי</span></div>
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-lg)">
         <div class="table-scroll">
         <table>
@@ -318,17 +319,21 @@ class extends Component
                         $primaryContact = $lead->school?->contacts()->where('is_primary', true)->first();
                         $nextFollowUp = $lead->followUps->whereNotNull('next_at')->sortBy('next_at')->first();
                     @endphp
-                    <tr class="row-link" onclick="window.location='{{ route('lead-detail', $lead) }}'">
+                    <tr class="row-link {{ $lead->isInterestedInSubscription() ? 'is-subscription' : '' }}" @if ($lead->isInterestedInSubscription()) title="מתעניינים במנוי" @endif onclick="window.location='{{ route('lead-detail', $lead) }}'">
                         <td>{{ $lead->school?->name ?? '— (ללא בית ספר) —' }}</td>
                         <td>{{ $primaryContact ? $primaryContact->name.($primaryContact->role ? ', '.$primaryContact->role : '') : '—' }}</td>
                         <td>{{ $lead->source?->name ?? '—' }}</td>
                         <td>
                             <div class="chip-list">
-                                @forelse ($lead->interestedPrograms as $program)
+                                @foreach ($lead->interestedPrograms as $program)
                                     <span class="chip">{{ $program->name }}</span>
-                                @empty
+                                @endforeach
+                                @foreach ($lead->interestedBundles as $bundle)
+                                    <span class="chip">מארז: {{ $bundle->name }}</span>
+                                @endforeach
+                                @if ($lead->interestedPrograms->isEmpty() && $lead->interestedBundles->isEmpty())
                                     —
-                                @endforelse
+                                @endif
                             </div>
                         </td>
                         <td><span class="badge {{ Lead::badgeClassForStatusName($lead->status?->name) }}">{{ $lead->status?->name }}@if ($lead->sub_status) · {{ $lead->sub_status }} @endif</span></td>
