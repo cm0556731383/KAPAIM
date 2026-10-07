@@ -97,6 +97,47 @@ class LeadsManagementTest extends TestCase
         $this->assertDatabaseHas('leads', ['email' => 'school@example.com', 'school_id' => $school->id]);
     }
 
+    public function test_creating_a_lead_copies_its_email_and_phone_onto_the_new_school(): void
+    {
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('newEmail', 'school@example.com')
+            ->set('newPhone', '050-1111111')
+            ->set('newSchoolName', 'בית ספר הדוגמה')
+            ->call('addLead');
+
+        $this->assertDatabaseHas('schools', [
+            'name' => 'בית ספר הדוגמה', 'email' => 'school@example.com', 'phone' => '050-1111111',
+        ]);
+    }
+
+    public function test_creating_a_lead_keeps_an_explicit_school_phone(): void
+    {
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('newEmail', 'school@example.com')
+            ->set('newPhone', '050-1111111')
+            ->set('newSchoolName', 'בית ספר הדוגמה')
+            ->set('newSchoolPhone', '03-5555555')
+            ->call('addLead');
+
+        $this->assertDatabaseHas('schools', ['name' => 'בית ספר הדוגמה', 'phone' => '03-5555555', 'email' => 'school@example.com']);
+    }
+
+    public function test_lead_card_shows_the_lead_email_and_phone_when_it_has_no_school(): void
+    {
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('newEmail', 'noschool@example.com')
+            ->set('newPhone', '050-2222222')
+            ->call('addLead');
+
+        $lead = Lead::where('email', 'noschool@example.com')->firstOrFail();
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->assertSee('noschool@example.com')
+            ->assertSee('050-2222222')
+            ->assertSet('schoolEmail', 'noschool@example.com')
+            ->assertSet('schoolPhone', '050-2222222');
+    }
+
     /**
      * FR-1.9: an exact-match repeat inquiry from the same school must update
      * the existing lead, not create a new one.

@@ -128,8 +128,10 @@ class extends Component
         $this->schoolName = $school?->name ?? '';
         $this->schoolCity = $school?->city ?? '';
         $this->schoolAddress = $school?->address ?? '';
-        $this->schoolPhone = $school?->phone ?? '';
-        $this->schoolEmail = $school?->email ?? '';
+        // Falls back to the email/phone entered when the lead was opened, so
+        // they're pre-filled here and saved onto the school on first save.
+        $this->schoolPhone = $school?->phone ?: ($this->lead->phone ?? '');
+        $this->schoolEmail = $school?->email ?: ($this->lead->email ?? '');
     }
 
     // ----- פרטי בית ספר -----
@@ -753,11 +755,11 @@ class extends Component
                         </div>
                         <div>
                             <label>טלפון</label>
-                            <div class="field-box ltr-num">{{ $lead->school?->phone ?? '—' }}</div>
+                            <div class="field-box ltr-num">{{ $lead->school?->phone ?: ($lead->phone ?: '—') }}</div>
                         </div>
                         <div>
                             <label>דוא"ל</label>
-                            <div class="field-box ltr-num">{{ $lead->school?->email ?? '—' }}</div>
+                            <div class="field-box ltr-num">{{ $lead->school?->email ?: ($lead->email ?: '—') }}</div>
                         </div>
                         <div>
                             <label>כתובת</label>

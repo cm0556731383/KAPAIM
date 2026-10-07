@@ -128,6 +128,8 @@ class extends Component
             'notes' => $data['newNotes'] ?: null,
         ]);
 
+        $school?->fillContactDetailsIfBlank($lead->email, $lead->phone);
+
         // FR-1.17 — stub, see Lead::joinPrimaryMailingList() (stage 10).
         $lead->joinPrimaryMailingList();
 

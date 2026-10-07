@@ -35,4 +35,17 @@ class School extends Model
     {
         return $this->hasOne(Customer::class);
     }
+
+    /**
+     * The email/phone entered when a lead is opened live on the LEAD row,
+     * but the lead card's "פרטי בית ספר" shows the SCHOOL's — copies them
+     * over so they appear there, without overwriting anything already set.
+     */
+    public function fillContactDetailsIfBlank(?string $email, ?string $phone): void
+    {
+        $this->update(array_filter([
+            'email' => blank($this->email) ? $email : null,
+            'phone' => blank($this->phone) ? $phone : null,
+        ]));
+    }
 }

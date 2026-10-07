@@ -361,6 +361,8 @@ class Lead extends Model
             'phone' => $payload['phone'],
         ]);
 
+        $school?->fillContactDetailsIfBlank($lead->email, $lead->phone);
+
         $lead->joinPrimaryMailingList();
 
         $salesRep = User::pickForAutoAssignment();
