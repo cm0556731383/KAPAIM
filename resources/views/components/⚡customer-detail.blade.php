@@ -73,6 +73,8 @@ class extends Component
 
     // ===== פרטים נוספים (עריכה) =====
     public bool $editingSchoolDetails = false;
+    public string $schoolInvoiceName = '';
+    public string $schoolBusinessNumber = '';
     public string $schoolSyllable = '';
     public string $schoolClassesPerGrade = '';
     public string $schoolNotes = '';
@@ -174,6 +176,8 @@ class extends Component
         $this->schoolAddress = $school?->address ?? '';
         $this->schoolPhone = $school?->phone ?? '';
         $this->schoolEmail = $school?->email ?? '';
+        $this->schoolInvoiceName = $school?->invoice_name ?? '';
+        $this->schoolBusinessNumber = $school?->business_number ?? '';
         $this->schoolSyllable = $school?->syllable ?? '';
         $this->schoolClassesPerGrade = (string) ($school?->classes_per_grade ?? '');
         $this->schoolNotes = $school?->notes ?? '';
@@ -189,7 +193,12 @@ class extends Component
             'schoolAddress' => ['nullable', 'string', 'max:255'],
             'schoolPhone' => ['nullable', 'string', 'max:50'],
             'schoolEmail' => ['nullable', 'email', 'max:255'],
-        ], [], ['schoolName' => 'שם המוסד']);
+            'schoolInvoiceName' => ['nullable', 'string', 'max:255'],
+            'schoolBusinessNumber' => ['nullable', 'string', 'max:20', 'regex:/^[0-9][0-9\s-]*$/'],
+            'schoolNotes' => ['nullable', 'string'],
+        ], [
+            'schoolBusinessNumber.regex' => 'ח.פ. יכול להכיל ספרות בלבד (ומקפים).',
+        ], ['schoolName' => 'שם המוסד', 'schoolInvoiceName' => 'שם לחשבונית', 'schoolBusinessNumber' => 'ח.פ.']);
 
         $this->customer->school->update([
             'name' => $data['schoolName'],
@@ -197,6 +206,9 @@ class extends Component
             'address' => $data['schoolAddress'] ?: null,
             'phone' => $data['schoolPhone'] ?: null,
             'email' => $data['schoolEmail'] ?: null,
+            'invoice_name' => trim((string) $data['schoolInvoiceName']) ?: null,
+            'business_number' => trim((string) $data['schoolBusinessNumber']) ?: null,
+            'notes' => $data['schoolNotes'] ?: null,
         ]);
 
         $activityLogger->log('customer.school_updated', "עודכנו פרטי בית ספר עבור לקוחה #{$this->customer->id}: {$this->customer->school->name}", [
@@ -219,7 +231,6 @@ class extends Component
         $data = $this->validate([
             'schoolSyllable' => ['nullable', 'string', 'max:255'],
             'schoolClassesPerGrade' => ['nullable', 'integer', 'min:0'],
-            'schoolNotes' => ['nullable', 'string'],
             'newLogo' => ['nullable', 'image', 'max:5120'],
         ], [], ['schoolClassesPerGrade' => 'מספר כיתות בשנתון']);
 
@@ -230,7 +241,6 @@ class extends Component
             'classes_per_grade' => $data['schoolClassesPerGrade'] !== null && $data['schoolClassesPerGrade'] !== ''
                 ? (int) $data['schoolClassesPerGrade']
                 : null,
-            'notes' => $data['schoolNotes'] ?: null,
         ];
 
         if ($this->newLogo) {
@@ -1046,6 +1056,20 @@ class extends Component
                                 <label for="schoolAddress">כתובת</label>
                                 <input type="text" id="schoolAddress" wire:model="schoolAddress">
                             </div>
+                            <div>
+                                <label for="schoolInvoiceName">שם לחשבונית</label>
+                                <input type="text" id="schoolInvoiceName" wire:model="schoolInvoiceName">
+                                @error('schoolInvoiceName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div>
+                                <label for="schoolBusinessNumber">ח.פ.</label>
+                                <input type="text" id="schoolBusinessNumber" wire:model="schoolBusinessNumber" class="ltr-num" dir="ltr" inputmode="numeric">
+                                @error('schoolBusinessNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div class="full">
+                                <label for="schoolNotes">הערות</label>
+                                <textarea id="schoolNotes" wire:model="schoolNotes" rows="3"></textarea>
+                            </div>
                             <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטי בית ספר</button></div>
                         </form>
                     @else
@@ -1069,6 +1093,18 @@ class extends Component
                             <div>
                                 <label>כתובת</label>
                                 <div class="field-box">{{ $customer->school?->address ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>שם לחשבונית</label>
+                                <div class="field-box">{{ $customer->school?->invoice_name ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>ח.פ.</label>
+                                <div class="field-box ltr-num">{{ $customer->school?->business_number ?? '—' }}</div>
+                            </div>
+                            <div class="full">
+                                <label>הערות</label>
+                                <div class="field-box" style="white-space:pre-wrap">{{ $customer->school?->notes ?? '—' }}</div>
                             </div>
                         </div>
                     @endif
@@ -1175,10 +1211,6 @@ class extends Component
                                     </div>
                                 @endif
                             </div>
-                            <div class="full">
-                                <label for="schoolNotes">הערות</label>
-                                <textarea id="schoolNotes" wire:model="schoolNotes" rows="3"></textarea>
-                            </div>
                             <div class="full"><button type="submit" class="btn btn-primary">שמירת פרטים נוספים</button></div>
                         </form>
                     @else
@@ -1201,10 +1233,6 @@ class extends Component
                                 @else
                                     <div class="field-box">—</div>
                                 @endif
-                            </div>
-                            <div class="full">
-                                <label>הערות</label>
-                                <div class="field-box" style="white-space:pre-wrap">{{ $customer->school?->notes ?? '—' }}</div>
                             </div>
                         </div>
                     @endif

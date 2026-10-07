@@ -21,6 +21,8 @@ class DocumentLinkedFields
         'customer.school_city' => 'עיר (לקוחה)',
         'customer.school_phone' => 'טלפון (לקוחה)',
         'customer.school_email' => 'דוא"ל (לקוחה)',
+        'customer.school_invoice_name' => 'שם לחשבונית (לקוחה)',
+        'customer.school_business_number' => 'ח.פ. (לקוחה)',
         'customer.school_syllable' => 'הברה (לקוחה)',
         'customer.school_classes_per_grade' => 'מספר כיתות בשנתון (לקוחה)',
         'contact_primary.name' => 'שם איש הקשר הראשי',
@@ -53,6 +55,8 @@ class DocumentLinkedFields
         'customer.school_city' => 'city',
         'customer.school_phone' => 'phone',
         'customer.school_email' => 'email',
+        'customer.school_invoice_name' => 'invoice_name',
+        'customer.school_business_number' => 'business_number',
         'customer.school_syllable' => 'syllable',
         'customer.school_classes_per_grade' => 'classes_per_grade',
     ];

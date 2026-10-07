@@ -189,6 +189,41 @@ class LeadToCustomerTest extends TestCase
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'customer.school_updated', 'customer_id' => $customer->id]);
     }
 
+    public function test_owner_can_edit_invoice_name_business_number_and_notes(): void
+    {
+        $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר לפרטי חשבונית'));
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('editingSchool', true)
+            ->set('schoolInvoiceName', 'עמותת החינוך בע"מ')
+            ->set('schoolBusinessNumber', '580123456')
+            ->set('schoolNotes', 'לשלוח חשבונית לגזברית')
+            ->call('saveSchool')
+            ->assertHasNoErrors()
+            ->assertSee('עמותת החינוך בע"מ')
+            ->assertSee('580123456');
+
+        $this->assertDatabaseHas('schools', [
+            'id' => $customer->school_id,
+            'invoice_name' => 'עמותת החינוך בע"מ',
+            'business_number' => '580123456',
+            'notes' => 'לשלוח חשבונית לגזברית',
+        ]);
+    }
+
+    public function test_business_number_must_be_numeric(): void
+    {
+        $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר עם ח.פ. שגוי'));
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('editingSchool', true)
+            ->set('schoolBusinessNumber', 'abc')
+            ->call('saveSchool')
+            ->assertHasErrors(['schoolBusinessNumber']);
+
+        $this->assertDatabaseHas('schools', ['id' => $customer->school_id, 'business_number' => null]);
+    }
+
     public function test_owner_can_add_a_contact_to_a_customer(): void
     {
         $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר עם איש קשר חדש'));

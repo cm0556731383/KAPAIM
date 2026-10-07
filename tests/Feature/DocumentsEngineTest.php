@@ -448,6 +448,11 @@ class DocumentsEngineTest extends TestCase
         $this->assertSame('acc@example.com', DocumentLinkedFields::resolve('contact_accounting.email_secondary', $deal));
         $this->assertSame('א-ו', DocumentLinkedFields::resolve('customer.school_syllable', $deal));
         $this->assertSame('3', DocumentLinkedFields::resolve('customer.school_classes_per_grade', $deal));
+
+        $deal->customer->school->update(['invoice_name' => 'עמותה בע"מ', 'business_number' => '580123456']);
+        $deal->refresh();
+        $this->assertSame('עמותה בע"מ', DocumentLinkedFields::resolve('customer.school_invoice_name', $deal));
+        $this->assertSame('580123456', DocumentLinkedFields::resolve('customer.school_business_number', $deal));
     }
 
     public function test_primary_contact_falls_back_to_the_first_contact_and_accounting_has_no_fallback(): void
@@ -487,6 +492,8 @@ class DocumentsEngineTest extends TestCase
         $this->assertArrayHasKey('contact_primary.phone', $options);
         $this->assertArrayHasKey('contact_accounting.email', $options);
         $this->assertArrayHasKey('customer.school_syllable', $options);
+        $this->assertArrayHasKey('customer.school_invoice_name', $options);
+        $this->assertArrayHasKey('customer.school_business_number', $options);
         $this->assertArrayNotHasKey('deal.agreed_amount', $options);
     }
 
