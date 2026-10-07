@@ -475,7 +475,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_sending_an_invoice_pushes_it_to_summit(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555, 'DocumentNumber' => 10001]], 200)]);
 
         $deal = $this->dealWithInvoice();
@@ -506,7 +506,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_sumit_business_error_keeps_the_invoice_an_unsent_draft(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         // SUMIT answers HTTP 200 even for errors — only Status 0 is success.
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 1, 'UserErrorMessage' => 'מפתח API שגוי', 'Data' => null], 200)]);
 
@@ -530,14 +530,14 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_test_mode_is_on_until_explicitly_turned_off(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => []]);
 
         $this->assertTrue(app(SummitClient::class)->isTestMode());
     }
 
     public function test_test_mode_issues_sumit_documents_as_drafts(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => true]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => true]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 556]], 200)]);
 
         $deal = $this->dealWithInvoice();
@@ -579,7 +579,7 @@ class ExternalIntegrationsTest extends TestCase
      */
     public function test_sending_an_invoice_never_touches_smove(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200), 'rest.smoove.io/*' => Http::response(['id' => 42], 200)]);
 
@@ -604,7 +604,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_quote_send_never_touches_summit(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake();
 
         $deal = $this->createDeal();
@@ -803,8 +803,9 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_charging_a_card_records_a_payment_only_after_summit_confirms(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['Payment' => ['ID' => 777, 'ValidPayment' => true]]], 200)]);
+        $this->createBusinessEntity(); // the only SUMIT company — used when the deal has no invoice yet
 
         $deal = $this->createDeal(500);
         $deal->update(['payment_method_id' => $this->createPaymentMethod('אשראי', 'card')->id]);
@@ -821,8 +822,9 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_charging_a_card_records_no_payment_when_summit_declines(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['Payment' => ['ID' => 778, 'ValidPayment' => false, 'StatusDescription' => 'כרטיס חסום']]], 200)]);
+        $this->createBusinessEntity(); // the only SUMIT company — used when the deal has no invoice yet
 
         $deal = $this->createDeal(500);
         $deal->update(['payment_method_id' => $this->createPaymentMethod('אשראי', 'card')->id]);
@@ -839,7 +841,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_registering_a_standing_order_requires_the_recurring_payment_method(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['RecurringCustomerItemIDs' => [11]]], 200)]);
 
         $deal = $this->createDeal();
@@ -851,8 +853,9 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_registering_a_standing_order_sends_a_monthly_recurring_item(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['RecurringCustomerItemIDs' => [11]]], 200)]);
+        $this->createBusinessEntity(); // the only SUMIT company — used when the deal has no invoice yet
 
         $deal = $this->createDeal(1200);
         $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
@@ -867,7 +870,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_receipt_and_credit_note_are_linked_to_the_sumit_invoice(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['company_id' => '12345678', 'api_key' => 'x', 'test_mode' => false]]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200)]);
 
         $deal = $this->dealWithInvoice(400);
@@ -888,36 +891,72 @@ class ExternalIntegrationsTest extends TestCase
 
     // ----- settings screen (business owner fills in real credentials) -----
 
-    public function test_saving_sumit_settings_and_checking_the_connection(): void
+    public function test_each_business_entity_has_its_own_sumit_credentials_and_connection_check(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+        $entity = $this->createBusinessEntity();
+        $entity->update(['sumit_company_id' => null, 'sumit_api_key' => null]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['Rate' => 18]], 200)]);
 
         Livewire::actingAs($this->owner)->test('settings')
             ->assertSet('summitTestMode', true)
-            ->set('summitCompanyId', '12345678')
-            ->set('summitApiKey', 'private-key')
-            ->call('testSummitConnection')
-            ->assertHasNoErrors();
+            ->set("sumitCompanies.{$entity->id}.name", 'כפיים בע"מ')
+            ->set("sumitCompanies.{$entity->id}.company_id", '87654321')
+            ->set("sumitCompanies.{$entity->id}.api_key", 'private-key')
+            ->call('testSumitCompany', $entity->id)
+            ->assertHasNoErrors()
+            ->assertSet("sumitCompanies.{$entity->id}.api_key", '');
 
-        $settings = ExternalIntegrationSetting::where('system', 'summit')->first()->settings;
-        $this->assertSame('12345678', $settings['company_id']);
-        $this->assertSame('private-key', $settings['api_key']);
-        $this->assertTrue($settings['test_mode']);
+        $entity->refresh();
+        $this->assertSame('כפיים בע"מ', $entity->name);
+        $this->assertSame('87654321', $entity->sumit_company_id);
+        $this->assertSame('private-key', $entity->sumit_api_key);
+        $this->assertNotSame('private-key', \DB::table('business_entities')->where('id', $entity->id)->value('sumit_api_key'));
         Http::assertSent(fn ($request) => $request->url() === 'https://api.sumit.co.il/accounting/general/getvatrate/'
-            && $request['Credentials'] === ['CompanyID' => 12345678, 'APIKey' => 'private-key']);
+            && $request['Credentials'] === ['CompanyID' => 87654321, 'APIKey' => 'private-key']);
+
+        // Saving again with the key field left empty keeps the stored key.
+        Livewire::actingAs($this->owner)->test('settings')->call('saveSumitCompany', $entity->id);
+        $this->assertSame('private-key', $entity->fresh()->sumit_api_key);
     }
 
     public function test_a_failed_sumit_connection_check_shows_the_error(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+        $entity = $this->createBusinessEntity();
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 1, 'UserErrorMessage' => 'פרטי ההתחברות שגויים'], 200)]);
 
         Livewire::actingAs($this->owner)->test('settings')
-            ->set('summitCompanyId', '12345678')
-            ->set('summitApiKey', 'wrong')
-            ->call('testSummitConnection')
-            ->assertHasErrors(['summitConnection']);
+            ->call('testSumitCompany', $entity->id)
+            ->assertHasErrors(["sumitConnection.{$entity->id}"]);
+    }
+
+    public function test_an_invoice_goes_to_the_sumit_company_of_its_business_entity(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        $this->createBusinessEntity()->update(['sumit_company_id' => '11111111']);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 9]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->businessEntity->update(['sumit_company_id' => '22222222', 'sumit_api_key' => 'second-key']);
+
+        app(SummitClient::class)->issueInvoice($invoice->fresh());
+
+        Http::assertSent(fn ($request) => $request['Credentials'] === ['CompanyID' => 22222222, 'APIKey' => 'second-key']);
+    }
+
+    public function test_an_entity_without_sumit_credentials_fails_clearly(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => []]);
+        Http::fake();
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->businessEntity->update(['sumit_api_key' => null]);
+
+        $this->expectExceptionMessage('לא הוגדרו מספר חברה ומפתח API של SUMIT');
+        app(SummitClient::class)->issueInvoice($invoice->fresh());
     }
 
     // ----- other settings -----
@@ -1039,6 +1078,8 @@ class ExternalIntegrationsTest extends TestCase
             'email' => 'business'.random_int(1, 999999).'@example.com',
             'phone' => '03-0000000',
             'is_active' => true,
+            'sumit_company_id' => '12345678',
+            'sumit_api_key' => 'x',
         ]);
     }
 }

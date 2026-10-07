@@ -2,6 +2,7 @@
 
 namespace App\Services\Integrations;
 
+use App\Models\BusinessEntity;
 use App\Models\Contact;
 use App\Models\Deal;
 use App\Models\Document;
@@ -18,7 +19,11 @@ use RuntimeException;
  * Real HTTP wiring to SUMIT (formerly OfficeGuy) — invoices, receipts,
  * credit notes, credit-card charges, standing orders — per SUMIT's own
  * OpenAPI contract (app.sumit.co.il/swagger/v1/swagger.json, wired
- * 2026-10-07). Gated entirely on ExternalIntegrationSetting('summit'). Every
+ * 2026-10-07). Gated on ExternalIntegrationSetting('summit') being active
+ * (plus its global test_mode); the credentials themselves are per business
+ * entity — each עוסק is its own SUMIT company (BusinessEntity::
+ * sumit_company_id/sumit_api_key), and every call goes to the company the
+ * document was issued from (entityFor()). Every
  * call is expected to run inside ExternalOperationRunner::run() — see that
  * class's docblock for why a failure here never blocks/rolls back the local
  * record it accompanies (FR-8.16-FR-8.18).
@@ -61,11 +66,9 @@ class SummitClient
 
     private ?ExternalIntegrationSetting $config = null;
 
-    public function isConfigured(): bool
+    public function isActive(): bool
     {
-        return $this->config()->is_active
-            && filled($this->setting('company_id'))
-            && filled($this->setting('api_key'));
+        return $this->config()->is_active;
     }
 
     /** Defaults to ON until the business owner saves the settings with it turned off (same default as the settings screen). */
@@ -78,13 +81,13 @@ class SummitClient
      * Read-only credentials check for the settings screen — asks SUMIT for
      * today's VAT rate, which needs valid credentials but changes nothing.
      */
-    public function verifyCredentials(): void
+    public function verifyCredentials(BusinessEntity $entity): void
     {
-        if (blank($this->setting('company_id')) || blank($this->setting('api_key'))) {
-            throw new RuntimeException('יש להזין מספר חברה ומפתח API של SUMIT.');
+        if (! $entity->hasSumitCredentials()) {
+            throw new RuntimeException("יש להזין מספר חברה ומפתח API של SUMIT עבור \"{$entity->name}\".");
         }
 
-        $this->dataOrFail($this->post('/accounting/general/getvatrate/', []));
+        $this->dataOrFail($this->post($entity, '/accounting/general/getvatrate/', []));
     }
 
     /**
@@ -93,10 +96,10 @@ class SummitClient
      */
     public function issueInvoice(Document $document, ?string $email = null): string
     {
-        $this->assertConfigured();
+        $entity = $this->entityFor($document->businessEntity);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
-        $data = $this->dataOrFail($this->post('/accounting/documents/create/', [
+        $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', [
             'Details' => $this->documentDetails(self::DOCUMENT_INVOICE, $document->deal, $email),
             'Items' => $this->documentItems($document),
             'VATIncluded' => true,
@@ -108,10 +111,10 @@ class SummitClient
     /** Called from Document::sendTo() for a sent credit note (FR-4.5/FR-8.12), linked to the deal's SUMIT invoice. */
     public function issueCreditNote(Document $document, ?string $email = null): string
     {
-        $this->assertConfigured();
+        $entity = $this->entityFor($document->businessEntity);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
-        $data = $this->dataOrFail($this->post('/accounting/documents/create/', array_filter([
+        $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails(self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
             'Items' => $this->documentItems($document),
             'VATIncluded' => true,
@@ -128,14 +131,14 @@ class SummitClient
      */
     public function issueReceipt(Receipt $receipt): string
     {
-        $this->assertConfigured();
-        $receipt->loadMissing('payment.paymentMethod', 'document.lines', 'document.deal.customer.school', 'document.deal.customer.contacts');
+        $receipt->loadMissing('payment.paymentMethod', 'document.businessEntity', 'document.lines', 'document.deal.customer.school', 'document.deal.customer.contacts');
 
         $invoice = $receipt->document;
+        $entity = $this->entityFor($invoice->businessEntity);
         $amount = $receipt->payment ? (float) $receipt->payment->amount : $invoice->totalAmount();
         [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$receipt->payment?->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
-        $data = $this->dataOrFail($this->post('/accounting/documents/create/', array_filter([
+        $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, null),
             'Payments' => [[
                 'Amount' => $amount,
@@ -156,10 +159,10 @@ class SummitClient
      */
     public function chargeCard(Deal $deal, float $amount): string
     {
-        $this->assertConfigured();
+        $entity = $this->entityForDeal($deal);
         $deal->loadMissing('customer.school', 'customer.contacts');
 
-        $data = $this->dataOrFail($this->post('/billing/payments/charge/', [
+        $data = $this->dataOrFail($this->post($entity, '/billing/payments/charge/', [
             'Customer' => $this->customer($deal),
             'Items' => [[
                 'Item' => ['Name' => $this->itemName($deal)],
@@ -188,12 +191,12 @@ class SummitClient
      */
     public function registerStandingOrder(Deal $deal): string
     {
-        $this->assertConfigured();
+        $entity = $this->entityForDeal($deal);
         $deal->loadMissing('customer.school', 'customer.contacts', 'subscription');
 
         $subscription = $deal->subscription;
 
-        $data = $this->dataOrFail($this->post('/billing/recurring/charge/', [
+        $data = $this->dataOrFail($this->post($entity, '/billing/recurring/charge/', [
             'Customer' => $this->customer($deal),
             'Items' => [[
                 'Item' => ['Name' => $this->itemName($deal)],
@@ -274,12 +277,53 @@ class SummitClient
         return ctype_digit((string) $reference) ? (int) $reference : null;
     }
 
-    private function post(string $path, array $body): Response
+    /** The SUMIT company a document is issued in — its business entity, which must have credentials. */
+    private function entityFor(?BusinessEntity $entity): BusinessEntity
+    {
+        if (! $this->isActive()) {
+            throw new RuntimeException('החיבור ל-SUMIT מושבת — יש להפעיל אותו בהגדרות המערכת.');
+        }
+
+        if (! $entity) {
+            throw new RuntimeException('למסמך לא נבחר עוסק, ולכן לא ידוע לאיזו חברה ב-SUMIT לשלוח אותו.');
+        }
+
+        if (! $entity->hasSumitCredentials()) {
+            throw new RuntimeException("לעוסק \"{$entity->name}\" לא הוגדרו מספר חברה ומפתח API של SUMIT — יש להזין אותם בהגדרות המערכת.");
+        }
+
+        return $entity;
+    }
+
+    /**
+     * A charge/standing order has no document of its own: it goes to the
+     * company of the deal's invoice (issued, else any), or — when there's
+     * no invoice yet — to the only entity with SUMIT credentials, if there
+     * is exactly one.
+     */
+    private function entityForDeal(Deal $deal): BusinessEntity
+    {
+        $invoice = $deal->issuedInvoice() ?? $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
+
+        if ($invoice) {
+            return $this->entityFor($invoice->businessEntity);
+        }
+
+        $configured = BusinessEntity::where('is_active', true)->get()->filter->hasSumitCredentials();
+
+        if ($configured->count() !== 1) {
+            throw new RuntimeException('לעסקה אין עדיין חשבונית, ולכן לא ידוע מאיזו חברה ב-SUMIT לחייב — יש להפיק חשבונית תחילה.');
+        }
+
+        return $this->entityFor($configured->first());
+    }
+
+    private function post(BusinessEntity $entity, string $path, array $body): Response
     {
         return $this->http()->post($path, array_merge($body, [
             'Credentials' => [
-                'CompanyID' => (int) $this->setting('company_id'),
-                'APIKey' => (string) $this->setting('api_key'),
+                'CompanyID' => (int) $entity->sumit_company_id,
+                'APIKey' => (string) $entity->sumit_api_key,
             ],
         ]));
     }
@@ -300,13 +344,6 @@ class SummitClient
         }
 
         return (array) ($response->json('Data') ?? []);
-    }
-
-    private function assertConfigured(): void
-    {
-        if (! $this->isConfigured()) {
-            throw new RuntimeException('SUMIT אינה מוגדרת עדיין — יש להזין מספר חברה ומפתח API בהגדרות המערכת ולהפעיל את האינטגרציה.');
-        }
     }
 
     private function http(): PendingRequest

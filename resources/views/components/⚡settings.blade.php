@@ -78,10 +78,15 @@ class extends Component
     public string $smoveWebhookSecret = '';
     public string $smoveMaterialReminderHours = '48';
 
-    public string $summitCompanyId = '';
-    public string $summitApiKey = '';
     public bool $summitTestMode = true;
-    public string $summitWebhookSecret = '';
+
+    /**
+     * SUMIT credentials per business entity (each עוסק is its own SUMIT
+     * company): business_entity_id => ['name', 'company_id', 'api_key'].
+     * api_key is never loaded back into the page — left empty it keeps the
+     * stored key; typed in, it replaces it.
+     */
+    public array $sumitCompanies = [];
 
     public string $landingPageWebhookSecret = '';
 
@@ -95,11 +100,9 @@ class extends Component
         $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
 
         $summit = ExternalIntegrationSetting::where('system', 'summit')->first()?->settings ?? [];
-        $this->summitCompanyId = (string) ($summit['company_id'] ?? '');
-        $this->summitApiKey = (string) ($summit['api_key'] ?? '');
         // Test mode defaults ON until the business owner explicitly turns it off.
         $this->summitTestMode = (bool) ($summit['test_mode'] ?? true);
-        $this->summitWebhookSecret = (string) ($summit['webhook_secret'] ?? '');
+        $this->loadSumitCompanies();
 
         $landingPage = ExternalIntegrationSetting::where('system', 'landing_page')->first()?->settings ?? [];
         $this->landingPageWebhookSecret = (string) ($landingPage['webhook_secret'] ?? '');
@@ -134,34 +137,66 @@ class extends Component
 
     public function saveSummitSettings(ActivityLogger $activityLogger): void
     {
-        $data = $this->validate([
-            'summitCompanyId' => ['nullable', 'digits_between:1,18'],
-            'summitApiKey' => ['nullable', 'string', 'max:255'],
-            'summitTestMode' => ['boolean'],
-            'summitWebhookSecret' => ['nullable', 'string', 'max:255'],
-        ], [], ['summitCompanyId' => 'מספר חברה']);
+        $data = $this->validate(['summitTestMode' => ['boolean']]);
 
-        ExternalIntegrationSetting::firstOrCreate(['system' => 'summit'], ['is_active' => false, 'settings' => []])->update(['settings' => [
-            'company_id' => $data['summitCompanyId'] ?: null,
-            'api_key' => $data['summitApiKey'] ?: null,
-            'test_mode' => (bool) $data['summitTestMode'],
-            'webhook_secret' => $data['summitWebhookSecret'] ?: null,
-        ]]);
+        $setting = ExternalIntegrationSetting::firstOrCreate(['system' => 'summit'], ['is_active' => false, 'settings' => []]);
+        $setting->update(['settings' => ['test_mode' => (bool) $data['summitTestMode']]]);
 
-        $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור SUMIT'.($data['summitTestMode'] ? ' (מצב בדיקה)' : ''));
+        $activityLogger->log('external_integration_setting.updated', 'עודכן מצב הבדיקה של SUMIT: '.($data['summitTestMode'] ? 'פעיל' : 'כבוי'));
         unset($this->integrations);
         $this->notifySuccess('הגדרות SUMIT נשמרו.');
     }
 
-    /** Read-only credentials check against SUMIT (SummitClient::verifyCredentials()) — saves first so it tests what's on screen. */
-    public function testSummitConnection(ActivityLogger $activityLogger, SummitClient $summit): void
+    private function loadSumitCompanies(): void
     {
-        $this->saveSummitSettings($activityLogger);
+        $this->sumitCompanies = BusinessEntity::orderBy('name')->get()
+            ->mapWithKeys(fn (BusinessEntity $entity) => [$entity->id => [
+                'name' => $entity->name,
+                'company_id' => (string) $entity->sumit_company_id,
+                'api_key' => '',
+                'has_key' => filled($entity->sumit_api_key),
+            ]])
+            ->all();
+    }
+
+    public function saveSumitCompany(int $entityId, ActivityLogger $activityLogger): void
+    {
+        $this->validate([
+            "sumitCompanies.{$entityId}.name" => ['required', 'string', 'max:255'],
+            "sumitCompanies.{$entityId}.company_id" => ['nullable', 'digits_between:1,18'],
+            "sumitCompanies.{$entityId}.api_key" => ['nullable', 'string', 'max:255'],
+        ], [], [
+            "sumitCompanies.{$entityId}.name" => 'שם החברה',
+            "sumitCompanies.{$entityId}.company_id" => 'מספר חברה',
+        ]);
+
+        $entity = BusinessEntity::findOrFail($entityId);
+        $row = $this->sumitCompanies[$entityId];
+
+        $entity->update(array_merge(
+            ['name' => trim($row['name']), 'sumit_company_id' => $row['company_id'] ?: null],
+            filled($row['api_key']) ? ['sumit_api_key' => trim($row['api_key'])] : [],
+        ));
+
+        $activityLogger->log('business_entity.sumit_updated', "עודכנו פרטי SUMIT של \"{$entity->name}\"");
+        $this->loadSumitCompanies();
+        unset($this->businessEntities);
+        $this->notifySuccess("פרטי SUMIT של \"{$entity->name}\" נשמרו.");
+    }
+
+    /** Read-only credentials check (SummitClient::verifyCredentials()) — saves the row first so it tests what's on screen. */
+    public function testSumitCompany(int $entityId, ActivityLogger $activityLogger, SummitClient $summit): void
+    {
+        $this->saveSumitCompany($entityId, $activityLogger);
+
+        if ($this->getErrorBag()->isNotEmpty()) {
+            return;
+        }
 
         try {
-            $summit->verifyCredentials();
+            $summit->verifyCredentials(BusinessEntity::findOrFail($entityId));
         } catch (\Throwable $e) {
-            $this->addError('summitConnection', 'החיבור ל-SUMIT נכשל: '.$e->getMessage());
+            $this->addError("sumitConnection.{$entityId}", 'החיבור נכשל: '.$e->getMessage());
 
             return;
         }
@@ -309,6 +344,7 @@ class extends Component
         $this->reset(['businessEntityName', 'businessEntityCompanyNumber', 'businessEntityEmail', 'businessEntityPhone']);
         $this->businessEntityClassification = 'עוסק פטור';
         unset($this->businessEntities);
+        $this->loadSumitCompanies();
     }
 
     public function toggleBusinessEntity(int $id, ActivityLogger $activityLogger): void
@@ -840,30 +876,36 @@ class extends Component
             </div>
 
             <div class="card">
-                <h3>SUMIT (סאמיט) — מספר חברה ומפתח API</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">שני הנתונים נמצאים ב-SUMIT בתפריט API ← מפתחות API. יש להזין את המפתח הפרטי.</p>
-                <form wire:submit="saveSummitSettings" class="form-grid">
+                <h3>SUMIT (סאמיט) — חברות</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל עוסק הוא חברה נפרדת ב-SUMIT, וחשבונית נשלחת לחברה של העוסק שממנו הופקה. מספר החברה והמפתח הפרטי נמצאים ב-SUMIT בתפריט API ← מפתחות API. להוספת חברה — הוסיפו עוסק בטבלת העוסקים.</p>
+                @foreach ($sumitCompanies as $entityId => $company)
+                    <form wire:submit="saveSumitCompany({{ $entityId }})" class="form-grid" style="border-top:1px solid var(--color-border); padding-top:var(--sp-md); margin-top:var(--sp-md)">
+                        <div class="full">
+                            <label for="sumitName{{ $entityId }}">שם החברה</label>
+                            <input type="text" id="sumitName{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.name">
+                            @error("sumitCompanies.{$entityId}.name") <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="sumitCompanyId{{ $entityId }}">מספר חברה ב-SUMIT</label>
+                            <input type="text" id="sumitCompanyId{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.company_id" class="ltr-num" dir="ltr" inputmode="numeric">
+                            @error("sumitCompanies.{$entityId}.company_id") <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="sumitApiKey{{ $entityId }}">מפתח API (פרטי)</label>
+                            <input type="password" id="sumitApiKey{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.api_key" class="ltr-num" dir="ltr" placeholder="{{ $company['has_key'] ? '•••••• מפתח שמור — להחלפה הקלידו חדש' : '' }}" autocomplete="new-password">
+                        </div>
+                        <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                            <button type="submit" class="btn btn-primary">שמירה</button>
+                            <button type="button" wire:click="testSumitCompany({{ $entityId }})" class="btn btn-secondary">בדיקת חיבור</button>
+                        </div>
+                        @error("sumitConnection.{$entityId}") <div class="full" style="color: var(--color-error); font-size: var(--fs-caption);">{{ $message }}</div> @enderror
+                    </form>
+                @endforeach
+                <form wire:submit="saveSummitSettings" class="form-grid" style="border-top:1px solid var(--color-border); padding-top:var(--sp-md); margin-top:var(--sp-md)">
                     <div class="full">
-                        <label for="summitCompanyId">מספר חברה (Company ID)</label>
-                        <input type="text" id="summitCompanyId" wire:model="summitCompanyId" class="ltr-num" dir="ltr" inputmode="numeric">
-                        @error('summitCompanyId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        <span class="checkbox-row"><input type="checkbox" id="summitTestMode" wire:model="summitTestMode"><label for="summitTestMode" style="margin:0">מצב בדיקה (לכל החברות) — מסמכים יופקו ב-SUMIT כטיוטה, וחיובי אשראי יבוצעו כבדיקת אישור בלבד, ללא חיוב בפועל</label></span>
                     </div>
-                    <div class="full">
-                        <label for="summitApiKey">מפתח API (פרטי)</label>
-                        <input type="password" id="summitApiKey" wire:model="summitApiKey" class="ltr-num" dir="ltr">
-                    </div>
-                    <div class="full">
-                        <span class="checkbox-row"><input type="checkbox" id="summitTestMode" wire:model="summitTestMode"><label for="summitTestMode" style="margin:0">מצב בדיקה — מסמכים יופקו ב-SUMIT כטיוטה, וחיובי אשראי יבוצעו כבדיקת אישור בלבד (ללא חיוב בפועל)</label></span>
-                    </div>
-                    <div class="full">
-                        <label for="summitWebhookSecret">סוד Webhook (לגבייה אוטומטית בהוראת קבע)</label>
-                        <input type="password" id="summitWebhookSecret" wire:model="summitWebhookSecret" class="ltr-num" dir="ltr">
-                    </div>
-                    <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-                        <button type="submit" class="btn btn-primary">שמירת הגדרות SUMIT</button>
-                        <button type="button" wire:click="testSummitConnection" class="btn btn-secondary">בדיקת חיבור</button>
-                    </div>
-                    @error('summitConnection') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    <div class="full"><button type="submit" class="btn btn-secondary">שמירת מצב בדיקה</button></div>
                 </form>
             </div>
         </div>
