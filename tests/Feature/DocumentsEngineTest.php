@@ -15,6 +15,7 @@ use App\Models\Role;
 use App\Models\School;
 use App\Models\StatusDefinition;
 use App\Models\User;
+use App\Services\DocumentLinkedFields;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use RuntimeException;
@@ -431,6 +432,64 @@ class DocumentsEngineTest extends TestCase
         $this->assertSame('office@example.com', $school->email);
     }
 
+    public function test_contact_linked_fields_resolve_from_the_primary_and_accounting_contacts(): void
+    {
+        $deal = $this->createDeal();
+        $deal->customer->school->update(['syllable' => 'א-ו', 'classes_per_grade' => 3]);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'רינה כהן', 'role' => 'מנהלת', 'phone' => '050-1111111', 'email' => 'rina@example.com', 'is_primary' => true]);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'יוסי לוי', 'phone_secondary' => '03-2222222', 'email_secondary' => 'acc@example.com', 'is_accounting_contact' => true]);
+
+        $this->assertSame('רינה כהן', DocumentLinkedFields::resolve('contact_primary.name', $deal));
+        $this->assertSame('מנהלת', DocumentLinkedFields::resolve('contact_primary.role', $deal));
+        $this->assertSame('050-1111111', DocumentLinkedFields::resolve('contact_primary.phone', $deal));
+        $this->assertSame('rina@example.com', DocumentLinkedFields::resolve('contact_primary.email', $deal));
+        $this->assertSame('יוסי לוי', DocumentLinkedFields::resolve('contact_accounting.name', $deal));
+        $this->assertSame('03-2222222', DocumentLinkedFields::resolve('contact_accounting.phone_secondary', $deal));
+        $this->assertSame('acc@example.com', DocumentLinkedFields::resolve('contact_accounting.email_secondary', $deal));
+        $this->assertSame('א-ו', DocumentLinkedFields::resolve('customer.school_syllable', $deal));
+        $this->assertSame('3', DocumentLinkedFields::resolve('customer.school_classes_per_grade', $deal));
+    }
+
+    public function test_primary_contact_falls_back_to_the_first_contact_and_accounting_has_no_fallback(): void
+    {
+        $deal = $this->createDeal();
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'ללא סימון']);
+
+        $this->assertSame('ללא סימון', DocumentLinkedFields::resolve('contact_primary.name', $deal));
+        $this->assertNull(DocumentLinkedFields::resolve('contact_accounting.name', $deal));
+    }
+
+    public function test_submitting_contact_linked_fields_updates_the_existing_contact(): void
+    {
+        $deal = $this->createDeal();
+        $contact = Contact::create(['customer_id' => $deal->customer_id, 'name' => 'רינה כהן', 'is_primary' => true]);
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'טלפון איש הקשר הראשי', 'field_type' => 'linked', 'linked_field' => 'contact_primary.phone', 'is_required' => false],
+            ['name' => 'תפקיד', 'field_type' => 'linked', 'linked_field' => 'contact_primary.role', 'is_required' => false],
+            ['name' => 'שם הגורם החשבונאי', 'field_type' => 'linked', 'linked_field' => 'contact_accounting.name', 'is_required' => false],
+        ]);
+
+        $document = Document::generateFor($deal, $template);
+        [$phone, $role, $accountingName] = $document->documentTemplate->fields->all();
+
+        $document->submitFieldValues([$phone->id => '052-7777777', $role->id => 'רכזת', $accountingName->id => 'לא קיים']);
+
+        $contact->refresh();
+        $this->assertSame('052-7777777', $contact->phone);
+        $this->assertSame('רכזת', $contact->role);
+        $this->assertSame(1, Contact::where('customer_id', $deal->customer_id)->count());
+    }
+
+    public function test_quick_insert_picker_offers_contact_fields_but_not_deal_fields(): void
+    {
+        $options = DocumentLinkedFields::customerCardOptions();
+
+        $this->assertArrayHasKey('contact_primary.phone', $options);
+        $this->assertArrayHasKey('contact_accounting.email', $options);
+        $this->assertArrayHasKey('customer.school_syllable', $options);
+        $this->assertArrayNotHasKey('deal.agreed_amount', $options);
+    }
+
     /**
      * Template content is now rendered as raw HTML everywhere ({!! !!}) so
      * the rich-text editor's bold/italic/underline/font-size actually show
@@ -490,8 +549,22 @@ class DocumentsEngineTest extends TestCase
 
         $document = Document::generateFor($deal, $template);
 
-        $this->assertStringContainsString('כתובת למשלוח: '.str_repeat('_', 24), $document->printFriendlyContent());
+        $this->assertStringContainsString('תוכן בדיקה: '.str_repeat('_', 24), $document->printFriendlyContent());
+        $this->assertStringNotContainsString('כתובת למשלוח', $document->printFriendlyContent());
         $this->assertStringNotContainsString('[כתובת למשלוח]', $document->printFriendlyContent());
+    }
+
+    public function test_print_friendly_content_fills_an_empty_linked_field_from_the_live_customer_card(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'כתובת בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_address', 'is_required' => false],
+        ]);
+        $document = Document::generateFor($deal, $template);
+
+        $deal->customer->school->update(['address' => 'רחוב חדש 7']);
+
+        $this->assertStringContainsString('רחוב חדש 7', $document->fresh()->printFriendlyContent());
     }
 
     public function test_print_friendly_content_shows_a_filled_fields_actual_value(): void

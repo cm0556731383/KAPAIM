@@ -53,6 +53,13 @@
             padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px;
         }
         .field .required { color: var(--color-error); }
+        .inline-field {
+            font-family: inherit; font-size: inherit; color: var(--color-primary); font-weight: 500;
+            border: none; border-bottom: 1.5px solid var(--color-text-secondary); border-radius: 0;
+            background: #F7F6F0; padding: 0 4px; margin: 0 2px; max-width: 100%;
+        }
+        .inline-field:focus { outline: none; border-bottom-color: var(--color-primary); background: #EAF2F8; }
+        .inline-field.is-required:placeholder-shown { border-bottom-color: var(--color-error); }
         .field-readonly {
             font-size: 15px; color: var(--color-text-secondary);
             background: var(--color-background); border-radius: 8px; padding: 10px 12px;

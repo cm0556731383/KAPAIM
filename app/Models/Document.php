@@ -330,7 +330,7 @@ class Document extends Model
 
         $values = [];
 
-        foreach ($template->fields as $field) {
+        foreach ($template->fieldsInContent() as $field) {
             $value = '';
 
             if ($field->field_type === 'linked' && $field->linked_field) {
@@ -366,7 +366,7 @@ class Document extends Model
     {
         $stored = [];
 
-        foreach ($this->documentTemplate->fields as $field) {
+        foreach ($this->documentTemplate->fieldsInContent() as $field) {
             $value = trim((string) ($valuesByFieldId[$field->id] ?? ($this->field_values[$field->id]['value'] ?? '')));
 
             if ($field->is_required && $value === '') {
@@ -555,10 +555,31 @@ class Document extends Model
      */
     public function printFriendlyContent(): string
     {
-        return $this->documentTemplate->renderContent(
-            collect($this->field_values ?? [])->map(fn ($v) => $v['value'])->all(),
-            printFriendly: true,
-        );
+        return $this->documentTemplate->renderContent($this->currentFieldValues(), printFriendly: true);
+    }
+
+    /**
+     * document_template_field_id => value: what was captured on this
+     * document, falling back — for a linked field still empty here — to the
+     * customer card's live value, so a detail added to the card after the
+     * document was generated still fills its line instead of leaving it blank.
+     */
+    public function currentFieldValues(): array
+    {
+        $stored = collect($this->field_values ?? []);
+        $values = [];
+
+        foreach ($this->documentTemplate->fieldsInContent() as $field) {
+            $value = trim((string) ($stored[$field->id]['value'] ?? ''));
+
+            if ($value === '' && $this->deal && $field->field_type === 'linked' && $field->linked_field) {
+                $value = trim((string) (DocumentLinkedFields::resolve($field->linked_field, $this->deal) ?? ''));
+            }
+
+            $values[$field->id] = $value;
+        }
+
+        return $values;
     }
 
     /**
@@ -579,7 +600,7 @@ class Document extends Model
             return;
         }
 
-        if ($this->documentTemplate->fields->isNotEmpty()) {
+        if ($this->documentTemplate->fieldsInContent()->isNotEmpty()) {
             $this->submitFieldValues($fieldValues);
         }
 

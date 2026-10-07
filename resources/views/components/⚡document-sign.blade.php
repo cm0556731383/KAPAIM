@@ -4,6 +4,7 @@ use App\Models\Document;
 use App\Services\ActivityLogger;
 use App\Services\DocumentLinkedFields;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 /**
@@ -16,14 +17,16 @@ use Livewire\Component;
  * (FR-4.10/FR-4.11); "אישור וחתימה" is a click-to-confirm, not a drawn
  * signature — see Document::confirm() for what it actually records.
  *
- * A field the customer's card (or a prior submission) already has a value
- * for is shown read-only, not reopened for editing — only genuinely empty
- * fields are editable. $readonlyFields carries that per-field, computed
- * once in mount(): a linked field is read-only when DocumentLinkedFields
- * already resolves a value from the live business record; any field
- * (linked or free-text) is read-only when field_values already has a
- * non-empty value from an earlier submission (e.g. staff filled it
- * manually in ⚡document-view.blade.php before sending).
+ * Only fields whose token appears in the template text are shown
+ * (DocumentTemplate::fieldsInContent()), each as an inline input right
+ * where its token sits in the text (formContent()) — there is no separate
+ * list of fields under the document. Each is pre-filled from what the
+ * document captured, or the customer card's live value
+ * (Document::currentFieldValues()), and stays editable either way — a
+ * corrected value is written back to the customer card on confirm
+ * (DocumentLinkedFields::applyBack()). The one exception is the sale's own
+ * terms (deal.agreed_amount / deal.program_name): those are shown but never
+ * editable by the recipient, and are never written back anyway.
  */
 new
 #[Layout('layouts.public', ['title' => 'אישור מסמך — כפיים'])]
@@ -34,7 +37,8 @@ class extends Component
     /** document_template_field_id => string value — includes read-only fields' values too, so confirm() still records them. */
     public array $fieldValues = [];
 
-    /** document_template_field_id => bool. */
+    /** document_template_field_id => bool — true only for the deal's own terms (see class docblock). */
+    #[Locked]
     public array $readonlyFields = [];
 
     public ?string $error = null;
@@ -46,28 +50,62 @@ class extends Component
         $this->document = $document->load(['deal.customer.school', 'documentTemplate.fields', 'businessEntity', 'lines']);
         $this->document->markViewed();
 
-        $stored = collect($this->document->field_values ?? []);
+        $this->fieldValues = $this->document->currentFieldValues();
 
-        foreach ($this->document->documentTemplate->fields as $field) {
-            $storedValue = trim((string) ($stored[$field->id]['value'] ?? ''));
-
-            $linkedValue = $field->field_type === 'linked' && $field->linked_field
-                ? trim((string) (DocumentLinkedFields::resolve($field->linked_field, $this->document->deal) ?? ''))
-                : '';
-
-            $existingValue = $storedValue !== '' ? $storedValue : $linkedValue;
-
-            $this->fieldValues[$field->id] = $existingValue;
-            $this->readonlyFields[$field->id] = $existingValue !== '';
+        foreach ($this->document->documentTemplate->fieldsInContent() as $field) {
+            $this->readonlyFields[$field->id] = str_starts_with((string) $field->linked_field, 'deal.') && $this->fieldValues[$field->id] !== '';
         }
+    }
+
+    /**
+     * The template body with every field's token swapped for an inline
+     * input bound to fieldValues.{id} (or, for the deal's read-only terms,
+     * just the value as text). Built from the template's own content, the
+     * same source submitFieldValues() re-renders from on confirm.
+     */
+    public function formContent(): string
+    {
+        return $this->document->documentTemplate->renderFormContent(function ($field) {
+            $value = (string) ($this->fieldValues[$field->id] ?? '');
+
+            if ($this->readonlyFields[$field->id] ?? false) {
+                return '<strong>'.e($value).'</strong>';
+            }
+
+            // A blank line only — no visible field name. The single-space
+            // placeholder is invisible but keeps :placeholder-shown working
+            // for the required-field styling; the name stays available to
+            // screen readers / on hover via aria-label and title.
+            $label = $field->name.($field->is_required ? ' *' : '');
+            $minSize = 14;
+
+            return sprintf(
+                '<input type="text" class="inline-field%s" wire:model="fieldValues.%d" placeholder=" " aria-label="%s" title="%s" size="%d" oninput="this.size = Math.max(this.value.length + 2, %d)">',
+                $field->is_required ? ' is-required' : '',
+                $field->id,
+                e($label),
+                e($label),
+                max(mb_strlen($value) + 2, $minSize),
+                $minSize,
+            );
+        });
     }
 
     public function confirm(ActivityLogger $activityLogger): void
     {
         $this->error = null;
 
+        // The read-only inputs are only disabled client-side — re-pin their
+        // values here so a crafted request can't alter the deal's terms.
+        $current = $this->document->currentFieldValues();
+        $values = $this->fieldValues;
+
+        foreach (array_keys(array_filter($this->readonlyFields)) as $fieldId) {
+            $values[$fieldId] = $current[$fieldId] ?? '';
+        }
+
         try {
-            $this->document->confirm($this->fieldValues, $activityLogger);
+            $this->document->confirm($values, $activityLogger);
         } catch (\RuntimeException $e) {
             $this->error = $e->getMessage();
 
@@ -86,7 +124,8 @@ class extends Component
         @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
     </p>
 
-    <div class="content">{!! $document->rendered_content !!}</div>
+    {{-- Before confirmation the fields are filled in inline, inside the text itself; afterwards the stored, filled-in content is shown. --}}
+    <div class="content">{!! $document->confirmed_at ? $document->rendered_content : $this->formContent() !!}</div>
 
     @if ($document->document_type === 'invoice')
         <table>
@@ -115,19 +154,6 @@ class extends Component
     @else
         @if ($error)
             <div class="error-banner">{{ $error }}</div>
-        @endif
-
-        @if ($document->documentTemplate->fields->isNotEmpty())
-            @foreach ($document->documentTemplate->fields as $field)
-                <div class="field">
-                    <label>{{ $field->name }} @if ($field->is_required)<span class="required">*</span>@endif</label>
-                    @if ($readonlyFields[$field->id] ?? false)
-                        <div class="field-readonly">{{ $fieldValues[$field->id] }}</div>
-                    @else
-                        <input type="text" wire:model="fieldValues.{{ $field->id }}">
-                    @endif
-                </div>
-            @endforeach
         @endif
 
         <button type="button" wire:click="confirm" class="btn-confirm">אישור וחתימה</button>

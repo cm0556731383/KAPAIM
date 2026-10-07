@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 
 /**
  * Build-plan 07 — DOCUMENT_TEMPLATE (US-015). Like EmailTemplate, a template
@@ -50,6 +51,17 @@ class DocumentTemplate extends Model
     }
 
     /**
+     * The fields whose {{token}} actually appears in the template text. A
+     * field row can outlive its token (the text was edited and the token
+     * deleted, but the row stayed) — such a field has nowhere to show up in
+     * the document, so the form must neither ask for it nor require it.
+     */
+    public function fieldsInContent(): Collection
+    {
+        return $this->fields->filter(fn (DocumentTemplateField $field) => str_contains((string) $this->content, $field->placeholderToken()))->values();
+    }
+
+    /**
      * Substitutes each field's {{placeholder}} token in the template body.
      * $valuesByFieldId is keyed by document_template_field_id => string
      * value; a field with no supplied value falls back to a bracketed
@@ -57,7 +69,9 @@ class DocumentTemplate extends Model
      * preview screen wants to show before any real document exists.
      *
      * $printFriendly (Document::printFriendlyContent(), the PDF send) swaps
-     * that fallback for "field name: ________________" instead — a bracket
+     * that fallback for a bare "________________" line instead — the token
+     * already sits inside the template's own sentence ("בכתובת ____"), so
+     * repeating the field name there would read twice. A bracket
      * makes sense on screen, but a printed/downloaded document has no
      * interactive field for the recipient to fill, so it gets a blank line
      * to write on by hand instead, right where the field actually sits in
@@ -74,13 +88,33 @@ class DocumentTemplate extends Model
      * becoming stored XSS shown back on both the customer's own page and
      * staff's ⚡document-view.blade.php.
      */
+    /**
+     * The online sign form's version of the body: each field's token is
+     * replaced by whatever HTML $renderField returns for it (an inline
+     * input, in ⚡document-sign.blade.php), so the field is filled in right
+     * where it sits in the sentence instead of in a separate list. The
+     * callback owns escaping of anything it puts in that HTML.
+     *
+     * @param  callable(DocumentTemplateField): string  $renderField
+     */
+    public function renderFormContent(callable $renderField): string
+    {
+        $content = (string) $this->content;
+
+        foreach ($this->fieldsInContent() as $field) {
+            $content = str_replace($field->placeholderToken(), $renderField($field), $content);
+        }
+
+        return $content;
+    }
+
     public function renderContent(array $valuesByFieldId = [], bool $printFriendly = false): string
     {
         $content = (string) $this->content;
 
         foreach ($this->fields as $field) {
             $value = $valuesByFieldId[$field->id] ?? null;
-            $blank = $printFriendly ? e($field->name).': '.str_repeat('_', 24) : '['.e($field->name).']';
+            $blank = $printFriendly ? str_repeat('_', 24) : '['.e($field->name).']';
             $content = str_replace(
                 $field->placeholderToken(),
                 $value !== null && $value !== '' ? e((string) $value) : $blank,

@@ -28,6 +28,14 @@ class extends Component
     public string $templateDocumentType = 'quote';
     public string $templateContent = '';
 
+    /**
+     * The content editor is wire:ignore'd so a re-render never overwrites
+     * it while the user is typing (that reset the cursor and made the text
+     * jump). Bumped whenever a different template is loaded/cleared, which
+     * changes the editor's wire:key so Livewire does replace it then.
+     */
+    public int $editorVersion = 0;
+
     /** The "quick insert" search box below the content textarea — filters App\Services\DocumentLinkedFields::customerCardOptions() only, never the deal-scoped options. */
     public string $linkedFieldSearch = '';
 
@@ -85,6 +93,7 @@ class extends Component
         $this->templateName = $template->name;
         $this->templateDocumentType = $template->document_type;
         $this->templateContent = $template->content;
+        $this->editorVersion++;
         $this->previewTemplateId = null;
 
         // Previously the "הוספת שדה" panel required re-picking the template
@@ -99,6 +108,7 @@ class extends Component
     public function cancelEdit(): void
     {
         $this->reset(['editingTemplateId', 'templateName', 'templateContent']);
+        $this->editorVersion++;
         $this->templateDocumentType = 'quote';
         $this->dispatch('close-modals');
     }
@@ -294,7 +304,7 @@ class extends Component
                                         if (this._sel) { window.getSelection().removeAllRanges(); window.getSelection().addRange(this._sel); }
                                         document.execCommand('styleWithCSS', false, true);
                                         document.execCommand('fontSize', false, this.value);
-                                        $wire.set('templateContent', $refs.templateContentInput.innerHTML);
+                                        $wire.templateContent = $refs.templateContentInput.innerHTML;
                                         this.selectedIndex = 0;
                                     "
                                 >
@@ -308,10 +318,12 @@ class extends Component
                             <div
                                 id="templateContent"
                                 x-ref="templateContentInput"
+                                wire:ignore
+                                wire:key="template-editor-{{ $editorVersion }}"
                                 contenteditable="true"
                                 class="rte-content"
                                 style="min-height:180px; border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-sm); font-size:var(--fs-body); line-height:1.9; white-space:pre-wrap"
-                                x-on:input.debounce.500ms="$wire.set('templateContent', $el.innerHTML)"
+                                x-on:input="$wire.templateContent = $el.innerHTML"
                             >{!! $templateContent !!}</div>
                             @error('templateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
@@ -320,8 +332,10 @@ class extends Component
                             <div class="full">
                                 <label for="linkedFieldSearch">הוספת שדה מכרטיס הלקוחה לתוך המלל</label>
                                 <input type="text" id="linkedFieldSearch" wire:model.live="linkedFieldSearch" placeholder="חיפוש: שם, כתובת, עיר, טלפון, דוא&quot;ל...">
-                                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px">
-                                    @forelse ($this->customerCardLinkedFieldOptions() as $key => $label)
+                                @forelse (collect($this->customerCardLinkedFieldOptions())->groupBy(fn ($label, $key) => strtok($key, '.'), preserveKeys: true) as $group => $options)
+                                <div style="font-size:var(--fs-small); font-weight:600; margin-top:10px">{{ \App\Services\DocumentLinkedFields::GROUPS[$group] ?? '' }}</div>
+                                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px">
+                                    @foreach ($options as $key => $label)
                                         <button
                                             type="button"
                                             class="btn btn-ghost btn-sm"
@@ -334,14 +348,15 @@ class extends Component
                                                     sel.removeAllRanges();
                                                     if (window._templateInsertRange) { sel.addRange(window._templateInsertRange); }
                                                     document.execCommand('insertHTML', false, token);
-                                                    $wire.set('templateContent', $refs.templateContentInput.innerHTML);
+                                                    $wire.templateContent = $refs.templateContentInput.innerHTML;
                                                 })
                                             "
                                         >+ {{ $label }}</button>
-                                    @empty
-                                        <span class="text-text-secondary" style="font-size:var(--fs-small)">אין שדה תואם בכרטיס הלקוחה.</span>
-                                    @endforelse
+                                    @endforeach
                                 </div>
+                                @empty
+                                    <div class="text-text-secondary" style="font-size:var(--fs-small); margin-top:8px">אין שדה תואם בכרטיס הלקוחה.</div>
+                                @endforelse
                             </div>
                         @endif
 

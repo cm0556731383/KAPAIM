@@ -177,7 +177,7 @@ class DocumentSigningTest extends TestCase
         $this->assertTrue($firstConfirmedAt->equalTo($document->fresh()->confirmed_at));
     }
 
-    public function test_a_linked_field_with_an_existing_value_is_shown_readonly(): void
+    public function test_a_linked_field_with_an_existing_value_is_prefilled_and_editable(): void
     {
         $deal = $this->createDeal();
         $schoolName = $deal->customer->school->name;
@@ -188,8 +188,79 @@ class DocumentSigningTest extends TestCase
         $fieldId = $template->fields->first()->id;
 
         Livewire::test('document-sign', ['document' => $document])
-            ->assertSet("readonlyFields.{$fieldId}", true)
+            ->assertSet("readonlyFields.{$fieldId}", false)
             ->assertSet("fieldValues.{$fieldId}", $schoolName);
+    }
+
+    public function test_changing_a_prefilled_field_on_the_form_updates_the_customer_card(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => false],
+        ]);
+        $document = Document::generateFor($deal, $template);
+        $fieldId = $template->fields->first()->id;
+
+        Livewire::test('document-sign', ['document' => $document])
+            ->set("fieldValues.{$fieldId}", 'שם מתוקן')
+            ->call('confirm');
+
+        $this->assertSame('שם מתוקן', $deal->customer->school->fresh()->name);
+        $this->assertSame('שם מתוקן', $document->fresh()->field_values[$fieldId]['value']);
+    }
+
+    public function test_the_deals_own_terms_stay_readonly_even_if_the_request_is_tampered_with(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'סכום עסקה', 'field_type' => 'linked', 'linked_field' => 'deal.agreed_amount', 'is_required' => false],
+        ]);
+        $document = Document::generateFor($deal, $template);
+        $fieldId = $template->fields->first()->id;
+        $original = $document->field_values[$fieldId]['value'];
+
+        Livewire::test('document-sign', ['document' => $document])
+            ->assertSet("readonlyFields.{$fieldId}", true)
+            ->set("fieldValues.{$fieldId}", '1')
+            ->call('confirm');
+
+        $this->assertSame($original, $document->fresh()->field_values[$fieldId]['value']);
+    }
+
+    public function test_fields_are_rendered_inline_inside_the_text_not_as_a_separate_list(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'שם מלא', 'field_type' => 'free_text', 'is_required' => true],
+        ]);
+        $template->update(['content' => 'אני {{שם_מלא}} מאשר/ת.']);
+        $document = Document::generateFor($deal, $template->fresh());
+        $fieldId = $template->fields->first()->id;
+
+        $html = Livewire::test('document-sign', ['document' => $document])->html();
+
+        $this->assertMatchesRegularExpression('/אני <input type="text" class="inline-field is-required" wire:model="fieldValues\.'.$fieldId.'"[^>]*> מאשר\/ת\./u', $html);
+        $this->assertSame(1, substr_count($html, 'wire:model="fieldValues.'.$fieldId.'"'));
+        $this->assertStringNotContainsString('{{שם_מלא}}', $html);
+    }
+
+    public function test_a_field_whose_token_is_not_in_the_template_text_is_neither_shown_nor_required(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'שם מלא', 'field_type' => 'free_text', 'is_required' => false],
+            ['name' => 'שדה יתום', 'field_type' => 'free_text', 'is_required' => true],
+        ]);
+        $template->update(['content' => 'תוכן בדיקה: {{שם_מלא}}']);
+        $document = Document::generateFor($deal, $template->fresh());
+
+        Livewire::test('document-sign', ['document' => $document])
+            ->assertSee('שם מלא')
+            ->assertDontSee('שדה יתום')
+            ->call('confirm')
+            ->assertSet('error', null);
+
+        $this->assertNotNull($document->fresh()->confirmed_at);
     }
 
     public function test_a_linked_field_with_no_existing_value_is_editable(): void

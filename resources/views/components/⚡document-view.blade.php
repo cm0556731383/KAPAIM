@@ -60,9 +60,7 @@ class extends Component
 
         $this->document = $document->load(['deal.customer.school', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
 
-        foreach ($this->document->field_values ?? [] as $fieldId => $entry) {
-            $this->fieldValues[$fieldId] = $entry['value'] ?? '';
-        }
+        $this->fieldValues = $this->document->currentFieldValues();
 
         if (! $this->document->sent_at) {
             $this->workingRecipients = $this->document->defaultRecipients()
@@ -252,12 +250,12 @@ class extends Component
             </div>
 
             {{-- ===== שדות הטופס הדיגיטלי ===== --}}
-            @if ($document->documentTemplate->fields->isNotEmpty())
+            @if ($document->documentTemplate->fieldsInContent()->isNotEmpty())
                 <div class="card" style="margin-bottom:var(--sp-lg)">
                     <h3>שדות הטופס</h3>
                     <x-business-error-banner :message="$fieldsError" />
                     <div class="form-grid">
-                        @foreach ($document->documentTemplate->fields as $field)
+                        @foreach ($document->documentTemplate->fieldsInContent() as $field)
                             <div class="full">
                                 <label>{{ $field->name }} @if ($field->is_required)<span style="color:var(--color-error)">*</span>@endif @if ($field->field_type === 'linked')<span class="scope-pill" style="margin-inline-start:6px">מקושר</span>@endif</label>
                                 <input type="text" wire:model="fieldValues.{{ $field->id }}">
