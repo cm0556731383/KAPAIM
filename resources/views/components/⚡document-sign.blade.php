@@ -24,9 +24,11 @@ use Livewire\Component;
  * document captured, or the customer card's live value
  * (Document::currentFieldValues()), and stays editable either way — a
  * corrected value is written back to the customer card on confirm
- * (DocumentLinkedFields::applyBack()). The one exception is the sale's own
- * terms (deal.agreed_amount / deal.program_name): those are shown but never
- * editable by the recipient, and are never written back anyway.
+ * (DocumentLinkedFields::applyBack()). The exception is any linked value
+ * that isn't one of the customer card's own editable details
+ * (DocumentLinkedFields::isWritable() — the deal's terms, balances,
+ * statuses, dates): those are shown as plain text, never editable by the
+ * recipient, and never written back.
  */
 new
 #[Layout('layouts.public', ['title' => 'אישור מסמך — כפיים'])]
@@ -37,7 +39,7 @@ class extends Component
     /** document_template_field_id => string value — includes read-only fields' values too, so confirm() still records them. */
     public array $fieldValues = [];
 
-    /** document_template_field_id => bool — true only for the deal's own terms (see class docblock). */
+    /** document_template_field_id => bool — true for filled, non-writable linked values (see class docblock). */
     #[Locked]
     public array $readonlyFields = [];
 
@@ -53,7 +55,10 @@ class extends Component
         $this->fieldValues = $this->document->currentFieldValues();
 
         foreach ($this->document->documentTemplate->fieldsInContent() as $field) {
-            $this->readonlyFields[$field->id] = str_starts_with((string) $field->linked_field, 'deal.') && $this->fieldValues[$field->id] !== '';
+            $this->readonlyFields[$field->id] = $field->field_type === 'linked'
+                && $field->linked_field
+                && ! DocumentLinkedFields::isWritable($field->linked_field)
+                && $this->fieldValues[$field->id] !== '';
         }
     }
 
@@ -95,8 +100,8 @@ class extends Component
     {
         $this->error = null;
 
-        // The read-only inputs are only disabled client-side — re-pin their
-        // values here so a crafted request can't alter the deal's terms.
+        // The read-only values are only rendered as text client-side — re-pin
+        // them here so a crafted request can't alter the deal's terms.
         $current = $this->document->currentFieldValues();
         $values = $this->fieldValues;
 

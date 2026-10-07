@@ -36,7 +36,7 @@ class extends Component
      */
     public int $editorVersion = 0;
 
-    /** The "quick insert" search box below the content textarea — filters App\Services\DocumentLinkedFields::customerCardOptions() only, never the deal-scoped options. */
+    /** The "quick insert" search box below the content editor — filters App\Services\DocumentLinkedFields::pickerOptions(). */
     public string $linkedFieldSearch = '';
 
     public ?int $previewTemplateId = null;
@@ -189,7 +189,7 @@ class extends Component
      */
     public function ensureLinkedField(string $key, ActivityLogger $activityLogger): ?string
     {
-        if (! $this->editingTemplateId || ! array_key_exists($key, DocumentLinkedFields::customerCardOptions())) {
+        if (! $this->editingTemplateId || ! array_key_exists($key, DocumentLinkedFields::pickerOptions())) {
             return null;
         }
 
@@ -250,11 +250,11 @@ class extends Component
     }
 
     /** The quick-insert search box's results — customer-card fields only, filtered by $linkedFieldSearch. */
-    public function customerCardLinkedFieldOptions(): array
+    public function linkedFieldPickerOptions(): array
     {
         $search = trim($this->linkedFieldSearch);
 
-        $options = DocumentLinkedFields::customerCardOptions();
+        $options = DocumentLinkedFields::pickerOptions();
 
         if ($search === '') {
             return $options;
@@ -330,9 +330,9 @@ class extends Component
 
                         @if ($editingTemplateId)
                             <div class="full">
-                                <label for="linkedFieldSearch">הוספת שדה מכרטיס הלקוחה לתוך המלל</label>
+                                <label for="linkedFieldSearch">הוספת שדה מכרטיס הלקוחה או מהעסקה לתוך המלל</label>
                                 <input type="text" id="linkedFieldSearch" wire:model.live="linkedFieldSearch" placeholder="חיפוש: שם, כתובת, עיר, טלפון, דוא&quot;ל...">
-                                @forelse (collect($this->customerCardLinkedFieldOptions())->groupBy(fn ($label, $key) => strtok($key, '.'), preserveKeys: true) as $group => $options)
+                                @forelse (collect($this->linkedFieldPickerOptions())->groupBy(fn ($label, $key) => strtok($key, '.'), preserveKeys: true) as $group => $options)
                                 <div style="font-size:var(--fs-small); font-weight:600; margin-top:10px">{{ \App\Services\DocumentLinkedFields::GROUPS[$group] ?? '' }}</div>
                                 <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px">
                                     @foreach ($options as $key => $label)
@@ -355,7 +355,7 @@ class extends Component
                                     @endforeach
                                 </div>
                                 @empty
-                                    <div class="text-text-secondary" style="font-size:var(--fs-small); margin-top:8px">אין שדה תואם בכרטיס הלקוחה.</div>
+                                    <div class="text-text-secondary" style="font-size:var(--fs-small); margin-top:8px">אין שדה תואם.</div>
                                 @endforelse
                             </div>
                         @endif

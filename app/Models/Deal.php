@@ -26,7 +26,7 @@ use RuntimeException;
  * optimistic locking on `version` (FR-8.19).
  */
 #[Fillable([
-    'customer_id', 'program_id', 'bundle_id', 'status_id', 'agreed_amount',
+    'customer_id', 'program_id', 'bundle_id', 'status_id', 'agreed_amount', 'students_count',
     'program_price_snapshot', 'bundle_price_snapshot', 'program_name_snapshot', 'bundle_name_snapshot',
     'payment_method_id', 'special_request', 'purchased_at', 'completed_at', 'version',
 ])]

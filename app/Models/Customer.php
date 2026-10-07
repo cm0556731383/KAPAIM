@@ -122,6 +122,14 @@ class Customer extends Model
      * at-most-one-active-at-a-time discriminator/uniqueness guarantee, moved
      * from Program to Bundle 2026-09-09).
      */
+    /** Open balance across all of this customer's deals, excluding cancelled ones. */
+    public function outstandingBalance(): float
+    {
+        return (float) $this->deals()->with('status')->get()
+            ->reject(fn (Deal $deal) => $deal->status?->name === Deal::CANCELLED_STATUS_NAME)
+            ->sum(fn (Deal $deal) => $deal->outstandingBalance());
+    }
+
     public function exceedsSubscriptionPriceAlert(): bool
     {
         $subscriptionPrice = Bundle::where('is_subscription_type', true)->where('is_active', true)->first()?->price;

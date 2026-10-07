@@ -50,6 +50,8 @@ class extends Component
 
     public string $specialRequest = '';
 
+    public string $studentsCount = '';
+
     public string $paymentMethodId = '';
 
     /** FR-8.19 conflict error — a friendly banner, not a silent overwrite. */
@@ -86,6 +88,7 @@ class extends Component
         $this->selectedStatusId = (string) $this->deal->status_id;
         $this->agreedAmount = (string) $this->deal->agreed_amount;
         $this->specialRequest = (string) $this->deal->special_request;
+        $this->studentsCount = (string) ($this->deal->students_count ?? '');
         $this->paymentMethodId = (string) ($this->deal->payment_method_id ?? '');
     }
 
@@ -104,11 +107,13 @@ class extends Component
             'agreedAmount' => ['required', 'numeric', 'gt:0'],
             'specialRequest' => ['nullable', 'string'],
             'paymentMethodId' => ['nullable', 'exists:payment_methods,id'],
-        ], [], ['agreedAmount' => 'סכום מוסכם']);
+            'studentsCount' => ['nullable', 'integer', 'min:0'],
+        ], [], ['agreedAmount' => 'סכום מוסכם', 'studentsCount' => 'מספר תלמידות']);
 
         $this->deal->update([
             'agreed_amount' => $data['agreedAmount'],
             'special_request' => $data['specialRequest'] ?: null,
+            'students_count' => $data['studentsCount'] !== null && $data['studentsCount'] !== '' ? (int) $data['studentsCount'] : null,
         ]);
 
         try {
@@ -479,7 +484,7 @@ class extends Component
                 @endif
             </div>
 
-            {{-- ===== פרטי עסקה: סכום, בקשה מיוחדת, אמצעי תשלום ===== --}}
+            {{-- ===== פרטי עסקה: סכום, אמצעי תשלום, מספר תלמידות, בקשה מיוחדת ===== --}}
             <div class="card">
                 <h3>פרטי עסקה</h3>
                 <form wire:submit="saveDetails" class="form-grid">
@@ -496,6 +501,11 @@ class extends Component
                                 <option value="{{ $method->id }}">{{ $method->name }}</option>
                             @endforeach
                         </select>
+                    </div>
+                    <div>
+                        <label for="studentsCount">מספר תלמידות</label>
+                        <input type="text" id="studentsCount" wire:model="studentsCount" class="ltr-num" dir="ltr" inputmode="numeric">
+                        @error('studentsCount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full">
                         <label for="specialRequest">בקשת התאמה מיוחדת</label>

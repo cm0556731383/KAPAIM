@@ -102,6 +102,8 @@ class extends Component
 
     public string $dealSpecialRequest = '';
 
+    public string $dealStudentsCount = '';
+
     public string $dealPaymentMethodId = '';
 
     /** Business-rule error (FR-7.25) from Deal::createForCustomer() (FR-3.3/FR-8.4/FR-8.5). */
@@ -444,7 +446,8 @@ class extends Component
             'dealAgreedAmount' => ['nullable', 'numeric', 'gt:0'],
             'dealSpecialRequest' => ['nullable', 'string'],
             'dealPaymentMethodId' => ['nullable', 'exists:payment_methods,id'],
-        ], [], ['dealItem' => 'תוכנית / מארז']);
+            'dealStudentsCount' => ['nullable', 'integer', 'min:0'],
+        ], [], ['dealItem' => 'תוכנית / מארז', 'dealStudentsCount' => 'מספר תלמידות']);
 
         [$type, $id] = array_pad(explode(':', $data['dealItem'], 2), 2, null);
 
@@ -466,12 +469,16 @@ class extends Component
             return;
         }
 
+        if ($data['dealStudentsCount'] !== null && $data['dealStudentsCount'] !== '') {
+            $deal->update(['students_count' => (int) $data['dealStudentsCount']]);
+        }
+
         $itemName = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot;
         $activityLogger->log('deal.created', "נוצרה עסקה חדשה #{$deal->id} עבור לקוחה \"{$this->customer->school?->name}\": {$itemName}", [
             'deal_id' => $deal->id, 'customer_id' => $this->customer->id,
         ]);
 
-        $this->reset(['dealItem', 'dealAgreedAmount', 'dealSpecialRequest', 'dealPaymentMethodId']);
+        $this->reset(['dealItem', 'dealAgreedAmount', 'dealSpecialRequest', 'dealPaymentMethodId', 'dealStudentsCount']);
         unset($this->deals);
 
         $this->redirect(route('deal-detail', $deal), navigate: false);
@@ -819,9 +826,7 @@ class extends Component
     #[Computed]
     public function outstandingBalance(): float
     {
-        return (float) $this->customer->deals()->with('status')->get()
-            ->reject(fn (Deal $deal) => $deal->status?->name === Deal::CANCELLED_STATUS_NAME)
-            ->sum(fn (Deal $deal) => $deal->outstandingBalance());
+        return $this->customer->outstandingBalance();
     }
 
     /**
@@ -1393,6 +1398,11 @@ class extends Component
                                 @endforeach
                             </select>
                         </div>
+                        <div>
+                            <label for="dealStudentsCount">מספר תלמידות</label>
+                            <input type="text" id="dealStudentsCount" wire:model="dealStudentsCount" class="ltr-num" dir="ltr" inputmode="numeric">
+                            @error('dealStudentsCount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
                         <div class="full">
                             <label for="dealSpecialRequest">בקשת התאמה מיוחדת</label>
                             <textarea id="dealSpecialRequest" wire:model="dealSpecialRequest" rows="2"></textarea>
@@ -1405,7 +1415,7 @@ class extends Component
                 <div class="deal-row">
                     <div>
                         <div style="font-weight:600">{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</div>
-                        <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">נפתחה <span class="ltr-num">{{ $deal->purchased_at->format('d/m/Y') }}</span></div>
+                        <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">נפתחה <span class="ltr-num">{{ $deal->purchased_at->format('d/m/Y') }}</span>@if ($deal->students_count !== null) · {{ $deal->students_count }} תלמידות @endif</div>
                     </div>
                     <div style="display:flex; align-items:center; gap:var(--sp-md)">
                         <span class="amount ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</span>

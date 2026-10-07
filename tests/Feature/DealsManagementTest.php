@@ -307,6 +307,36 @@ class DealsManagementTest extends TestCase
         $response->assertSee($deal->program_name_snapshot);
     }
 
+    public function test_students_count_can_be_entered_when_creating_a_deal(): void
+    {
+        $customer = $this->createCustomer();
+        $program = $this->createProgram(name: 'תוכנית עם מספר תלמידות');
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'deals')
+            ->set('dealItem', "program:{$program->id}")
+            ->set('dealStudentsCount', '32')
+            ->call('createDeal')
+            ->assertHasNoErrors();
+
+        $this->assertSame(32, Deal::where('customer_id', $customer->id)->firstOrFail()->students_count);
+    }
+
+    public function test_students_count_can_be_edited_on_the_deal_card(): void
+    {
+        $deal = $this->createDeal();
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->set('studentsCount', '28')
+            ->call('saveDetails')
+            ->assertHasNoErrors()
+            ->set('studentsCount', 'abc')
+            ->call('saveDetails')
+            ->assertHasErrors(['studentsCount']);
+
+        $this->assertSame(28, $deal->fresh()->students_count);
+    }
+
     public function test_optional_payment_method_can_be_set_on_a_deal(): void
     {
         $deal = $this->createDeal();

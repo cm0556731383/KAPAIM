@@ -455,6 +455,58 @@ class DocumentsEngineTest extends TestCase
         $this->assertSame('580123456', DocumentLinkedFields::resolve('customer.school_business_number', $deal));
     }
 
+    public function test_customer_deal_subscription_and_general_fields_resolve(): void
+    {
+        $deal = $this->createDeal();
+        $deal->update(['agreed_amount' => 350, 'special_request' => 'הגעה בבוקר']);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'רינה', 'is_primary' => true]);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'יוסי']);
+        $deal->refresh();
+
+        $this->assertSame('400', DocumentLinkedFields::resolve('deal.list_price', $deal));
+        $this->assertSame('350', DocumentLinkedFields::resolve('deal.agreed_amount', $deal));
+        $this->assertSame('50', DocumentLinkedFields::resolve('deal.discount', $deal));
+        $this->assertSame('0', DocumentLinkedFields::resolve('deal.total_paid', $deal));
+        $this->assertSame('350', DocumentLinkedFields::resolve('deal.outstanding_balance', $deal));
+        $this->assertSame('הגעה בבוקר', DocumentLinkedFields::resolve('deal.special_request', $deal));
+        $this->assertSame($deal->purchased_at->format('d/m/Y'), DocumentLinkedFields::resolve('deal.purchased_at', $deal));
+        $this->assertSame($deal->status->name, DocumentLinkedFields::resolve('deal.status', $deal));
+        $this->assertSame('רינה, יוסי', DocumentLinkedFields::resolve('customer_info.contacts_names', $deal));
+        $this->assertSame($deal->customer->converted_at->format('d/m/Y'), DocumentLinkedFields::resolve('customer_info.since', $deal));
+        $this->assertSame('350', DocumentLinkedFields::resolve('customer_info.outstanding_balance', $deal));
+        $this->assertSame(now()->format('d/m/Y'), DocumentLinkedFields::resolve('general.today', $deal));
+        $this->assertNull(DocumentLinkedFields::resolve('subscription.start_date', $deal));
+    }
+
+    public function test_students_count_resolves_and_is_written_back_from_the_form(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form', [
+            ['name' => 'מספר תלמידות', 'field_type' => 'linked', 'linked_field' => 'deal.students_count', 'is_required' => false],
+        ]);
+        $document = Document::generateFor($deal, $template);
+        $field = $document->documentTemplate->fields->first();
+
+        $this->assertNull(DocumentLinkedFields::resolve('deal.students_count', $deal));
+        $this->assertTrue(DocumentLinkedFields::isWritable('deal.students_count'));
+
+        $document->submitFieldValues([$field->id => '30']);
+        $this->assertSame(30, $deal->fresh()->students_count);
+        $this->assertSame('30', DocumentLinkedFields::resolve('deal.students_count', $deal->fresh()));
+
+        $document->submitFieldValues([$field->id => 'שלושים']);
+        $this->assertSame(30, $deal->fresh()->students_count);
+    }
+
+    public function test_only_customer_card_details_are_writable(): void
+    {
+        $this->assertTrue(DocumentLinkedFields::isWritable('customer.school_business_number'));
+        $this->assertTrue(DocumentLinkedFields::isWritable('contact_accounting.email'));
+        $this->assertFalse(DocumentLinkedFields::isWritable('deal.agreed_amount'));
+        $this->assertFalse(DocumentLinkedFields::isWritable('customer_info.outstanding_balance'));
+        $this->assertFalse(DocumentLinkedFields::isWritable('general.today'));
+    }
+
     public function test_primary_contact_falls_back_to_the_first_contact_and_accounting_has_no_fallback(): void
     {
         $deal = $this->createDeal();
@@ -485,16 +537,20 @@ class DocumentsEngineTest extends TestCase
         $this->assertSame(1, Contact::where('customer_id', $deal->customer_id)->count());
     }
 
-    public function test_quick_insert_picker_offers_contact_fields_but_not_deal_fields(): void
+    public function test_quick_insert_picker_offers_every_customer_card_and_deal_field(): void
     {
-        $options = DocumentLinkedFields::customerCardOptions();
+        $options = DocumentLinkedFields::pickerOptions();
+
+        $this->assertSame(DocumentLinkedFields::OPTIONS, $options);
+        $this->assertArrayHasKey('subscription.monthly_payment', $options);
+        $this->assertArrayHasKey('customer_info.outstanding_balance', $options);
 
         $this->assertArrayHasKey('contact_primary.phone', $options);
         $this->assertArrayHasKey('contact_accounting.email', $options);
         $this->assertArrayHasKey('customer.school_syllable', $options);
         $this->assertArrayHasKey('customer.school_invoice_name', $options);
         $this->assertArrayHasKey('customer.school_business_number', $options);
-        $this->assertArrayNotHasKey('deal.agreed_amount', $options);
+        $this->assertArrayHasKey('deal.agreed_amount', $options);
     }
 
     /**
@@ -701,13 +757,7 @@ class DocumentsEngineTest extends TestCase
         $this->assertSame(0, $template->fields()->count());
     }
 
-    /**
-     * The quick-insert picker must only ever offer real customer-card
-     * fields (school name/address/city/phone/email) — never the
-     * deal-scoped options (agreed_amount/program_name), which stay
-     * reachable only through the older "הוספת שדה" dropdown.
-     */
-    public function test_ensuring_a_deal_scoped_field_via_the_quick_picker_does_nothing(): void
+    public function test_ensuring_a_deal_field_via_the_quick_picker_creates_it(): void
     {
         $template = $this->createTemplate('order_form');
 
@@ -716,18 +766,19 @@ class DocumentsEngineTest extends TestCase
 
         $token = $component->instance()->ensureLinkedField('deal.agreed_amount', app(\App\Services\ActivityLogger::class));
 
-        $this->assertNull($token);
-        $this->assertSame(0, $template->fields()->count());
+        $this->assertNotNull($token);
+        $this->assertDatabaseHas('document_template_fields', ['document_template_id' => $template->id, 'linked_field' => 'deal.agreed_amount']);
     }
 
-    public function test_the_quick_picker_search_filters_to_matching_customer_card_fields(): void
+    public function test_the_quick_picker_search_filters_to_matching_fields(): void
     {
         $component = Livewire::actingAs($this->owner)->test('document-templates')
             ->set('linkedFieldSearch', 'טלפון');
 
-        $options = $component->instance()->customerCardLinkedFieldOptions();
+        $options = $component->instance()->linkedFieldPickerOptions();
 
         $this->assertArrayHasKey('customer.school_phone', $options);
+        $this->assertArrayHasKey('contact_primary.phone', $options);
         $this->assertArrayNotHasKey('customer.school_name', $options);
         $this->assertArrayNotHasKey('deal.agreed_amount', $options);
     }
