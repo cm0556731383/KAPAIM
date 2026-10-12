@@ -304,13 +304,16 @@ class extends Component
                     </table>
                     </div>
                     @unless ($document->sent_at)
-                        <div style="padding: var(--sp-md) var(--sp-lg)">
-                            <form wire:submit="addLine" class="form-grid">
+                        {{-- Collapsed by default: the invoice already has its line(s); empty
+                             inputs here read as "unfilled fields" rather than "add another line". --}}
+                        <div style="padding: var(--sp-md) var(--sp-lg)" x-data="{ adding: {{ $errors->hasAny(['lineDescription', 'lineQuantity', 'lineAmount', 'lineUnitPrice']) ? 'true' : 'false' }} }">
+                            <button type="button" x-show="! adding" x-on:click="adding = true" class="btn btn-ghost">+ הוספת שורה נוספת</button>
+                            <form wire:submit="addLine" class="form-grid" x-show="adding" x-cloak>
                                 <div><label>תיאור</label><input type="text" wire:model="lineDescription"></div>
                                 <div><label>כמות</label><input type="text" class="ltr-num" dir="ltr" wire:model="lineQuantity"></div>
                                 <div><label>מחיר יחידה (אופציונלי)</label><input type="text" class="ltr-num" dir="ltr" wire:model="lineUnitPrice"></div>
                                 <div><label>סכום שורה</label><input type="text" class="ltr-num" dir="ltr" wire:model="lineAmount"></div>
-                                <div class="full"><button type="submit" class="btn btn-ghost">+ הוספת שורה</button></div>
+                                <div class="full" style="display:flex; gap:var(--sp-sm)"><button type="submit" class="btn btn-secondary">הוספת השורה</button><button type="button" x-on:click="adding = false" class="btn btn-ghost">ביטול</button></div>
                             </form>
                         </div>
                     @endunless

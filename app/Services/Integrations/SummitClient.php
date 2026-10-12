@@ -50,7 +50,12 @@ class SummitClient
     // Accounting_Typed_DocumentType
     private const DOCUMENT_INVOICE = 0;
     private const DOCUMENT_RECEIPT = 2;
+    private const DOCUMENT_PROFORMA_INVOICE = 3;
     private const DOCUMENT_CREDIT_INVOICE = 5;
+    private const DOCUMENT_CREDIT_RECEIPT = 7;
+
+    /** SUMIT refuses a tax invoice (and its credit) from an exempt dealer. */
+    private const EXEMPT_CLASSIFICATION = 'עוסק פטור';
 
     // Accounting_Typed_CustomerSearchMode
     private const SEARCH_BY_EXTERNAL_IDENTIFIER = 2;
@@ -99,8 +104,12 @@ class SummitClient
         $entity = $this->entityFor($document->businessEntity);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
+        // An exempt dealer (עוסק פטור) can't issue a tax invoice — its "invoice"
+        // goes out as a חשבון עסקה, and the receipt is issued later as usual.
+        $type = $entity->classification === self::EXEMPT_CLASSIFICATION ? self::DOCUMENT_PROFORMA_INVOICE : self::DOCUMENT_INVOICE;
+
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', [
-            'Details' => $this->documentDetails(self::DOCUMENT_INVOICE, $document->deal, $email),
+            'Details' => $this->documentDetails($type, $document->deal, $email),
             'Items' => $this->documentItems($document),
             'VATIncluded' => true,
         ]));
@@ -114,11 +123,15 @@ class SummitClient
         $entity = $this->entityFor($document->businessEntity);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
+        // For an exempt dealer the invoice was a חשבון עסקה — not an accounting
+        // document, so there's nothing to credit against it; a קבלה זיכוי is.
+        $exempt = $entity->classification === self::EXEMPT_CLASSIFICATION;
+
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
-            'Details' => $this->documentDetails(self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
+            'Details' => $this->documentDetails($exempt ? self::DOCUMENT_CREDIT_RECEIPT : self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
             'Items' => $this->documentItems($document),
             'VATIncluded' => true,
-            'OriginalDocumentID' => $this->sumitDocumentId($document->deal->issuedInvoice()),
+            'OriginalDocumentID' => $exempt ? null : $this->sumitDocumentId($document->deal->issuedInvoice()),
         ], fn ($v) => $v !== null)));
 
         return (string) $data['DocumentID'];

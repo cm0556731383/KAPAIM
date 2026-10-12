@@ -497,7 +497,8 @@ class ExternalIntegrationsTest extends TestCase
         ]);
         Http::assertSent(fn ($request) => $request->url() === 'https://api.sumit.co.il/accounting/documents/create/'
             && $request['Credentials'] === ['CompanyID' => 12345678, 'APIKey' => 'x']
-            && $request['Details']['Type'] === 0
+            // The helper's entity is an עוסק פטור — SUMIT only lets it issue a חשבון עסקה.
+            && $request['Details']['Type'] === 3
             && $request['Details']['Customer']['ExternalIdentifier'] === 'kapaim-customer-'.$deal->customer_id
             && $request['Details']['SendByEmail']['EmailAddress'] === 'billing@example.com'
             && ! isset($request['Details']['IsDraft'])
@@ -919,6 +920,50 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertDatabaseHas('external_operations', ['operation_type' => 'standing_order_registered', 'status' => ExternalOperation::STATUS_SUCCESS, 'external_reference' => '11']);
     }
 
+    public function test_a_licensed_dealer_issues_a_tax_invoice_and_credits_it(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200)]);
+
+        $deal = $this->dealWithInvoice(400, 'עוסק מורשה');
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+        $invoice->sendTo([['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']], 'digital',
+            app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 0);
+
+        app(SummitClient::class)->issueCreditNote($this->creditNoteFor($deal->fresh()));
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 5 && $request['OriginalDocumentID'] === 555);
+    }
+
+    public function test_an_exempt_dealer_credits_with_a_credit_receipt(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 556]], 200)]);
+
+        $deal = $this->dealWithInvoice(400, 'עוסק פטור');
+
+        app(SummitClient::class)->issueCreditNote($this->creditNoteFor($deal));
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 7 && ! isset($request['OriginalDocumentID']));
+    }
+
+    private function creditNoteFor(Deal $deal): Document
+    {
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $creditNote = Document::create([
+            'deal_id' => $deal->id,
+            'document_template_id' => $invoice->document_template_id,
+            'business_entity_id' => $invoice->business_entity_id,
+            'document_type' => 'credit_note',
+            'status_id' => $invoice->status_id,
+            'format' => 'digital',
+            'rendered_content' => 'זיכוי',
+        ]);
+        $creditNote->addLine('זיכוי', 100);
+
+        return $creditNote;
+    }
+
     public function test_receipt_and_credit_note_are_linked_to_the_sumit_invoice(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
@@ -1091,7 +1136,7 @@ class ExternalIntegrationsTest extends TestCase
         return Deal::createForCustomer($customer, $program, null, $agreedAmount);
     }
 
-    private function dealWithInvoice(float $agreedAmount = 400): Deal
+    private function dealWithInvoice(float $agreedAmount = 400, string $classification = 'עוסק פטור'): Deal
     {
         $deal = $this->createDeal($agreedAmount);
 
@@ -1101,8 +1146,8 @@ class ExternalIntegrationsTest extends TestCase
         $contract = Document::generateFor($deal, $this->createTemplate('contract'));
         $contract->markSigned();
 
-        $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
-        $invoice->addLine('שורת בדיקה', (float) $deal->agreed_amount);
+        // Document::generateFor() already adds a line for the deal's agreed amount.
+        $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity($classification)->id);
         $invoice->update(['sent_at' => now()]); // issued — see Deal::issuedInvoice()
 
         return $deal->fresh();
@@ -1150,11 +1195,11 @@ class ExternalIntegrationsTest extends TestCase
         ]);
     }
 
-    private function createBusinessEntity(): BusinessEntity
+    private function createBusinessEntity(string $classification = 'עוסק פטור'): BusinessEntity
     {
         return BusinessEntity::create([
             'name' => 'עוסק לבדיקת אינטגרציות '.random_int(1, 999999),
-            'classification' => 'עוסק פטור',
+            'classification' => $classification,
             'company_number' => (string) random_int(100000000, 999999999),
             'email' => 'business'.random_int(1, 999999).'@example.com',
             'phone' => '03-0000000',
