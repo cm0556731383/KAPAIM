@@ -518,7 +518,7 @@ class SubscriptionsTest extends TestCase
         $contract->markSigned();
 
         $invoice = Document::generateFor($deal, $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
-        $invoice->addLine('שורת בדיקה', (float) $deal->agreed_amount);
+        // Document::generateFor() already adds a line for the deal's agreed amount.
         $invoice->update(['sent_at' => now()]); // issued — see Deal::issuedInvoice()
     }
 

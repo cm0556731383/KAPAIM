@@ -113,6 +113,11 @@ class Document extends Model
         return $this->hasMany(DocumentRecipient::class);
     }
 
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(Receipt::class);
+    }
+
     /**
      * FR-4.3/FR-4.4/FR-4.21/FR-4.22 (FR-8.7/FR-8.8): true if $documentType
      * may currently be generated for $deal. UI code calls this to
@@ -188,7 +193,7 @@ class Document extends Model
         $preceding = self::precedingFor($deal, $template->document_type);
         $fieldValues = self::buildInitialFieldValues($template, $deal, $preceding);
 
-        return self::createDocumentRow([
+        $document = self::createDocumentRow([
             'deal_id' => $deal->id,
             'expense_id' => null,
             'document_template_id' => $template->id,
@@ -202,6 +207,18 @@ class Document extends Model
                 collect($fieldValues)->map(fn ($v) => $v['value'])->all()
             ),
         ]);
+
+        // A new invoice starts with one line for what was sold — "<program/
+        // bundle> — <invoice name>" at the deal's agreed amount — editable
+        // or removable on the invoice screen until it's sent (FR-4.20).
+        if ($document->document_type === 'invoice' && (float) $deal->agreed_amount > 0) {
+            $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
+            $invoiceName = DocumentLinkedFields::invoiceName($deal);
+
+            $document->addLine($invoiceName ? "{$item} — {$invoiceName}" : $item, (float) $deal->agreed_amount);
+        }
+
+        return $document;
     }
 
     /** Shared by every generateFor()/generateCreditNoteFor() branch above — the sole INSERT point for this table. */
@@ -755,9 +772,11 @@ class Document extends Model
         $operations = ['smove' => null, 'summit' => null];
 
         // An invoice/credit note is delivered by Summit itself, so it only
-        // counts as sent once Summit accepted it — a failure (e.g. Summit
-        // not configured yet) leaves it an unsent draft that can be sent
-        // again later, instead of a "sent" invoice that never went anywhere.
+        // counts as sent once Summit accepted it. On a failure a credit note
+        // stays an unsent draft that can be sent again; an invoice draft is
+        // deleted outright (business owner's call, 2026-10-12), so the deal
+        // is free to generate a fresh invoice — $operations['deleted'] tells
+        // the caller the document is gone.
         if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
             $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
             // SUMIT emails the issued document itself, to the first recipient with a valid address.
@@ -776,6 +795,15 @@ class Document extends Model
             );
 
             if ($operations['summit']->status === ExternalOperation::STATUS_FAILED) {
+                if ($this->document_type === 'invoice' && ! $this->receipts()->exists()) {
+                    $logger->log('document.deleted', "טיוטת החשבונית עבור עסקה #{$this->deal_id} נמחקה כי ההפקה מול Summit נכשלה", [
+                        'deal_id' => $this->deal_id,
+                        'metadata' => ['document_id' => $this->id, 'error' => $operations['summit']->error_message],
+                    ]);
+                    $this->delete();
+                    $operations['deleted'] = true;
+                }
+
                 return $operations;
             }
         }

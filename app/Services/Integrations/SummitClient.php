@@ -84,7 +84,7 @@ class SummitClient
     public function verifyCredentials(BusinessEntity $entity): void
     {
         if (! $entity->hasSumitCredentials()) {
-            throw new RuntimeException("יש להזין מספר חברה ומפתח API של SUMIT עבור \"{$entity->name}\".");
+            throw new RuntimeException("יש להזין מספר חברה ומפתח API בחיבור SUMIT \"{$entity->sumitConnectionLabel()}\".");
         }
 
         $this->dataOrFail($this->post($entity, '/accounting/general/getvatrate/', []));
@@ -289,7 +289,7 @@ class SummitClient
         }
 
         if (! $entity->hasSumitCredentials()) {
-            throw new RuntimeException("לעוסק \"{$entity->name}\" לא הוגדרו מספר חברה ומפתח API של SUMIT — יש להזין אותם בהגדרות המערכת.");
+            throw new RuntimeException("לחיבור SUMIT \"{$entity->sumitConnectionLabel()}\" (עוסק \"{$entity->name}\") לא הוגדרו מספר חברה ומפתח API — יש להזין אותם בהגדרות המערכת.");
         }
 
         return $entity;

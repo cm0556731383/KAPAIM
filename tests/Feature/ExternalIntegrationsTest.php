@@ -504,7 +504,7 @@ class ExternalIntegrationsTest extends TestCase
             && $request['Items'][0]['TotalPrice'] == $deal->agreed_amount);
     }
 
-    public function test_a_sumit_business_error_keeps_the_invoice_an_unsent_draft(): void
+    public function test_a_sumit_business_error_deletes_the_invoice_draft(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
         // SUMIT answers HTTP 200 even for errors — only Status 0 is success.
@@ -525,7 +525,12 @@ class ExternalIntegrationsTest extends TestCase
 
         $this->assertSame(ExternalOperation::STATUS_FAILED, $operations['summit']->status);
         $this->assertStringContainsString('מפתח API שגוי', $operations['summit']->error_message);
-        $this->assertNull($invoice->fresh()->sent_at);
+        $this->assertTrue($operations['deleted']);
+        $this->assertNull($invoice->fresh());
+        // The failed operation stays in the log, only unlinked from the deleted document.
+        $this->assertSame($deal->id, $operations['summit']->fresh()->deal_id);
+        // The deal can generate a new invoice again.
+        $this->assertSame(0, $deal->documents()->where('document_type', 'invoice')->count());
     }
 
     public function test_test_mode_is_on_until_explicitly_turned_off(): void
@@ -548,7 +553,7 @@ class ExternalIntegrationsTest extends TestCase
         Http::assertSent(fn ($request) => ($request['Details']['IsDraft'] ?? null) === true);
     }
 
-    public function test_an_invoice_whose_summit_issuance_fails_stays_an_unsent_draft(): void
+    public function test_an_invoice_whose_summit_issuance_fails_is_deleted_and_the_deal_shows_why(): void
     {
         // No Summit setting at all — exactly the "not configured yet" failure.
         $deal = $this->dealWithInvoice();
@@ -565,9 +570,55 @@ class ExternalIntegrationsTest extends TestCase
         );
 
         $this->assertSame(ExternalOperation::STATUS_FAILED, $operations['summit']->status);
-        $this->assertNull($invoice->fresh()->sent_at);
-        $this->assertSame(0, $invoice->recipients()->count());
+        $this->assertNull($invoice->fresh());
+        $this->assertSame(0, \DB::table('document_recipients')->where('document_id', $invoice->id)->count());
         $this->assertNull($deal->fresh()->issuedInvoice());
+    }
+
+    public function test_sending_a_failing_invoice_from_its_screen_returns_to_the_deal_with_the_error(): void
+    {
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+
+        Livewire::actingAs($this->owner)->test('document-view', ['document' => $invoice])
+            ->set('workingRecipients', [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']])
+            ->call('send', 'digital')
+            ->assertRedirect(route('deal-detail', $deal->id));
+
+        $this->assertNull($invoice->fresh());
+        session()->put('documentError', 'טיוטת החשבונית נמחקה');
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertSee('טיוטת החשבונית נמחקה');
+    }
+
+    public function test_a_credit_note_whose_summit_issuance_fails_stays_an_unsent_draft(): void
+    {
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $creditNote = Document::create([
+            'deal_id' => $deal->id,
+            'document_template_id' => $invoice->document_template_id,
+            'business_entity_id' => $invoice->business_entity_id,
+            'document_type' => 'credit_note',
+            'status_id' => $invoice->status_id,
+            'format' => 'digital',
+            'rendered_content' => 'זיכוי',
+        ]);
+
+        $operations = $creditNote->sendTo(
+            [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
+            'digital',
+            app(ActivityLogger::class),
+            app(ExternalOperationRunner::class),
+            app(SummitClient::class),
+            app(SmoveClient::class),
+        );
+
+        $this->assertSame(ExternalOperation::STATUS_FAILED, $operations['summit']->status);
+        $this->assertArrayNotHasKey('deleted', $operations);
+        $this->assertNotNull($creditNote->fresh());
+        $this->assertNull($creditNote->fresh()->sent_at);
     }
 
     /**
@@ -901,6 +952,7 @@ class ExternalIntegrationsTest extends TestCase
         Livewire::actingAs($this->owner)->test('settings')
             ->assertSet('summitTestMode', true)
             ->set("sumitCompanies.{$entity->id}.name", 'כפיים בע"מ')
+            ->set("sumitCompanies.{$entity->id}.connection_name", 'סאמיט — חשבון ראשי')
             ->set("sumitCompanies.{$entity->id}.company_id", '87654321')
             ->set("sumitCompanies.{$entity->id}.api_key", 'private-key')
             ->call('testSumitCompany', $entity->id)
@@ -909,6 +961,7 @@ class ExternalIntegrationsTest extends TestCase
 
         $entity->refresh();
         $this->assertSame('כפיים בע"מ', $entity->name);
+        $this->assertSame('סאמיט — חשבון ראשי', $entity->sumit_connection_name);
         $this->assertSame('87654321', $entity->sumit_company_id);
         $this->assertSame('private-key', $entity->sumit_api_key);
         $this->assertNotSame('private-key', \DB::table('business_entities')->where('id', $entity->id)->value('sumit_api_key'));
@@ -918,6 +971,34 @@ class ExternalIntegrationsTest extends TestCase
         // Saving again with the key field left empty keeps the stored key.
         Livewire::actingAs($this->owner)->test('settings')->call('saveSumitCompany', $entity->id);
         $this->assertSame('private-key', $entity->fresh()->sumit_api_key);
+    }
+
+    public function test_two_sumit_connections_are_each_saved_under_their_own_name(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+        $first = $this->createBusinessEntity();
+        $second = $this->createBusinessEntity();
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set("sumitCompanies.{$first->id}.connection_name", 'סאמיט — כפיים')
+            ->set("sumitCompanies.{$first->id}.api_key", 'first-key')
+            ->call('saveSumitCompany', $first->id)
+            ->set("sumitCompanies.{$second->id}.connection_name", 'סאמיט — חוויית תוכן')
+            ->set("sumitCompanies.{$second->id}.company_id", '99999999')
+            ->set("sumitCompanies.{$second->id}.api_key", 'second-key')
+            ->call('saveSumitCompany', $second->id)
+            ->assertHasNoErrors()
+            ->assertSee('סאמיט — כפיים')
+            ->assertSee('סאמיט — חוויית תוכן')
+            // A connection must be named so it can be told apart.
+            ->set("sumitCompanies.{$first->id}.connection_name", '')
+            ->call('saveSumitCompany', $first->id)
+            ->assertHasErrors(["sumitCompanies.{$first->id}.connection_name"]);
+
+        $first->refresh();
+        $second->refresh();
+        $this->assertSame(['סאמיט — כפיים', '12345678', 'first-key'], [$first->sumit_connection_name, $first->sumit_company_id, $first->sumit_api_key]);
+        $this->assertSame(['סאמיט — חוויית תוכן', '99999999', 'second-key'], [$second->sumit_connection_name, $second->sumit_company_id, $second->sumit_api_key]);
     }
 
     public function test_a_failed_sumit_connection_check_shows_the_error(): void
@@ -955,7 +1036,7 @@ class ExternalIntegrationsTest extends TestCase
         $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
         $invoice->businessEntity->update(['sumit_api_key' => null]);
 
-        $this->expectExceptionMessage('לא הוגדרו מספר חברה ומפתח API של SUMIT');
+        $this->expectExceptionMessage('לא הוגדרו מספר חברה ומפתח API');
         app(SummitClient::class)->issueInvoice($invoice->fresh());
     }
 
@@ -1078,6 +1159,7 @@ class ExternalIntegrationsTest extends TestCase
             'email' => 'business'.random_int(1, 999999).'@example.com',
             'phone' => '03-0000000',
             'is_active' => true,
+            'sumit_connection_name' => 'סאמיט לבדיקה',
             'sumit_company_id' => '12345678',
             'sumit_api_key' => 'x',
         ]);

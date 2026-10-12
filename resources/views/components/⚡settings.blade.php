@@ -82,7 +82,8 @@ class extends Component
 
     /**
      * SUMIT credentials per business entity (each עוסק is its own SUMIT
-     * company): business_entity_id => ['name', 'company_id', 'api_key'].
+     * company): business_entity_id => ['name', 'connection_name', 'company_id',
+     * 'api_key'].
      * api_key is never loaded back into the page — left empty it keeps the
      * stored key; typed in, it replaces it.
      */
@@ -152,6 +153,7 @@ class extends Component
         $this->sumitCompanies = BusinessEntity::orderBy('name')->get()
             ->mapWithKeys(fn (BusinessEntity $entity) => [$entity->id => [
                 'name' => $entity->name,
+                'connection_name' => (string) $entity->sumit_connection_name,
                 'company_id' => (string) $entity->sumit_company_id,
                 'api_key' => '',
                 'has_key' => filled($entity->sumit_api_key),
@@ -163,10 +165,12 @@ class extends Component
     {
         $this->validate([
             "sumitCompanies.{$entityId}.name" => ['required', 'string', 'max:255'],
+            "sumitCompanies.{$entityId}.connection_name" => ['required', 'string', 'max:255'],
             "sumitCompanies.{$entityId}.company_id" => ['nullable', 'digits_between:1,18'],
             "sumitCompanies.{$entityId}.api_key" => ['nullable', 'string', 'max:255'],
         ], [], [
-            "sumitCompanies.{$entityId}.name" => 'שם החברה',
+            "sumitCompanies.{$entityId}.name" => 'שם העוסק',
+            "sumitCompanies.{$entityId}.connection_name" => 'שם החיבור',
             "sumitCompanies.{$entityId}.company_id" => 'מספר חברה',
         ]);
 
@@ -174,14 +178,14 @@ class extends Component
         $row = $this->sumitCompanies[$entityId];
 
         $entity->update(array_merge(
-            ['name' => trim($row['name']), 'sumit_company_id' => $row['company_id'] ?: null],
+            ['name' => trim($row['name']), 'sumit_connection_name' => trim($row['connection_name']), 'sumit_company_id' => $row['company_id'] ?: null],
             filled($row['api_key']) ? ['sumit_api_key' => trim($row['api_key'])] : [],
         ));
 
-        $activityLogger->log('business_entity.sumit_updated', "עודכנו פרטי SUMIT של \"{$entity->name}\"");
+        $activityLogger->log('business_entity.sumit_updated', "עודכן חיבור SUMIT \"{$entity->sumitConnectionLabel()}\" של העוסק \"{$entity->name}\"");
         $this->loadSumitCompanies();
         unset($this->businessEntities);
-        $this->notifySuccess("פרטי SUMIT של \"{$entity->name}\" נשמרו.");
+        $this->notifySuccess("חיבור SUMIT \"{$entity->sumitConnectionLabel()}\" נשמר.");
     }
 
     /** Read-only credentials check (SummitClient::verifyCredentials()) — saves the row first so it tests what's on screen. */
@@ -194,14 +198,14 @@ class extends Component
         }
 
         try {
-            $summit->verifyCredentials(BusinessEntity::findOrFail($entityId));
+            $summit->verifyCredentials($entity = BusinessEntity::findOrFail($entityId));
         } catch (\Throwable $e) {
             $this->addError("sumitConnection.{$entityId}", 'החיבור נכשל: '.$e->getMessage());
 
             return;
         }
 
-        $this->notifySuccess('החיבור ל-SUMIT תקין — מספר החברה ומפתח ה-API אושרו.');
+        $this->notifySuccess("החיבור \"{$entity->sumitConnectionLabel()}\" ל-SUMIT תקין — מספר החברה ומפתח ה-API אושרו.");
     }
 
     public function saveLandingPageSettings(ActivityLogger $activityLogger): void
@@ -643,7 +647,7 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table>
-                <thead><tr><th>שם</th><th>סיווג</th><th>ח.פ / ע.מ</th><th>אימייל</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>סיווג</th><th>ח.פ / ע.מ</th><th>אימייל</th><th>חיבור SUMIT</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->businessEntities as $entity)
                         <tr>
@@ -651,6 +655,7 @@ class extends Component
                             <td><span class="badge badge-info">{{ $entity->classification }}</span></td>
                             <td class="ltr-num">{{ $entity->company_number }}</td>
                             <td class="ltr-num" style="direction:ltr; text-align:right">{{ $entity->email }}</td>
+                            <td>{{ $entity->sumit_connection_name ?: '—' }}</td>
                             <td>
                                 @if ($entity->is_active)
                                     <span class="badge badge-success">פעיל</span>
@@ -876,12 +881,25 @@ class extends Component
             </div>
 
             <div class="card">
-                <h3>SUMIT (סאמיט) — חברות</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">כל עוסק הוא חברה נפרדת ב-SUMIT, וחשבונית נשלחת לחברה של העוסק שממנו הופקה. מספר החברה והמפתח הפרטי נמצאים ב-SUMIT בתפריט API ← מפתחות API. להוספת חברה — הוסיפו עוסק בטבלת העוסקים.</p>
+                <h3>SUMIT (סאמיט) — חיבורים</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">לכל עוסק יש חיבור משלו לחשבון SUMIT נפרד, וחשבונית נשלחת לחשבון של העוסק שממנו הופקה. תנו לכל חיבור שם שיזהה אותו. מספר החברה והמפתח הפרטי נמצאים ב-SUMIT בתפריט API ← מפתחות API. להוספת חיבור — הוסיפו עוסק בטבלת העוסקים.</p>
                 @foreach ($sumitCompanies as $entityId => $company)
                     <form wire:submit="saveSumitCompany({{ $entityId }})" class="form-grid" style="border-top:1px solid var(--color-border); padding-top:var(--sp-md); margin-top:var(--sp-md)">
-                        <div class="full">
-                            <label for="sumitName{{ $entityId }}">שם החברה</label>
+                        <div class="full" style="display:flex; align-items:center; gap:var(--sp-sm); flex-wrap:wrap">
+                            <strong>{{ $company['connection_name'] ?: 'חיבור ללא שם' }}</strong>
+                            @if ($company['company_id'] !== '' && $company['has_key'])
+                                <span class="badge badge-success">מוגדר</span>
+                            @else
+                                <span class="badge badge-neutral">חסרים פרטים</span>
+                            @endif
+                        </div>
+                        <div>
+                            <label for="sumitConnectionName{{ $entityId }}">שם החיבור</label>
+                            <input type="text" id="sumitConnectionName{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.connection_name" placeholder="לדוגמה: סאמיט — חשבון ראשי">
+                            @error("sumitCompanies.{$entityId}.connection_name") <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="sumitName{{ $entityId }}">עוסק</label>
                             <input type="text" id="sumitName{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.name">
                             @error("sumitCompanies.{$entityId}.name") <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>

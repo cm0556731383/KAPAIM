@@ -239,6 +239,7 @@ class DocumentsEngineTest extends TestCase
     public function test_invoice_total_always_equals_sum_of_lines(): void
     {
         $invoice = $this->generateInvoice($this->signedContractDeal());
+        $invoice->lines()->delete();
 
         $this->assertEquals(0, $invoice->totalAmount());
 
@@ -251,6 +252,32 @@ class DocumentsEngineTest extends TestCase
         $invoice->removeLine($line->id);
 
         $this->assertEquals(250, $invoice->totalAmount());
+    }
+
+    public function test_a_new_invoice_gets_a_line_for_the_deal_made_out_to_the_invoice_name(): void
+    {
+        $deal = $this->signedContractDeal();
+        $deal->customer->school->update(['invoice_name' => 'עמותת בית הספר בע"מ']);
+
+        $invoice = $this->generateInvoice($deal->fresh());
+
+        $line = $invoice->lines()->sole();
+        $this->assertSame("{$deal->program_name_snapshot} — עמותת בית הספר בע\"מ", $line->description);
+        $this->assertEquals($deal->agreed_amount, $line->amount);
+        $this->assertEquals($deal->agreed_amount, $invoice->totalAmount());
+
+        // Still editable before sending.
+        $invoice->removeLine($line->id);
+        $this->assertEquals(0, $invoice->totalAmount());
+    }
+
+    public function test_without_an_invoice_name_the_school_name_is_used(): void
+    {
+        $deal = $this->signedContractDeal();
+        $schoolName = $deal->customer->school->name;
+
+        $this->assertSame($schoolName, DocumentLinkedFields::resolve('customer.school_invoice_name', $deal));
+        $this->assertSame("{$deal->program_name_snapshot} — {$schoolName}", $this->generateInvoice($deal)->lines()->sole()->description);
     }
 
     public function test_invoice_line_without_description_is_rejected(): void

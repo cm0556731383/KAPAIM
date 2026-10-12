@@ -58,11 +58,11 @@ class DocumentTemplatesSeeder extends Seeder
         $invoice = DocumentTemplate::create([
             'document_type' => 'invoice',
             'name' => 'חשבונית — עוסק פטור',
-            'content' => "חשבונית מס — עוסק פטור\n\nלכבוד: {{שם_בית_הספר}}\n\nהפירוט המלא מופיע בטבלת השורות המצורפת למסמך זה. סך כל השורות הוא הסכום לתשלום.\n\nתודה על רכישתכם!",
+            'content' => "חשבונית מס — עוסק פטור\n\nלכבוד: {{שם_לחשבונית}}\n\nהפירוט המלא מופיע בטבלת השורות המצורפת למסמך זה. סך כל השורות הוא הסכום לתשלום.\n\nתודה על רכישתכם!",
             'is_active' => true,
         ]);
         $invoice->fields()->createMany([
-            ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => true, 'sort_order' => 1],
+            ['name' => 'שם לחשבונית', 'field_type' => 'linked', 'linked_field' => 'customer.school_invoice_name', 'is_required' => true, 'sort_order' => 1],
         ]);
 
         // ----- חשבונית זיכוי (build-plan 09) — מופקת רק בעת ביטול מנוי -----

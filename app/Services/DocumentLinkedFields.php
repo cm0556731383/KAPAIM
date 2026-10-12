@@ -93,9 +93,25 @@ class DocumentLinkedFields
     /** contact_*.<column> — the CONTACT columns a template may reference. */
     private const CONTACT_COLUMNS = ['name', 'role', 'phone', 'phone_secondary', 'email', 'email_secondary'];
 
+    /**
+     * The name an invoice is made out to: the customer card's "שם לחשבונית",
+     * else the school's own name — the same fallback SummitClient uses for
+     * the SUMIT customer name.
+     */
+    public static function invoiceName(Deal $deal): ?string
+    {
+        $school = $deal->loadMissing('customer.school')->customer?->school;
+
+        return filled($school?->invoice_name) ? $school->invoice_name : $school?->name;
+    }
+
     public static function resolve(string $key, Deal $deal): ?string
     {
         $deal->loadMissing('customer.school', 'customer.contacts', 'customer.status', 'customer.lead.source', 'customer.lead.assignedUser', 'status', 'paymentMethod', 'subscription');
+
+        if ($key === 'customer.school_invoice_name') {
+            return self::invoiceName($deal);
+        }
 
         if (isset(self::SCHOOL_COLUMNS[$key])) {
             $value = $deal->customer?->school?->{self::SCHOOL_COLUMNS[$key]};

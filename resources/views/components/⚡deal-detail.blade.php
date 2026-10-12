@@ -80,6 +80,8 @@ class extends Component
 
         $this->deal = $deal->load(['customer.school', 'program', 'bundle', 'status', 'paymentMethod']);
         $this->syncFields();
+        // Set by ⚡document-view when a failed Summit issuance deleted the invoice draft.
+        $this->documentError = session('documentError');
     }
 
     private function syncFields(): void

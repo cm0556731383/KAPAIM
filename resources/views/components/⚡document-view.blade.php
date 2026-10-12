@@ -189,6 +189,13 @@ class extends Component
             return;
         }
 
+        if ($operations['deleted'] ?? false) {
+            session()->flash('documentError', 'ההפקה מול Summit נכשלה, ולכן טיוטת החשבונית נמחקה. ניתן להפיק חשבונית חדשה. פירוט השגיאה: '.$operations['summit']->error_message);
+            $this->redirectRoute('deal-detail', $this->document->deal_id);
+
+            return;
+        }
+
         $this->document->refresh()->load('recipients');
 
         if ($operations['summit']?->status === ExternalOperation::STATUS_FAILED) {
