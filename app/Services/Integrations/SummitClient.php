@@ -153,8 +153,12 @@ class SummitClient
         $amount = $receipt->payment ? (float) $receipt->payment->amount : $invoice->totalAmount();
         [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$receipt->payment?->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
+        // SUMIT emails the receipt to the customer's billing address — the same
+        // one on the SUMIT customer card (accounting contact, else primary, else school).
+        $email = $this->customer($invoice->deal)['EmailAddress'] ?? null;
+
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
-            'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, null),
+            'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, $email),
             'Payments' => [[
                 'Amount' => $amount,
                 'Type' => $paymentType,
@@ -306,6 +310,9 @@ class SummitClient
         if (! $this->isActive()) {
             throw new RuntimeException('החיבור ל-SUMIT מושבת — יש להפעיל אותו בהגדרות המערכת.');
         }
+
+        // A document without its own entity (e.g. an older credit note) goes to the deal's locked one.
+        $entity ??= $deal?->businessEntity;
 
         if (! $entity) {
             throw new RuntimeException('למסמך לא נבחר עוסק, ולכן לא ידוע לאיזו חברה ב-SUMIT לשלוח אותו.');

@@ -1003,6 +1003,35 @@ class ExternalIntegrationsTest extends TestCase
             ->assertSee('נעול לעסקה');
     }
 
+    public function test_sumit_emails_the_receipt_to_the_customers_billing_address(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 557]], 200)]);
+
+        $deal = $this->dealWithInvoice(400);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'הנהלת חשבונות', 'email' => 'accounts@example.com', 'is_accounting_contact' => true]);
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 400.0);
+
+        \App\Models\Receipt::issueFor($deal->fresh(), $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 2
+            && ($request['Details']['SendByEmail']['EmailAddress'] ?? null) === 'accounts@example.com');
+    }
+
+    public function test_a_credit_note_is_issued_from_the_deals_business_entity(): void
+    {
+        $this->createTemplate('credit_note');
+        $deal = $this->dealWithInvoice();
+        $entity = $deal->documents()->where('document_type', 'invoice')->firstOrFail()->businessEntity;
+        $deal->lockToBusinessEntity($entity);
+
+        // Generated from the deal screen, which passes no entity for a credit note.
+        $creditNote = Document::generateFor($deal->fresh(), DocumentTemplate::where('document_type', 'credit_note')->firstOrFail());
+        $this->assertSame($entity->id, $creditNote->business_entity_id);
+        $this->assertSame($entity->id, Document::generateCreditNoteFor($deal->fresh(), 50)->business_entity_id);
+    }
+
     public function test_a_licensed_dealer_issues_a_tax_invoice_and_credits_it(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);

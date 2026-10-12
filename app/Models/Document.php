@@ -196,6 +196,12 @@ class Document extends Model
             }
         }
 
+        // A credit note is issued from the deal's entity — the one it's locked
+        // to, else the one passed in (its invoice's, by generateCreditNoteFor()).
+        if ($template->document_type === 'credit_note') {
+            $businessEntity = BusinessEntity::find($deal->business_entity_id ?? $businessEntityId);
+        }
+
         $preceding = self::precedingFor($deal, $template->document_type);
         $fieldValues = self::buildInitialFieldValues($template, $deal, $preceding);
 
