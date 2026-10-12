@@ -82,6 +82,31 @@ class Deal extends Model
         return $this->belongsTo(StatusDefinition::class, 'status_id');
     }
 
+    /** The SUMIT company this deal is locked to — see lockToBusinessEntity(). */
+    public function businessEntity(): BelongsTo
+    {
+        return $this->belongsTo(BusinessEntity::class);
+    }
+
+    /**
+     * Once SUMIT issued anything for this deal (invoice, receipt, credit
+     * note, charge, standing order — SummitClient calls this on success),
+     * the deal is locked to that entity: every later SUMIT document for it
+     * must come from the same one. The first lock wins (a plain conditional
+     * UPDATE, outside the `version` optimistic lock — it's not a user edit).
+     */
+    public function lockToBusinessEntity(BusinessEntity $entity): void
+    {
+        if ($this->business_entity_id) {
+            return;
+        }
+
+        self::whereKey($this->id)->whereNull('business_entity_id')->update(['business_entity_id' => $entity->id]);
+        $this->business_entity_id = self::whereKey($this->id)->value('business_entity_id');
+        $this->syncOriginalAttribute('business_entity_id');
+        $this->unsetRelation('businessEntity');
+    }
+
     public function paymentMethod(): BelongsTo
     {
         return $this->belongsTo(PaymentMethod::class);

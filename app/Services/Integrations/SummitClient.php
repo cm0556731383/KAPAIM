@@ -101,7 +101,7 @@ class SummitClient
      */
     public function issueInvoice(Document $document, ?string $email = null): string
     {
-        $entity = $this->entityFor($document->businessEntity);
+        $entity = $this->entityFor($document->businessEntity, $document->deal);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
         // An exempt dealer (עוסק פטור) can't issue a tax invoice — its "invoice"
@@ -113,6 +113,7 @@ class SummitClient
             'Items' => $this->documentItems($document),
             'VATIncluded' => true,
         ]));
+        $document->deal->lockToBusinessEntity($entity);
 
         return (string) $data['DocumentID'];
     }
@@ -120,7 +121,7 @@ class SummitClient
     /** Called from Document::sendTo() for a sent credit note (FR-4.5/FR-8.12), linked to the deal's SUMIT invoice. */
     public function issueCreditNote(Document $document, ?string $email = null): string
     {
-        $entity = $this->entityFor($document->businessEntity);
+        $entity = $this->entityFor($document->businessEntity, $document->deal);
         $document->loadMissing('lines', 'deal.customer.school', 'deal.customer.contacts');
 
         // For an exempt dealer the invoice was a חשבון עסקה — not an accounting
@@ -133,6 +134,7 @@ class SummitClient
             'VATIncluded' => true,
             'OriginalDocumentID' => $exempt ? null : $this->sumitDocumentId($document->deal->issuedInvoice()),
         ], fn ($v) => $v !== null)));
+        $document->deal->lockToBusinessEntity($entity);
 
         return (string) $data['DocumentID'];
     }
@@ -147,7 +149,7 @@ class SummitClient
         $receipt->loadMissing('payment.paymentMethod', 'document.businessEntity', 'document.lines', 'document.deal.customer.school', 'document.deal.customer.contacts');
 
         $invoice = $receipt->document;
-        $entity = $this->entityFor($invoice->businessEntity);
+        $entity = $this->entityFor($invoice->businessEntity, $invoice->deal);
         $amount = $receipt->payment ? (float) $receipt->payment->amount : $invoice->totalAmount();
         [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$receipt->payment?->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
@@ -160,6 +162,7 @@ class SummitClient
             ]],
             'OriginalDocumentID' => $this->sumitDocumentId($invoice),
         ], fn ($v) => $v !== null)));
+        $invoice->deal->lockToBusinessEntity($entity);
 
         return (string) $data['DocumentID'];
     }
@@ -193,6 +196,8 @@ class SummitClient
             throw new RuntimeException('החיוב נדחה: '.($payment['StatusDescription'] ?? 'ללא פירוט'));
         }
 
+        $deal->lockToBusinessEntity($entity);
+
         return (string) ($payment['ID'] ?? '');
     }
 
@@ -222,6 +227,7 @@ class SummitClient
             'VATIncluded' => true,
             'AuthoriseOnly' => $this->isTestMode() ?: null,
         ]));
+        $deal->lockToBusinessEntity($entity);
 
         return implode(',', (array) ($data['RecurringCustomerItemIDs'] ?? []));
     }
@@ -290,8 +296,12 @@ class SummitClient
         return ctype_digit((string) $reference) ? (int) $reference : null;
     }
 
-    /** The SUMIT company a document is issued in — its business entity, which must have credentials. */
-    private function entityFor(?BusinessEntity $entity): BusinessEntity
+    /**
+     * The SUMIT company a document is issued in — its business entity, which
+     * must have credentials and, once $deal is locked to an entity
+     * (Deal::lockToBusinessEntity()), must be that same one.
+     */
+    private function entityFor(?BusinessEntity $entity, ?Deal $deal = null): BusinessEntity
     {
         if (! $this->isActive()) {
             throw new RuntimeException('החיבור ל-SUMIT מושבת — יש להפעיל אותו בהגדרות המערכת.');
@@ -299,6 +309,10 @@ class SummitClient
 
         if (! $entity) {
             throw new RuntimeException('למסמך לא נבחר עוסק, ולכן לא ידוע לאיזו חברה ב-SUMIT לשלוח אותו.');
+        }
+
+        if ($deal?->business_entity_id && $deal->business_entity_id !== $entity->id) {
+            throw new RuntimeException("לעסקה #{$deal->id} כבר הופקו מסמכים ב-SUMIT מהעוסק \"{$deal->businessEntity?->name}\" — כל מסמכי העסקה מופקים מאותו עוסק, ולא מ\"{$entity->name}\".");
         }
 
         if (! $entity->hasSumitCredentials()) {
@@ -310,16 +324,21 @@ class SummitClient
 
     /**
      * A charge/standing order has no document of its own: it goes to the
-     * company of the deal's invoice (issued, else any), or — when there's
+     * entity the deal is locked to, else the company of the deal's invoice
+     * (issued, else any), or — when there's
      * no invoice yet — to the only entity with SUMIT credentials, if there
      * is exactly one.
      */
     private function entityForDeal(Deal $deal): BusinessEntity
     {
+        if ($deal->business_entity_id) {
+            return $this->entityFor($deal->businessEntity, $deal);
+        }
+
         $invoice = $deal->issuedInvoice() ?? $deal->documents()->where('document_type', 'invoice')->latest('id')->first();
 
         if ($invoice) {
-            return $this->entityFor($invoice->businessEntity);
+            return $this->entityFor($invoice->businessEntity, $deal);
         }
 
         $configured = BusinessEntity::where('is_active', true)->get()->filter->hasSumitCredentials();

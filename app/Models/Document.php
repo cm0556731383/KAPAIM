@@ -185,6 +185,12 @@ class Document extends Model
 
             $businessEntity = BusinessEntity::find($businessEntityId);
 
+            if ($deal->business_entity_id && $deal->business_entity_id !== $businessEntity?->id) {
+                $locked = $deal->businessEntity;
+
+                throw new RuntimeException("לעסקה זו כבר הופקו מסמכים ב-SUMIT מהעוסק \"{$locked?->name}\" — כל מסמכי העסקה מופקים מאותו עוסק.");
+            }
+
             if (! $businessEntity || ! $businessEntity->is_active) {
                 throw new RuntimeException('העוסק שנבחר אינו פעיל — לא ניתן להפיק חשבונית ממנו.');
             }

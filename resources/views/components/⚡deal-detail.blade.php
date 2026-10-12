@@ -80,6 +80,8 @@ class extends Component
 
         $this->deal = $deal->load(['customer.school', 'program', 'bundle', 'status', 'paymentMethod']);
         $this->syncFields();
+        // Locked once SUMIT issued anything for the deal (Deal::lockToBusinessEntity()).
+        $this->invoiceBusinessEntityId = (string) ($this->deal->business_entity_id ?? '');
         // Set by ⚡document-view when a failed Summit issuance deleted the invoice draft.
         $this->documentError = session('documentError');
     }
@@ -566,8 +568,8 @@ class extends Component
                 @if ($type === 'invoice')
                     <div style="display:flex; gap:6px; align-items:flex-end">
                         <div>
-                            <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק פטור</label>
-                            <select id="invoiceBusinessEntityId" wire:model="invoiceBusinessEntityId" style="min-width:220px">
+                            <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק @if ($deal->business_entity_id)<span class="scope-pill" title="לעסקה כבר הופקו מסמכים ב-SUMIT מעוסק זה — כל מסמכי העסקה מופקים ממנו">נעול לעסקה</span>@endif</label>
+                            <select id="invoiceBusinessEntityId" wire:model="invoiceBusinessEntityId" style="min-width:220px" @disabled($deal->business_entity_id)>
                                 <option value="">בחרו עוסק</option>
                                 @foreach ($this->activeBusinessEntities as $entity)
                                     <option value="{{ $entity->id }}">{{ $entity->name }} — {{ $entity->classification }}</option>

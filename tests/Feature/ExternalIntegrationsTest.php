@@ -920,6 +920,89 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertDatabaseHas('external_operations', ['operation_type' => 'standing_order_registered', 'status' => ExternalOperation::STATUS_SUCCESS, 'external_reference' => '11']);
     }
 
+    // ----- a deal is locked to the business entity SUMIT first issued from -----
+
+    public function test_a_successful_sumit_issuance_locks_the_deal_to_its_business_entity(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+        $this->assertNull($deal->business_entity_id);
+
+        $invoice->sendTo([['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']], 'digital',
+            app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+
+        $this->assertSame($invoice->business_entity_id, $deal->fresh()->business_entity_id);
+    }
+
+    public function test_a_failed_sumit_issuance_does_not_lock_the_deal(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 1, 'UserErrorMessage' => 'שגיאה'], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+        $invoice->sendTo([['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']], 'digital',
+            app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+
+        $this->assertNull($deal->fresh()->business_entity_id);
+    }
+
+    public function test_a_locked_deal_cannot_generate_an_invoice_from_another_entity(): void
+    {
+        $deal = $this->dealWithInvoice();
+        $locked = $deal->documents()->where('document_type', 'invoice')->firstOrFail()->businessEntity;
+        $deal->lockToBusinessEntity($locked);
+        $deal->documents()->where('document_type', 'invoice')->delete();
+
+        try {
+            Document::generateFor($deal->fresh(), $this->createTemplate('invoice'), 'digital', $this->createBusinessEntity()->id);
+            $this->fail('expected the locked entity to be enforced');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString($locked->name, $e->getMessage());
+        }
+
+        $invoice = Document::generateFor($deal->fresh(), $this->createTemplate('invoice'), 'digital', $locked->id);
+        $this->assertSame($locked->id, $invoice->business_entity_id);
+    }
+
+    public function test_a_locked_deal_refuses_sumit_documents_from_another_entity_and_charges_its_own(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555, 'Payment' => ['ValidPayment' => true, 'ID' => 9]]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $other = $this->createBusinessEntity();
+        $other->update(['sumit_company_id' => '99999999']);
+        $deal->lockToBusinessEntity($other);
+
+        try {
+            app(SummitClient::class)->issueCreditNote($this->creditNoteFor($deal->fresh()));
+            $this->fail('expected the locked entity to be enforced');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString($other->name, $e->getMessage());
+        }
+        Http::assertNothingSent();
+
+        app(SummitClient::class)->chargeCard($deal->fresh(), 100);
+        Http::assertSent(fn ($request) => $request['Credentials']['CompanyID'] === 99999999);
+    }
+
+    public function test_the_deal_screen_shows_the_locked_entity_preselected(): void
+    {
+        $deal = $this->dealWithInvoice();
+        $entity = $deal->documents()->where('document_type', 'invoice')->firstOrFail()->businessEntity;
+        $deal->lockToBusinessEntity($entity);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->assertSet('invoiceBusinessEntityId', (string) $entity->id)
+            ->assertSee('נעול לעסקה');
+    }
+
     public function test_a_licensed_dealer_issues_a_tax_invoice_and_credits_it(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
