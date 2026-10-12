@@ -417,14 +417,8 @@ class extends Component
 
         unset($this->payments);
 
-        $summitFailed = ExternalOperation::where('document_id', $receipt->document_id)
-            ->where('operation_type', 'issue_receipt')
-            ->where('status', ExternalOperation::STATUS_FAILED)
-            ->latest('id')
-            ->exists();
-
-        if ($summitFailed) {
-            $this->notifyWarning('הקבלה נרשמה במערכת, אך ההפקה מול Summit נכשלה — ראו יומן פעילות.');
+        if (! $summit->isActive()) {
+            $this->notifyInfo('הקבלה נרשמה במערכת בלבד — החיבור ל-SUMIT מושבת.');
 
             return;
         }

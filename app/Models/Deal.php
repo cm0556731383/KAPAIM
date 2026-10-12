@@ -564,7 +564,12 @@ class Deal extends Model
 
         $payment = $this->recordPayment($this->version, $amount);
 
-        Receipt::issueFor($this, $payment, $runner, $summit);
+        // The money already arrived — a receipt failure (logged by the runner)
+        // must not undo the payment; the receipt can be issued again by hand.
+        try {
+            Receipt::issueFor($this, $payment, $runner, $summit);
+        } catch (RuntimeException) {
+        }
 
         return $payment;
     }

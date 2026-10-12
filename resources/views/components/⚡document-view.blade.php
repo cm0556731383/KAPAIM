@@ -58,7 +58,7 @@ class extends Component
     {
         abort_unless(auth()->user()->can('documents.manage'), 403);
 
-        $this->document = $document->load(['deal.customer.school', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
+        $this->document = $document->load(['deal.customer.school', 'expense.supplier', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
 
         $this->fieldValues = $this->document->currentFieldValues();
 
@@ -216,18 +216,18 @@ class extends Component
     #[Computed]
     public function chain()
     {
-        return $this->document->deal->documents()->with('status')->get();
+        return $this->document->deal?->documents()->with('status')->get() ?? collect([$this->document]);
     }
 };
 ?>
 
 <div>
-    <a href="{{ route('deal-detail', $document->deal_id) }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← חזרה לעסקה</a>
+    <a href="{{ $document->deal_id ? route('deal-detail', $document->deal_id) : route('expenses') }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← {{ $document->deal_id ? 'חזרה לעסקה' : 'חזרה להוצאות' }}</a>
 
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
-            <p style="color:var(--color-text-secondary); margin:0">{{ $document->deal->customer->school?->name }} · נוצר <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span></p>
+            <p style="color:var(--color-text-secondary); margin:0">{{ $document->partyName() }} · נוצר <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span></p>
         </div>
         <div style="display:flex; gap:var(--sp-sm); align-items:center">
             @if ($document->engagementStatusLabel())
@@ -252,7 +252,7 @@ class extends Component
                 <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{!! $document->rendered_content !!}</div>
 
                 @if ($document->document_type === 'invoice' && $document->businessEntity)
-                    <div class="field" style="margin-top:var(--sp-md)"><div class="k">עוסק פטור</div><div class="v">{{ $document->businessEntity->name }} — {{ $document->businessEntity->classification }}</div></div>
+                    <div class="field" style="margin-top:var(--sp-md)"><div class="k">עוסק</div><div class="v">{{ $document->businessEntity->name }} — {{ $document->businessEntity->classification }}</div></div>
                 @endif
             </div>
 
@@ -335,6 +335,11 @@ class extends Component
                             <button type="button" wire:click="send('digital')" class="btn btn-primary">הפקה מול Summit</button>
                         </div>
                     @endif
+                </div>
+            @elseif ($document->document_type === 'expense_invoice')
+                <div class="card">
+                    <h3>חשבונית הוצאה</h3>
+                    <p class="text-text-secondary" style="font-size:var(--fs-small); margin:0">חשבונית שהתקבלה מהספק {{ $document->partyName() }} — מסמך נכנס, אין לשלוח אותו.</p>
                 </div>
             @else
                 {{-- ===== נמענים ושליחה ===== --}}

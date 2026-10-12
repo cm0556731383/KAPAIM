@@ -20,6 +20,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // hop and generates http:// asset/Livewire URLs, which browsers
         // then block as mixed content on an https:// page.
         $middleware->trustProxies(at: '*');
+
+        // Webhooks are server-to-server POSTs (landing page, Smove, SUMIT) —
+        // they can't carry a CSRF token and authenticate with their shared
+        // secret instead. Without this every one of them 419'd in production
+        // (tests never noticed: CSRF is skipped while running unit tests).
+        $middleware->preventRequestForgery(except: ['webhooks/*']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

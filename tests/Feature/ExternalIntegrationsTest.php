@@ -202,6 +202,7 @@ class ExternalIntegrationsTest extends TestCase
     public function test_standing_order_webhook_records_a_payment_and_auto_issues_a_receipt(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 558]], 200)]);
         $deal = $this->dealWithInvoice(1000);
         $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
 
@@ -216,6 +217,66 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertSame(100.0, $deal->totalPaid());
         $this->assertSame(1, $deal->payments()->count());
         $this->assertNotNull($deal->payments()->first()->receipt);
+    }
+
+    public function test_a_collected_standing_order_payment_is_kept_even_if_its_receipt_fails(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 1, 'UserErrorMessage' => 'שגיאה'], 200)]);
+        $deal = $this->dealWithInvoice(1000);
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
+
+        $this->postJson('/webhooks/summit/standing-order-collected', ['deal_id' => $deal->id, 'amount' => 100], ['X-Webhook-Secret' => 'sekret'])->assertOk();
+
+        $this->assertSame(100.0, $deal->fresh()->totalPaid());
+        $this->assertNull($deal->payments()->first()->receipt);
+    }
+
+    public function test_a_receipt_sumit_rejects_is_not_kept_and_can_be_issued_again(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::sequence()
+            ->push(['Status' => 1, 'UserErrorMessage' => 'יש להזין מוטב/מחויב'], 200)
+            ->push(['Status' => 0, 'Data' => ['DocumentID' => 559]], 200)]);
+        $deal = $this->dealWithInvoice(400);
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 400.0);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->call('issueReceipt', $payment->id)
+            ->assertSet('paymentError', 'ההפקה מול SUMIT נכשלה, ולכן הקבלה לא נרשמה: SUMIT: יש להזין מוטב/מחויב');
+        $this->assertNull($payment->fresh()->receipt);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->call('issueReceipt', $payment->id)
+            ->assertSet('paymentError', null);
+        $this->assertNotNull($payment->fresh()->receipt);
+    }
+
+    public function test_a_receipt_before_payment_uses_the_deals_payment_method(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 560]], 200)]);
+        $deal = $this->dealWithInvoice(400);
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+
+        \App\Models\Receipt::issueFor($deal->fresh(), null, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 2
+            && $request['Payments'][0]['Type'] === 3
+            && $request['Payments'][0]['Amount'] == 400);
+    }
+
+    public function test_leaving_a_list_not_linked_to_smove_makes_no_smove_call(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake();
+        $deal = $this->dealWithInvoice();
+        $list = MailingList::create(['name' => 'מנויים '.random_int(1, 999999), 'list_type' => 'subscription', 'is_active' => true]);
+
+        MailingMembership::removeCustomer($list, $deal->customer);
+
+        $this->assertSame(0, ExternalOperation::where('operation_type', 'mailing_list_remove')->count());
     }
 
     public function test_standing_order_webhook_fails_gracefully_for_the_wrong_payment_method(): void
@@ -1056,7 +1117,10 @@ class ExternalIntegrationsTest extends TestCase
         $deal = $this->dealWithInvoice(400, 'עוסק פטור');
 
         app(SummitClient::class)->issueCreditNote($this->creditNoteFor($deal));
-        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 7 && ! isset($request['OriginalDocumentID']));
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 7
+            && ! isset($request['OriginalDocumentID'])
+            && ! isset($request['Items'])
+            && $request['Payments'][0]['Amount'] == 100);
     }
 
     private function creditNoteFor(Deal $deal): Document

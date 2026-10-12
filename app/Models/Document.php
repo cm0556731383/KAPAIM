@@ -735,7 +735,18 @@ class Document extends Model
      */
     public function defaultRecipients(): Collection
     {
+        // An expense invoice is incoming (from a supplier) — nobody to send it to.
+        if (! $this->deal) {
+            return new Collection;
+        }
+
         return Contact::where('customer_id', $this->deal->customer_id)->where('is_primary', true)->get();
+    }
+
+    /** Who the document is with — the customer's school, or an expense invoice's supplier. */
+    public function partyName(): ?string
+    {
+        return $this->deal ? $this->deal->customer?->school?->name : $this->expense?->supplier?->name;
     }
 
     /**

@@ -56,7 +56,7 @@
     <div class="sheet">
         <h1>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
         <p class="meta">
-            {{ $document->deal->customer->school?->name }}
+            {{ $document->partyName() }}
             @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
             · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
         </p>

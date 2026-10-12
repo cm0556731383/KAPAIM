@@ -20,8 +20,8 @@ use RuntimeException;
  * unlike an invoice/credit note (Document::sendTo(), pushed at "sent"),
  * generating a receipt IS the single explicit action for this document type
  * (there's no separate later send step), so this is its one wiring point.
- * Non-blocking (see ExternalOperationRunner's docblock) — the local receipt
- * row is created and returned regardless of whether Summit succeeds.
+ * While SUMIT is connected the receipt only stays if SUMIT issued it (a
+ * failure deletes it and throws); with SUMIT disabled it's local-only.
  */
 #[Fillable(['payment_id', 'document_id', 'status', 'issued_before_payment', 'issued_at'])]
 class Receipt extends Model
@@ -87,7 +87,7 @@ class Receipt extends Model
             'issued_at' => now(),
         ]);
 
-        $runner->run(
+        $operation = $runner->run(
             'summit',
             'issue_receipt',
             'app_action',
@@ -99,6 +99,16 @@ class Receipt extends Model
                 'description' => "הפקת קבלה מול Summit עבור עסקה #{$deal->id}",
             ],
         );
+
+        // With SUMIT connected, a receipt exists only if SUMIT issued it — a
+        // failed one is removed (as a failed invoice is), so it neither shows
+        // as issued nor blocks issuing it again for the same payment. With
+        // SUMIT disabled the receipt is a local-only record, as before.
+        if ($operation->status === ExternalOperation::STATUS_FAILED && $summit->isActive()) {
+            $receipt->delete();
+
+            throw new RuntimeException('ההפקה מול SUMIT נכשלה, ולכן הקבלה לא נרשמה: '.$operation->error_message);
+        }
 
         return $receipt;
     }

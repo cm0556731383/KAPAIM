@@ -126,11 +126,17 @@ class SummitClient
 
         // For an exempt dealer the invoice was a חשבון עסקה — not an accounting
         // document, so there's nothing to credit against it; a קבלה זיכוי is.
+        // Like any receipt it records a payment (the refund, sent as a positive
+        // amount — SUMIT stores it negated), not items: SUMIT rejects it with
+        // "Missing payments" otherwise (confirmed against SUMIT, 2026-10-13).
         $exempt = $entity->classification === self::EXEMPT_CLASSIFICATION;
+        $document->deal->loadMissing('paymentMethod');
+        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$document->deal->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails($exempt ? self::DOCUMENT_CREDIT_RECEIPT : self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
-            'Items' => $this->documentItems($document),
+            'Items' => $exempt ? null : $this->documentItems($document),
+            'Payments' => $exempt ? [['Amount' => $document->totalAmount(), 'Type' => $paymentType, $detailsKey => (object) []]] : null,
             'VATIncluded' => true,
             'OriginalDocumentID' => $exempt ? null : $this->sumitDocumentId($document->deal->issuedInvoice()),
         ], fn ($v) => $v !== null)));
@@ -146,12 +152,16 @@ class SummitClient
      */
     public function issueReceipt(Receipt $receipt): string
     {
-        $receipt->loadMissing('payment.paymentMethod', 'document.businessEntity', 'document.lines', 'document.deal.customer.school', 'document.deal.customer.contacts');
+        $receipt->loadMissing('payment.paymentMethod', 'document.businessEntity', 'document.lines', 'document.deal.paymentMethod', 'document.deal.customer.school', 'document.deal.customer.contacts');
 
         $invoice = $receipt->document;
         $entity = $this->entityFor($invoice->businessEntity, $invoice->deal);
         $amount = $receipt->payment ? (float) $receipt->payment->amount : $invoice->totalAmount();
-        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$receipt->payment?->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
+        // A receipt before payment has no payment of its own — it goes by the
+        // deal's payment method (SUMIT rejects a "general" payment without a
+        // payer: "יש להזין מוטב/מחויב").
+        $methodType = $receipt->payment?->paymentMethod?->type ?? $invoice->deal->paymentMethod?->type;
+        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$methodType] ?? self::PAYMENT_GENERAL;
 
         // SUMIT emails the receipt to the customer's billing address — the same
         // one on the SUMIT customer card (accounting contact, else primary, else school).

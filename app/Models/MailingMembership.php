@@ -286,6 +286,11 @@ class MailingMembership extends Model
             return;
         }
 
+        // A list not linked to Smove has nothing there to remove the contact from.
+        if ($action === 'remove' && ! $list->smove_list_id) {
+            return;
+        }
+
         $smove = app(SmoveClient::class);
 
         if ($action === 'join' && $smove->isConfigured() && $smove->hasConfirmedConsent($contact['email'])) {
