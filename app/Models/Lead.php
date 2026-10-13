@@ -280,6 +280,33 @@ class Lead extends Model
             $contacts->first()->update(['is_primary' => true]);
         }
 
+        // The lead's own email/phone carry over to the customer (its school
+        // card) and to its primary contact, filling only what's still empty.
+        // With no contact yet, a nameless primary one is opened from them —
+        // ⚡customer-detail.blade.php then asks for the name.
+        $this->school->update([
+            'phone' => $this->school->phone ?: $this->phone,
+            'email' => $this->school->email ?: $this->email,
+        ]);
+
+        $primary = $contacts->firstWhere('is_primary', true);
+
+        if ($primary) {
+            $primary->update([
+                'phone' => $primary->phone ?: $this->phone,
+                'email' => $primary->email ?: $this->email,
+            ]);
+        } else {
+            Contact::create([
+                'school_id' => $this->school_id,
+                'customer_id' => $customer->id,
+                'name' => '',
+                'phone' => $this->phone,
+                'email' => $this->email,
+                'is_primary' => true,
+            ]);
+        }
+
         $this->update(['converted_at' => $customer->converted_at]);
 
         // Build-plan 10 (FR-5.21): the lead's own primary-list membership (if

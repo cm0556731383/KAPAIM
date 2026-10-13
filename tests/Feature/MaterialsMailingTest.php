@@ -749,7 +749,11 @@ class MaterialsMailingTest extends TestCase
 
     private function createCustomer(): Customer
     {
-        return $this->createLead()->convertToCustomer(app(ActivityLogger::class));
+        $customer = $this->createLead()->convertToCustomer(app(ActivityLogger::class));
+        // These fixtures add their own contacts — drop the primary one conversion opens from the lead's details.
+        $customer->contacts()->forceDelete();
+
+        return $customer;
     }
 
     private function createCustomerWithEmailContact(): Customer

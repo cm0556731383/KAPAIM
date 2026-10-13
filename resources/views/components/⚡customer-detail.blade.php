@@ -96,6 +96,9 @@ class extends Component
     /** Business-rule error (FR-7.25) — FR-2.9 "לא ניתן להסיר את הראשי האחרון". */
     public ?string $contactError = null;
 
+    /** Pops up (sticky) while the primary contact opened at lead conversion still has no name. */
+    public ?string $contactNameWarning = null;
+
     // ===== עסקה חדשה (DEAL) =====
     /** "program:{id}" or "bundle:{id}" — a single select so exactly one type is ever chosen. */
     public string $dealItem = '';
@@ -169,6 +172,13 @@ class extends Component
 
         $this->customer = $customer->load(['school', 'lead']);
         $this->syncSchoolFields();
+
+        $namelessPrimary = $this->customer->contacts()->where('is_primary', true)->where('name', '')->first();
+
+        if ($namelessPrimary) {
+            $this->contactNameWarning = 'יש להשלים את שם איש הקשר הראשי — הטלפון והמייל הועתקו מהליד.';
+            $this->editContact($namelessPrimary->id);
+        }
 
         // FR-5.4: defaults the send form to the customer's primary contacts
         // with a real email — the user may freely add/remove for this one
@@ -363,6 +373,7 @@ class extends Component
         }
 
         $this->contactError = null;
+        $this->contactNameWarning = null;
         $this->resetContactForm();
         unset($this->contacts);
     }
@@ -1254,7 +1265,7 @@ class extends Component
                             <div class="contact-item">
                                 <div class="contact-view">
                                     <div>
-                                        <div class="who">{{ $contact->name }}</div>
+                                        <div class="who">{{ $contact->name !== '' ? $contact->name : '(יש להשלים שם)' }}</div>
                                         <div class="role">{{ $contact->role }}@if ($contact->phone) · <span class="ltr-num">{{ $contact->phone }}</span> @endif</div>
                                     </div>
                                     <div class="actions">

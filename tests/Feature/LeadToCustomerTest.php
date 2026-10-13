@@ -104,6 +104,56 @@ class LeadToCustomerTest extends TestCase
         $this->assertSame(1, $customer->contacts()->where('is_primary', true)->count());
     }
 
+    public function test_conversion_copies_the_leads_email_and_phone_to_the_school_and_a_new_primary_contact(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר מעתיקים פרטים');
+
+        $customer = $this->convertLead($lead);
+
+        $this->assertSame($lead->email, $customer->school->fresh()->email);
+        $this->assertSame($lead->phone, $customer->school->fresh()->phone);
+        $this->assertDatabaseHas('contacts', [
+            'customer_id' => $customer->id, 'school_id' => $lead->school_id, 'name' => '',
+            'email' => $lead->email, 'phone' => $lead->phone, 'is_primary' => true,
+        ]);
+    }
+
+    public function test_conversion_fills_only_the_empty_details_of_an_existing_primary_contact(): void
+    {
+        $lead = $this->createLead(schoolName: 'בית ספר עם ראשי קיים');
+        $lead->school->update(['email' => 'school@example.com']);
+        $contact = Contact::create(['school_id' => $lead->school_id, 'name' => 'מירב כהן', 'email' => 'merav@example.com', 'is_primary' => true]);
+
+        $customer = $this->convertLead($lead);
+
+        $this->assertSame(1, $customer->contacts()->count());
+        $this->assertSame('merav@example.com', $contact->fresh()->email);
+        $this->assertSame($lead->phone, $contact->fresh()->phone);
+        $this->assertSame('school@example.com', $customer->school->fresh()->email);
+        $this->assertSame($lead->phone, $customer->school->fresh()->phone);
+    }
+
+    public function test_customer_card_asks_for_the_name_of_a_nameless_primary_contact_until_it_is_filled(): void
+    {
+        $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר שם חסר'));
+        $contact = $customer->contacts()->firstOrFail();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->assertSet('contactNameWarning', 'יש להשלים את שם איש הקשר הראשי — הטלפון והמייל הועתקו מהליד.')
+            ->assertSet('editingContactId', $contact->id)
+            ->assertSet('contactEmail', $contact->email)
+            ->assertDispatched('notify');
+
+        $component->set('contactName', 'רחל לוי')->call('updateContact')
+            ->assertSet('contactNameWarning', null);
+
+        $this->assertSame('רחל לוי', $contact->fresh()->name);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->assertSet('contactNameWarning', null)
+            ->assertSet('editingContactId', null);
+    }
+
     public function test_a_lead_without_a_school_cannot_be_converted(): void
     {
         $lead = $this->createLead(); // no school
@@ -246,6 +296,7 @@ class LeadToCustomerTest extends TestCase
     {
         $lead = $this->createLead(schoolName: 'בית ספר ללא אנשי קשר');
         $customer = $this->convertLead($lead);
+        $customer->contacts()->forceDelete(); // drop the primary contact conversion opened from the lead's details
         $this->assertSame(0, $customer->contacts()->count());
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])

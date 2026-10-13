@@ -290,7 +290,11 @@ class SystemNotificationsTest extends TestCase
             'phone' => '050-'.random_int(1000000, 9999999),
         ]);
 
-        return $lead->convertToCustomer(app(\App\Services\ActivityLogger::class));
+        $customer = $lead->convertToCustomer(app(\App\Services\ActivityLogger::class));
+        // These fixtures add their own contacts — drop the primary one conversion opens from the lead's details.
+        $customer->contacts()->forceDelete();
+
+        return $customer;
     }
 
     private function createProgram(float $price = 400): Program
