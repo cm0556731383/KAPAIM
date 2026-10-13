@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $title ?? 'כפיים' }}</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ asset('images/favicon-32.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('images/favicon-512.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('images/favicon-180.png') }}">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,14 +18,6 @@
 <body class="bg-background text-text-primary font-body">
 
 <svg width="0" height="0" style="position:absolute">
-    <symbol id="hand-mark-shape" viewBox="0 0 120 140">
-        <rect x="32" y="44" width="10" height="32" rx="5" transform="rotate(-16 37 76)"/>
-        <rect x="47" y="30" width="11" height="46" rx="5.5" transform="rotate(-6 52.5 76)"/>
-        <rect x="61" y="24" width="12" height="52" rx="6" transform="rotate(2 67 76)"/>
-        <rect x="75" y="31" width="11" height="44" rx="5.5" transform="rotate(11 80.5 76)"/>
-        <rect x="17" y="68" width="14" height="32" rx="7" transform="rotate(-46 24 84)"/>
-        <ellipse cx="59" cy="88" rx="38" ry="33"/>
-    </symbol>
 
     <g id="icon-defs">
         <symbol id="icon-dashboard" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -161,13 +156,13 @@
 <div class="app" x-data="{ sidebarOpen: false }">
     <button type="button" class="mobile-topbar-toggle" @click="sidebarOpen = ! sidebarOpen" aria-label="פתיחת/סגירת תפריט">
         <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
-        <span class="mobile-topbar-brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</span>
+        <span class="mobile-topbar-brand"><img src="{{ asset('images/logo-transparent.png') }}" alt="כפיים"></span>
     </button>
 
     <div class="sidebar-backdrop" :class="{ 'is-visible': sidebarOpen }" @click="sidebarOpen = false"></div>
 
     <aside class="sidebar" :class="{ 'is-open': sidebarOpen }">
-        <div class="brand"><svg fill="currentColor"><use href="#hand-mark-shape"></use></svg>כפיים</div>
+        <a href="{{ url('/') }}" class="brand"><img src="{{ asset('images/logo-transparent.png') }}" alt="כפיים — חווית תוכן מהדהדת"></a>
 
         <div class="sidebar-scroll">
             <nav>
