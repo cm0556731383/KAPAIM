@@ -16,6 +16,7 @@ use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 
 new
@@ -92,6 +93,10 @@ class extends Component
     public array $sumitCompanies = [];
 
     public string $landingPageWebhookSecret = '';
+
+    /** Which settings tab is shown — kept in the URL (?tab=) so a reload stays on it. */
+    #[Url(as: 'tab')]
+    public string $activeTab = 'statuses';
 
     // ===== מנויים =====
     public string $subscriptionStartMonth = '';
@@ -519,6 +524,17 @@ class extends Component
         </div>
     </div>
 
+    <div class="tabs">
+        <span class="{{ $activeTab === 'statuses' ? 'active' : '' }}" wire:click="$set('activeTab', 'statuses')">סטטוסים</span>
+        <span class="{{ $activeTab === 'subscriptions' ? 'active' : '' }}" wire:click="$set('activeTab', 'subscriptions')">מנויים</span>
+        <span class="{{ $activeTab === 'leads' ? 'active' : '' }}" wire:click="$set('activeTab', 'leads')">לידים</span>
+        <span class="{{ $activeTab === 'payment-methods' ? 'active' : '' }}" wire:click="$set('activeTab', 'payment-methods')">אמצעי תשלום</span>
+        <span class="{{ $activeTab === 'business-entities' ? 'active' : '' }}" wire:click="$set('activeTab', 'business-entities')">עוסקים</span>
+        <span class="{{ $activeTab === 'email-templates' ? 'active' : '' }}" wire:click="$set('activeTab', 'email-templates')">תבניות דואר</span>
+        <span class="{{ $activeTab === 'integrations' ? 'active' : '' }}" wire:click="$set('activeTab', 'integrations')">אינטגרציות</span>
+    </div>
+
+    @if ($activeTab === 'statuses')
     {{-- ===== סטטוסים ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -571,7 +587,9 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'subscriptions')
     {{-- ===== מנויים ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -593,7 +611,9 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'leads')
     {{-- ===== מקורות ליד ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -632,7 +652,9 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'payment-methods')
     {{-- ===== אמצעי תשלום ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -677,7 +699,9 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'business-entities')
     {{-- ===== עוסקים ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -744,7 +768,9 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'email-templates')
     {{-- ===== תבניות דואר ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -859,7 +885,9 @@ class extends Component
             </div>
         </div>
     </section>
+    @endif
 
+    @if ($activeTab === 'integrations')
     {{-- ===== אינטגרציות חיצוניות ===== --}}
     <section class="settings-section">
         <div class="section-head">
@@ -980,4 +1008,5 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
 </div>

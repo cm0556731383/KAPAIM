@@ -1289,6 +1289,7 @@ class ExternalIntegrationsTest extends TestCase
         $second = $this->createBusinessEntity();
 
         Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'integrations')
             ->set("sumitCompanies.{$first->id}.connection_name", 'סאמיט — כפיים')
             ->set("sumitCompanies.{$first->id}.api_key", 'first-key')
             ->call('saveSumitCompany', $first->id)

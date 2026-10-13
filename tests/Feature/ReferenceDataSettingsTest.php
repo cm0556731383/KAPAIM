@@ -126,7 +126,8 @@ class ReferenceDataSettingsTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('חדש');
-        $response->assertSee('אשראי');
+
+        $this->actingAs($this->owner)->get('/settings?tab=payment-methods')->assertSee('אשראי');
     }
 
     public function test_no_delete_route_exists_for_the_six_primary_reference_resources(): void

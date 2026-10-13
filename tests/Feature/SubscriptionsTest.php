@@ -482,6 +482,8 @@ class SubscriptionsTest extends TestCase
     public function test_settings_page_saves_the_subscription_start_month(): void
     {
         Livewire::actingAs($this->owner)->test('settings')
+            ->assertDontSee('חודש תחילת מנוי')
+            ->set('activeTab', 'subscriptions')
             ->assertSee('חודש תחילת מנוי')
             ->set('subscriptionStartMonth', '2')
             ->call('saveSubscriptionSettings')
