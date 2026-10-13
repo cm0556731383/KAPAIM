@@ -169,7 +169,6 @@
 
         <div class="sidebar-scroll">
             <nav>
-                <div class="nav-group-label">עבודה יומית</div>
                 <a href="{{ url('/') }}" class="{{ request()->is('/') ? 'active' : '' }}"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
                 <a href="{{ route('search') }}" class="{{ request()->routeIs('search') ? 'active' : '' }}"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
                 <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
@@ -179,14 +178,11 @@
                 <a href="{{ route('suppliers') }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
             </nav>
             <nav>
-                <div class="nav-group-label">ניהול ומערכת</div>
                 <a href="{{ route('programs-catalog') }}" class="{{ request()->routeIs('programs-catalog') ? 'active' : '' }}"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
                 <a href="{{ route('document-templates') }}" class="{{ request()->routeIs('document-templates') ? 'active' : '' }}"><svg><use href="#icon-documents"></use></svg>תבניות מסמכים</a>
                 <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
-                <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#icon-integrations"></use></svg>אינטגרציות</span>
                 <a href="{{ route('users-roles') }}" class="{{ request()->routeIs('users-roles') ? 'active' : '' }}"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
                 <a href="{{ route('activity-log') }}" class="{{ request()->routeIs('activity-log') ? 'active' : '' }}"><svg><use href="#icon-activity"></use></svg>יומן פעילות</a>
-                <span class="nav-disabled" title="ייבנה בשלב עתידי"><svg><use href="#icon-import"></use></svg>ייבוא נתונים</span>
             </nav>
         </div>
     </aside>
