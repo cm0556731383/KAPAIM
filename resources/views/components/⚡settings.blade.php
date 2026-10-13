@@ -80,6 +80,7 @@ class extends Component
     public string $smoveApiKey = '';
     public string $smoveWebhookSecret = '';
     public string $smoveMaterialReminderHours = '48';
+    public string $smoveListId = '';
 
     public bool $summitTestMode = true;
 
@@ -117,6 +118,7 @@ class extends Component
         $this->smoveApiKey = (string) ($smove['api_key'] ?? '');
         $this->smoveWebhookSecret = (string) ($smove['webhook_secret'] ?? '');
         $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
+        $this->smoveListId = (string) ($smove['list_id'] ?? '');
 
         $summit = ExternalIntegrationSetting::where('system', 'summit')->first()?->settings ?? [];
         // Test mode defaults ON until the business owner explicitly turns it off.
@@ -153,12 +155,14 @@ class extends Component
             'smoveApiKey' => ['nullable', 'string', 'max:255'],
             'smoveWebhookSecret' => ['nullable', 'string', 'max:255'],
             'smoveMaterialReminderHours' => ['required', 'integer', 'min:1'],
-        ]);
+            'smoveListId' => ['nullable', 'integer', 'min:1'],
+        ], [], ['smoveListId' => 'מזהה רשימה ב-Smove']);
 
         ExternalIntegrationSetting::firstOrCreate(['system' => 'smove'], ['is_active' => false, 'settings' => []])->update(['settings' => [
             'api_key' => $data['smoveApiKey'] ?: null,
             'webhook_secret' => $data['smoveWebhookSecret'] ?: null,
             'material_reminder_hours' => (int) $data['smoveMaterialReminderHours'],
+            'list_id' => $data['smoveListId'] ? (int) $data['smoveListId'] : null,
         ]]);
 
         $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור Smove');
@@ -1090,6 +1094,11 @@ class extends Component
                             זה לא מגיע מ-Smove — זו מילת סוד שאתם ממציאים בעצמכם (כמו סיסמה), ומזינים גם כאן וגם בממשק Smove
                             אם מגדירים שם התראה על "מייל נפתח". אין לכם דבר כזה מוגדר? אפשר להשאיר ריק.
                         </p>
+                    </div>
+                    <div>
+                        <label for="smoveListId">מזהה רשימה ב-Smove</label>
+                        <input type="text" id="smoveListId" wire:model="smoveListId" class="ltr-num" dir="ltr" placeholder="למשל 1174405">
+                        @error('smoveListId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
                         <label for="smoveMaterialReminderHours">כמה שעות לחכות לפני תזכורת על חומרי לימוד שלא נפתחו</label>

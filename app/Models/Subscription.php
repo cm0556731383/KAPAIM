@@ -363,13 +363,12 @@ class Subscription extends Model
 
     /**
      * Build-plan 10 (FR-5.24/FR-5.25): cancellation removes the customer
-     * from the "subscribers" list and from every Program::scopeMonthlyCatalog()
-     * program's list NOT already delivered under THIS subscription's own
-     * delivery log — a program already marked supplied
-     * (Subscription::markDeliverySupplied()) keeps its membership, and the
-     * primary list is never touched here at all (FR-5.25). See
-     * Program::scopeMonthlyCatalog()'s docblock for the fixed "every program
-     * included in the subscription" set this reads against.
+     * from the "subscribers" list and from the list of every program in the
+     * subscription bundle (Deal::assignMailingListsForBundlePurchase()) NOT
+     * already delivered under THIS subscription's own delivery log — a
+     * program already marked supplied keeps its membership, and so does one
+     * the customer also bought on its own; the primary list is never touched
+     * here at all (FR-5.25).
      *
      * Build-plan 12: MailingMembership::removeCustomer() below now also
      * pushes this removal to Smove for real — nothing to change here.
@@ -380,8 +379,12 @@ class Subscription extends Model
 
         $deliveredProgramIds = $this->deliveries()->where('is_supplied', true)->pluck('program_id')->all();
 
-        Program::monthlyCatalog()->get()
-            ->reject(fn (Program $program) => in_array($program->id, $deliveredProgramIds, true))
+        $boughtProgramIds = Deal::where('customer_id', $this->customer_id)->whereNotNull('program_id')
+            ->whereHas('status', fn ($q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME))
+            ->pluck('program_id')->all();
+
+        ($this->deal->bundle?->programs ?? collect())
+            ->reject(fn (Program $program) => in_array($program->id, $deliveredProgramIds, true) || in_array($program->id, $boughtProgramIds, true))
             ->each(fn (Program $program) => MailingMembership::removeCustomer(MailingList::forProgram($program), $this->customer));
     }
 

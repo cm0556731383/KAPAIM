@@ -299,9 +299,11 @@ class Deal extends Model
     /**
      * Build-plan 10 (FR-5.23), moved here 2026-09-09 along with
      * is_subscription_type itself (Program -> Bundle): purchasing the
-     * subscription-type bundle joins the "subscribers" list plus every list
-     * in Program::scopeMonthlyCatalog() — see that scope's docblock for
-     * exactly what "every program included in the subscription" means here.
+     * subscription-type bundle joins the "subscribers" list plus the list of
+     * every program included in that bundle in the catalog (owner's call,
+     * 2026-10-14 — was every active non-premium program). Programs added to
+     * the bundle later reach existing subscribers via
+     * Bundle::syncSubscriberProgramList().
      * A plain (non-subscription-type) bundle purchase never joins any list
      * (FR-5.22 only ever concerns a program, or now the subscription bundle).
      */
@@ -313,8 +315,8 @@ class Deal extends Model
 
         MailingMembership::addCustomer(MailingList::subscribersList(), $this->customer);
 
-        Program::monthlyCatalog()->get()->each(
-            fn (Program $monthly) => MailingMembership::addCustomer(MailingList::forProgram($monthly), $this->customer)
+        $bundle->programs->each(
+            fn (Program $program) => MailingMembership::addCustomer(MailingList::forProgram($program), $this->customer)
         );
     }
 

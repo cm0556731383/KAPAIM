@@ -33,4 +33,41 @@ class Bundle extends Model
     {
         return $this->belongsToMany(Program::class);
     }
+
+    /**
+     * A program added to / removed from the subscription bundle in the
+     * catalog: every customer currently subscribed through this bundle joins
+     * / leaves that program's list — subscribers are on the lists of exactly
+     * the programs in the bundle (Deal::assignMailingListsForBundlePurchase()).
+     * Leaving skips a customer who received that program under the
+     * subscription or bought it on its own.
+     */
+    public function syncSubscriberProgramList(Program $program, bool $joined): void
+    {
+        if (! $this->is_subscription_type) {
+            return;
+        }
+
+        $list = MailingList::forProgram($program);
+
+        Subscription::with('customer', 'deliveries')
+            ->whereHas('deal', fn ($q) => $q->where('bundle_id', $this->id))
+            ->whereHas('status', fn ($q) => $q->where('name', Subscription::ACTIVE_STATUS_NAME))
+            ->get()
+            ->each(function (Subscription $subscription) use ($list, $program, $joined) {
+                if ($joined) {
+                    MailingMembership::addCustomer($list, $subscription->customer);
+
+                    return;
+                }
+
+                $delivered = $subscription->deliveries->where('is_supplied', true)->pluck('program_id')->contains($program->id);
+                $bought = Deal::where('customer_id', $subscription->customer_id)->where('program_id', $program->id)
+                    ->whereHas('status', fn ($q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME))->exists();
+
+                if (! $delivered && ! $bought) {
+                    MailingMembership::removeCustomer($list, $subscription->customer);
+                }
+            });
+    }
 }

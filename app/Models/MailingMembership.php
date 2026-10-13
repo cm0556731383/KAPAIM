@@ -282,16 +282,10 @@ class MailingMembership extends Model
      * still leaves this list membership correctly recorded — it just isn't
      * mirrored to Smove for an already-confirmed contact, on purpose.
      *
-     * While NOT yet confirmed, a 'join' is broadened to include every
-     * mailing list this app currently has linked to Smove (not just $list)
-     * — confirmed empirically (2026-09-06) that every list included in the
-     * same request as a contact's first confirmation stays confirmed
-     * together, one click for all of them. This is what makes the guard
-     * above actually work in practice: a lead's very first join (still
-     * unconfirmed) pre-clears every future list a deal/subscription might
-     * add them to later, so those later joins hit the already-confirmed
-     * guard and never touch Smove again — instead of every single deal
-     * needing its own separate confirmation email.
+     * Since 2026-10-14 there is exactly one Smove list (SmoveClient::listId())
+     * — every join targets it, whichever local list $list is, so a contact
+     * confirms once and every later local list join (a program, the
+     * subscribers list) is purely local.
      */
     private static function pushToSmove(string $action, MailingList $list, array $contact, array $context): void
     {
@@ -299,8 +293,10 @@ class MailingMembership extends Model
             return;
         }
 
-        // A list not linked to Smove has nothing there to remove the contact from.
-        if ($action === 'remove' && ! $list->smove_list_id) {
+        // Smove holds one list for everyone (SmoveClient::listId()): leaving a
+        // program/subscribers list here still leaves the contact on it — only
+        // leaving the general list would mean leaving Smove's list.
+        if ($action === 'remove' && $list->list_type !== MailingList::TYPE_PRIMARY) {
             return;
         }
 
@@ -310,15 +306,11 @@ class MailingMembership extends Model
             return;
         }
 
-        $listIds = $action === 'join'
-            ? MailingList::query()->whereNotNull('smove_list_id')->pluck('smove_list_id')->push($list->smove_list_id)->filter()->unique()->values()->all()
-            : $list->smove_list_id;
-
         app(ExternalOperationRunner::class)->run(
             'smove',
             'mailing_list_'.$action,
             'app_action',
-            fn () => $smove->syncMailingListMembership($listIds, $action, $contact),
+            fn () => $smove->syncMailingListMembership($smove->listId(), $action, $contact),
             array_merge($context, ['description' => ($action === 'join' ? 'הצטרפות' : 'הסרה')." מרשימת תפוצה \"{$list->name}\""]),
         );
     }

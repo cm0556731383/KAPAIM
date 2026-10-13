@@ -228,7 +228,7 @@ class extends Component
                                         </div>
                                         <div><label>אימייל מערכת</label><input type="text" wire:model="editEmail" class="ltr-num" dir="ltr">@error('editEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                         <div><label>אימייל אישי</label><input type="text" wire:model="editPersonalEmail" class="ltr-num" dir="ltr">@error('editPersonalEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                        <div class="full"><span class="check-row"><input type="checkbox" id="editIsActive" wire:model="editIsActive"><label for="editIsActive" style="margin:0">משתמשת פעילה (משתמשת לא פעילה אינה יכולה להתחבר)</label></span></div>
+                                        <div class="full"><span class="checkbox-row"><input type="checkbox" id="editIsActive" wire:model="editIsActive"><label for="editIsActive" style="margin:0">משתמשת פעילה (משתמשת לא פעילה אינה יכולה להתחבר)</label></span></div>
                                         <div class="full" style="display:flex; gap:var(--sp-sm)">
                                             <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                             <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelUserEdit">ביטול</button>

@@ -225,9 +225,10 @@ class ExternalIntegrationsTest extends TestCase
             && $request['Payments'][0]['Amount'] == 400);
     }
 
-    public function test_leaving_a_list_not_linked_to_smove_makes_no_smove_call(): void
+    /** Smove holds one list for everyone — leaving a subscribers/program list never unsubscribes from it. */
+    public function test_leaving_a_list_other_than_the_general_one_makes_no_smove_call(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake();
         $deal = $this->dealWithInvoice();
         $list = MailingList::create(['name' => 'מנויים '.random_int(1, 999999), 'list_type' => 'subscription', 'is_active' => true]);
@@ -241,7 +242,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_failed_smove_push_never_blocks_joining_the_mailing_list(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(['rest.smoove.io/*' => Http::response(['message' => 'nope'], 500)]);
 
         $customer = $this->createCustomer();
@@ -252,10 +253,9 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_a_successful_smove_push_is_recorded(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
 
-        MailingList::primaryList()->update(['smove_list_id' => 123]);
 
         $this->createCustomer();
 
@@ -277,8 +277,7 @@ class ExternalIntegrationsTest extends TestCase
      */
     public function test_an_already_confirmed_smove_contact_is_never_re_subscribed(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
-        MailingList::primaryList()->update(['smove_list_id' => 123]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
         Http::fake(function ($request) {
             return $request->method() === 'GET'
@@ -293,7 +292,6 @@ class ExternalIntegrationsTest extends TestCase
 
         $program = Program::create(['name' => 'תוכנית לבדיקת רשימות', 'price' => 100, 'is_active' => true]);
         $programList = MailingList::forProgram($program);
-        $programList->update(['smove_list_id' => 999]);
 
         MailingMembership::addCustomer($programList, $customer);
 
@@ -308,22 +306,12 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertSame($joinsBefore, ExternalOperation::where('operation_type', 'mailing_list_join')->count());
     }
 
-    /**
-     * The other half of the 2026-09-06 fix: while a contact is NOT yet
-     * confirmed, a 'join' must broaden lists_ToSubscribe to every mailing
-     * list this app has linked to Smove — not just the one list the caller
-     * actually asked to join — so the contact's single confirmation click
-     * covers every list up front. Without this, every later deal/program
-     * purchase would need its own separate confirmation email.
-     */
-    public function test_a_not_yet_confirmed_contacts_first_join_is_broadened_to_every_linked_list(): void
+    /** Since 2026-10-14 every join targets the one Smove list set in the Smove integration setting. */
+    public function test_a_not_yet_confirmed_contacts_first_join_goes_to_the_single_smove_list(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
-        MailingList::primaryList()->update(['smove_list_id' => 111]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
         $program = Program::create(['name' => 'תוכנית לבדיקת רשימות', 'price' => 100, 'is_active' => true]);
-        MailingList::forProgram($program)->update(['smove_list_id' => 222]);
-        MailingList::subscribersList()->update(['smove_list_id' => 333]);
 
         Http::fake(function ($request) {
             return $request->method() === 'GET'
@@ -341,7 +329,7 @@ class ExternalIntegrationsTest extends TestCase
             $subscribed = $request->data()['lists_ToSubscribe'] ?? [];
             sort($subscribed);
 
-            return $subscribed === [111, 222, 333];
+            return $subscribed === [111];
         });
     }
 
@@ -354,8 +342,7 @@ class ExternalIntegrationsTest extends TestCase
      */
     public function test_joining_a_list_pushes_every_contact_not_just_the_first(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
-        MailingList::primaryList()->update(['smove_list_id' => 111]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
         Http::fake(function ($request) {
             return $request->method() === 'GET'
@@ -369,7 +356,6 @@ class ExternalIntegrationsTest extends TestCase
             'name' => 'איש קשר שני', 'email' => 'second'.random_int(1, 999999).'@example.com',
         ]);
 
-        MailingList::primaryList()->update(['smove_list_id' => 111]); // re-trigger a fresh join below
         MailingMembership::where('mailing_list_id', MailingList::primaryList()->id)->where('customer_id', $customer->id)->delete();
         MailingMembership::addCustomer(MailingList::primaryList(), $customer);
 
@@ -394,11 +380,9 @@ class ExternalIntegrationsTest extends TestCase
      */
     public function test_syncing_a_new_contact_joins_it_to_every_active_list_with_its_own_external_id(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
-        MailingList::primaryList()->update(['smove_list_id' => 111]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
         $program = Program::create(['name' => 'תוכנית לבדיקת אנשי קשר', 'price' => 100, 'is_active' => true]);
-        MailingList::forProgram($program)->update(['smove_list_id' => 222]);
 
         Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
 
@@ -433,8 +417,7 @@ class ExternalIntegrationsTest extends TestCase
     /** End-to-end: adding a contact through the actual UI action (⚡customer-detail.blade.php) reaches Smove, not just the model method in isolation. */
     public function test_adding_a_contact_through_the_customer_screen_reaches_smove(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
-        MailingList::primaryList()->update(['smove_list_id' => 111]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
         Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
 
@@ -461,7 +444,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_syncing_a_contact_with_no_email_touches_nothing(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
 
         $customer = $this->createCustomer();
@@ -638,7 +621,7 @@ class ExternalIntegrationsTest extends TestCase
     public function test_sending_an_invoice_never_touches_smove(): void
     {
         ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200), 'rest.smoove.io/*' => Http::response(['id' => 42], 200)]);
 
         $deal = $this->dealWithInvoice();
@@ -754,7 +737,7 @@ class ExternalIntegrationsTest extends TestCase
 
     public function test_sending_a_document_with_no_valid_recipient_email_never_touches_smove(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake();
 
         $deal = $this->createDeal();
@@ -782,7 +765,7 @@ class ExternalIntegrationsTest extends TestCase
      */
     public function test_sending_a_document_as_pdf_attaches_the_real_file_via_smove(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(function ($request) {
             if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
                 return Http::response([], 200);
@@ -821,7 +804,7 @@ class ExternalIntegrationsTest extends TestCase
     /** The "קבלת המסמך כ-PDF במייל" button — routes/web.php's documents.email-pdf — now sends through Smove (campaignAttachments), never Laravel Mail. */
     public function test_the_request_pdf_by_email_link_sends_a_smove_campaign_with_the_attachment(): void
     {
-        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(function ($request) {
             if ($request->method() === 'GET' && str_contains($request->url(), '/Contacts')) {
                 return Http::response([], 200);

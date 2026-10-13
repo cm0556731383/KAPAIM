@@ -272,6 +272,7 @@ class extends Component
 
         $bundle->programs()->attach($data['membershipProgramId']);
         $program = Program::find($data['membershipProgramId']);
+        $bundle->syncSubscriberProgramList($program, joined: true);
 
         $activityLogger->log('bundle.program_added', "תוכנית \"{$program?->name}\" נוספה למארז \"{$bundle->name}\"", [
             'metadata' => ['bundle_id' => $bundle->id, 'program_id' => $program?->id],
@@ -288,6 +289,10 @@ class extends Component
         $program = Program::find($programId);
 
         $bundle->programs()->detach($programId);
+
+        if ($program) {
+            $bundle->syncSubscriberProgramList($program, joined: false);
+        }
 
         $activityLogger->log('bundle.program_removed', "תוכנית \"{$program?->name}\" הוסרה ממארז \"{$bundle->name}\"", [
             'metadata' => ['bundle_id' => $bundle->id, 'program_id' => $programId],
@@ -338,7 +343,7 @@ class extends Component
                     <div>
                         <label>&nbsp;</label>
                         <div style="display:flex; flex-direction:column; gap:8px; padding-top:6px">
-                            <span class="check-row"><input type="checkbox" id="programIsPremium" wire:model="programIsPremium"><label for="programIsPremium" style="margin:0">תוכנית פרימיום (is_premium)</label></span>
+                            <span class="checkbox-row"><input type="checkbox" id="programIsPremium" wire:model="programIsPremium"><label for="programIsPremium" style="margin:0">תוכנית פרימיום (is_premium)</label></span>
                         </div>
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">יצירת תוכנית</button></div>
@@ -358,7 +363,7 @@ class extends Component
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
-                                    <div class="full"><span class="check-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום (is_premium)</label></span></div>
+                                    <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום (is_premium)</label></span></div>
                                     <div class="full" style="display:flex; gap:var(--sp-sm)">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
@@ -413,7 +418,7 @@ class extends Component
                             @error('bundlePrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div class="full">
-                            <span class="check-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי (is_subscription_type)</label></span>
+                            <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי (is_subscription_type)</label></span>
                         </div>
                         <div class="full"><button type="submit" class="btn btn-primary">יצירת מארז</button></div>
                     </form>
@@ -458,7 +463,7 @@ class extends Component
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
-                                    <div class="full"><span class="check-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי (is_subscription_type)</label></span></div>
+                                    <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי (is_subscription_type)</label></span></div>
                                     <div class="full" style="display:flex; gap:var(--sp-sm)">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>

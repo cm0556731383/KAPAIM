@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * etc. See MailingListsSeeder for pre-seeding one row per currently-catalog
  * program plus the three singleton lists.
  */
-#[Fillable(['name', 'list_type', 'program_id', 'is_active', 'smove_list_id'])]
+#[Fillable(['name', 'list_type', 'program_id', 'is_active'])]
 class MailingList extends Model
 {
     use HasFactory;
@@ -39,7 +39,6 @@ class MailingList extends Model
     {
         return [
             'is_active' => 'boolean',
-            'smove_list_id' => 'integer',
         ];
     }
 
@@ -51,6 +50,36 @@ class MailingList extends Model
     public function memberships(): HasMany
     {
         return $this->hasMany(MailingMembership::class);
+    }
+
+    public function sends(): HasMany
+    {
+        return $this->hasMany(MailingListSend::class);
+    }
+
+    /**
+     * Who an email to this list reaches: each active member's email(s) — a
+     * lead's own, every contact with an email of a customer, a supplier's —
+     * one entry per address.
+     *
+     * @return array<int, array{email: string, name: ?string}>
+     */
+    public function recipients(): array
+    {
+        return $this->memberships()
+            ->where('membership_status', MailingMembership::STATUS_ACTIVE)
+            ->with(['lead.school', 'customer.contacts', 'supplier'])
+            ->get()
+            ->flatMap(fn (MailingMembership $m) => match (true) {
+                $m->lead_id !== null => [['email' => $m->lead?->email, 'name' => $m->lead?->school?->name]],
+                $m->customer_id !== null => ($m->customer?->contacts ?? collect())->map(fn ($c) => ['email' => $c->email, 'name' => $c->name])->all(),
+                $m->supplier_id !== null => [['email' => $m->supplier?->email, 'name' => $m->supplier?->name]],
+                default => [],
+            })
+            ->filter(fn (array $r) => filled($r['email']) && filter_var($r['email'], FILTER_VALIDATE_EMAIL))
+            ->unique(fn (array $r) => mb_strtolower(trim($r['email'])))
+            ->values()
+            ->all();
     }
 
     /** FR-1.17/FR-5.21: the singleton every lead/customer ends up on. */

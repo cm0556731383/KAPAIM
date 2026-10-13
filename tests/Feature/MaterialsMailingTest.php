@@ -486,13 +486,14 @@ class MaterialsMailingTest extends TestCase
         $this->assertFalse(MailingMembership::where('mailing_list_id', $subscribers->id)->where('customer_id', $customer->id)->exists());
     }
 
-    public function test_buying_the_subscription_bundle_adds_subscribers_list_and_every_monthly_catalog_program_list(): void
+    public function test_buying_the_subscription_bundle_adds_subscribers_list_and_the_list_of_every_program_in_the_bundle(): void
     {
         $customer = $this->createCustomer();
         $monthlyA = $this->createProgram(name: 'חודשית א');
         $monthlyB = $this->createProgram(name: 'חודשית ב');
-        $premium = $this->createProgram(name: 'פרימיום', isPremium: true);
+        $notInBundle = $this->createProgram(name: 'מחוץ למנוי');
         $subscriptionBundle = $this->createSubscriptionBundle();
+        $subscriptionBundle->programs()->attach([$monthlyA->id, $monthlyB->id]);
 
         Deal::createForCustomer($customer, null, $subscriptionBundle);
 
@@ -507,10 +508,29 @@ class MaterialsMailingTest extends TestCase
             );
         }
 
-        // FR-5.23's judgment call: premium programs are never part of "every
-        // monthly program included in the subscription".
-        $premiumList = MailingList::forProgram($premium);
-        $this->assertFalse(MailingMembership::where('mailing_list_id', $premiumList->id)->where('customer_id', $customer->id)->exists());
+        // Only the programs inside the subscription bundle in the catalog.
+        $otherList = MailingList::forProgram($notInBundle);
+        $this->assertFalse(MailingMembership::where('mailing_list_id', $otherList->id)->where('customer_id', $customer->id)->exists());
+    }
+
+    public function test_a_program_added_to_or_removed_from_the_subscription_bundle_follows_its_active_subscribers(): void
+    {
+        $customer = $this->createCustomer();
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
+        $added = $this->createProgram(name: 'נוספה למנוי');
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('membershipBundleId', $subscriptionBundle->id)
+            ->set('membershipProgramId', $added->id)
+            ->call('addBundleProgram');
+
+        $this->assertTrue($this->isActiveMember(MailingList::forProgram($added), $customer));
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('removeBundleProgram', $subscriptionBundle->id, $added->id);
+
+        $this->assertFalse($this->isActiveMember(MailingList::forProgram($added), $customer));
     }
 
     public function test_cancelling_a_subscription_removes_subscribers_and_undelivered_lists_but_keeps_primary_and_delivered(): void
@@ -519,6 +539,7 @@ class MaterialsMailingTest extends TestCase
         $monthlyA = $this->createProgram(name: 'חודשית א');
         $monthlyB = $this->createProgram(name: 'חודשית ב');
         $subscriptionBundle = $this->createSubscriptionBundle();
+        $subscriptionBundle->programs()->attach([$monthlyA->id, $monthlyB->id]);
 
         $deal = Deal::createForCustomer($customer, null, $subscriptionBundle);
         $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
@@ -545,6 +566,92 @@ class MaterialsMailingTest extends TestCase
 
         // The primary list is never touched by cancellation.
         $this->assertTrue($this->isActiveMember(MailingList::primaryList(), $customer));
+    }
+
+    // ----- the lists screen: one row per list, sending an email to a list -----
+
+    public function test_the_lists_screen_shows_the_general_subscribers_and_every_active_program_list(): void
+    {
+        $active = $this->createProgram(name: 'תוכנית פעילה בקטלוג');
+        $this->createCustomerWithEmailContact();
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->assertSee('כללית — כל הלידים והלקוחות')
+            ->assertSee('מנויים')
+            ->assertSee('ספקים')
+            ->assertSee($active->name)
+            ->assertDontSee('מזהה רשימה ב-Smove');
+    }
+
+    public function test_sending_to_a_list_queues_one_send_for_its_recipients(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListId', (string) MailingList::primaryList()->id)
+            ->set('sendSubject', 'עדכון חודשי')
+            ->set('sendBody', "שלום לכולם,\nיש לנו תוכנית חדשה!")
+            ->call('send')
+            ->assertHasNoErrors()
+            ->assertSet('sendError', null);
+
+        $send = \App\Models\MailingListSend::firstOrFail();
+        $this->assertSame('עדכון חודשי', $send->subject);
+        $this->assertSame(1, $send->recipient_count);
+        $this->assertStringContainsString('יש לנו תוכנית חדשה!', $send->body_html);
+        $this->assertStringContainsString('images/logo.png', $send->body_html); // the branded shell
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendMailingListEmail::class, fn ($job) => $job->sendId === $send->id);
+    }
+
+    public function test_an_uploaded_html_file_is_sent_as_is_and_an_empty_list_is_refused(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+        $html = '<html><body><h1>ניוזלטר</h1></body></html>';
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListId', (string) MailingList::suppliersList()->id)
+            ->set('sendSubject', 'ניוזלטר')
+            ->set('sendMode', 'html')
+            ->set('htmlFile', UploadedFile::fake()->createWithContent('news.html', $html))
+            ->call('send')
+            ->assertSet('sendError', 'ברשימה "ספקים" אין עדיין נמענים עם כתובת דוא"ל.')
+            ->set('sendListId', (string) MailingList::primaryList()->id)
+            ->call('send')
+            ->assertSet('sendError', null);
+
+        $this->assertSame($html, \App\Models\MailingListSend::firstOrFail()->body_html);
+    }
+
+    public function test_the_send_job_sends_one_smove_campaign_to_the_lists_recipients(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+        Http::fake(fn ($request) => $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => 77], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+        $send = \App\Models\MailingListSend::create([
+            'mailing_list_id' => MailingList::primaryList()->id, 'user_id' => $this->owner->id, 'subject' => 'שלום',
+            'content_type' => 'text', 'body_html' => '<p>שלום</p>', 'status' => \App\Models\MailingListSend::STATUS_QUEUED,
+        ]);
+
+        (new \App\Jobs\SendMailingListEmail($send->id))->handle(app(ExternalOperationRunner::class), app(SmoveClient::class));
+
+        $this->assertSame(\App\Models\MailingListSend::STATUS_SENT, $send->fresh()->status);
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns') && $request['subject'] === 'שלום' && $request['toMembersById'] === [77]);
+    }
+
+    public function test_the_smove_list_id_is_set_in_the_smove_integration_settings(): void
+    {
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'integrations')
+            ->set('smoveListId', '1174405')
+            ->call('saveSmoveSettings')
+            ->assertHasNoErrors();
+
+        $this->assertSame(1174405, app(SmoveClient::class)->listId());
     }
 
     // ----- no delete route anywhere for materials/mailing entities -----

@@ -49,6 +49,14 @@ class SmoveClient
         return $this->config()->is_active && filled($this->setting('api_key'));
     }
 
+    /** The one Smove list every lead/customer/supplier joins (settings → אינטגרציות → Smove). */
+    public function listId(): ?int
+    {
+        $id = $this->setting('list_id');
+
+        return filled($id) ? (int) $id : null;
+    }
+
     /**
      * Whether Smove already shows this email as having confirmed consent
      * (`canReceiveEmails: true`). Callers use this to decide whether it's
@@ -78,10 +86,9 @@ class SmoveClient
 
     /**
      * FR-1.17/FR-5.21-FR-5.26: join/remove a lead/customer/supplier on a
-     * Smove mailing list. Smove has no lookup-by-name — $listId(s) are the
-     * target MailingList(s)' smove_list_id (set by the business owner in
-     * ⚡mailing-lists.blade.php); none linked at all fails loudly here rather
-     * than guessing.
+     * Smove mailing list. Smove has no lookup-by-name — $listId is the one
+     * Smove list id set in the Smove integration setting (listId()); none set
+     * fails loudly here rather than guessing.
      *
      * IMPORTANT — confirmed empirically against Smove's real API
      * (2026-09-06): posting `canReceiveEmails: true` together with
@@ -119,7 +126,7 @@ class SmoveClient
         $listIds = array_values(array_filter(is_array($listId) ? $listId : [$listId]));
 
         if (empty($listIds)) {
-            throw new RuntimeException('רשימת התפוצה הזו טרם קושרה למזהה רשימה ב-Smove — יש להזין אותו במסך "רשימות תפוצה".');
+            throw new RuntimeException('לא הוגדר מזהה רשימה ב-Smove — יש להזין אותו בהגדרות מערכת ← אינטגרציות ← Smove.');
         }
 
         $response = $this->http()->post('/Contacts?updateIfExists=true&restoreIfDeleted=true&restoreIfUnsubscribed=true', array_filter([
@@ -150,6 +157,19 @@ class SmoveClient
             $subject,
             BrandedEmail::wrap('<p>שלום,</p><p>מצורפים קישורים לחומרי הלימוד:</p><ul style="padding-inline-start:20px;">'.$linksHtml.'</ul><p>בברכה, כפיים</p>'),
         );
+    }
+
+    /**
+     * An email to a whole mailing list (⚡mailing-lists → App\Jobs\SendMailingListEmail):
+     * $bodyHtml is either the branded shell around the owner's text, or the
+     * owner's own uploaded HTML, used as is. Smove itself never delivers to a
+     * contact who unsubscribed.
+     *
+     * @param  array<int, array{email: string, name: ?string}>  $recipients
+     */
+    public function sendListEmail(array $recipients, string $subject, string $bodyHtml): string
+    {
+        return $this->sendCampaign($recipients, $subject, $bodyHtml);
     }
 
     /** Any single-recipient plain-text send: material/expense reminders (FR-5.16/FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. The text itself (EmailTemplate::render()'s output, editable by the business owner) is untouched; BrandedEmail::wrap() only adds the branded shell around it. */
