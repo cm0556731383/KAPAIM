@@ -590,7 +590,7 @@ class MaterialsMailingTest extends TestCase
         MailingMembership::addCustomer(MailingList::primaryList(), $customer);
 
         Livewire::actingAs($this->owner)->test('mailing-lists')
-            ->set('sendListId', (string) MailingList::primaryList()->id)
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
             ->set('sendSubject', 'עדכון חודשי')
             ->set('sendBody', "שלום לכולם,\nיש לנו תוכנית חדשה!")
             ->call('send')
@@ -605,6 +605,32 @@ class MaterialsMailingTest extends TestCase
         \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendMailingListEmail::class, fn ($job) => $job->sendId === $send->id);
     }
 
+    public function test_one_send_can_target_several_lists_and_each_address_gets_it_once(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $program = $this->createProgram(name: 'תוכנית לשליחה משולבת');
+        $both = $this->createCustomerWithEmailContact();
+        $onlyGeneral = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $both);
+        MailingMembership::addCustomer(MailingList::primaryList(), $onlyGeneral);
+        MailingMembership::addCustomer(MailingList::forProgram($program), $both);
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->call('send')
+            ->assertHasErrors(['sendListIds'])
+            ->set('sendListIds', [(string) MailingList::primaryList()->id, (string) MailingList::forProgram($program)->id])
+            ->assertSet('selectedRecipientCount', 2)
+            ->set('sendSubject', 'לשתי רשימות')
+            ->set('sendBody', 'שלום')
+            ->call('send')
+            ->assertSet('sendError', null);
+
+        $send = \App\Models\MailingListSend::firstOrFail();
+        $this->assertSame(2, $send->recipient_count);
+        $this->assertCount(2, $send->mailingLists);
+        $this->assertCount(2, $send->recipients());
+    }
+
     public function test_an_uploaded_html_file_is_sent_as_is_and_an_empty_list_is_refused(): void
     {
         \Illuminate\Support\Facades\Queue::fake();
@@ -613,13 +639,13 @@ class MaterialsMailingTest extends TestCase
         $html = '<html><body><h1>ניוזלטר</h1></body></html>';
 
         Livewire::actingAs($this->owner)->test('mailing-lists')
-            ->set('sendListId', (string) MailingList::suppliersList()->id)
+            ->set('sendListIds', [(string) MailingList::suppliersList()->id])
             ->set('sendSubject', 'ניוזלטר')
             ->set('sendMode', 'html')
             ->set('htmlFile', UploadedFile::fake()->createWithContent('news.html', $html))
             ->call('send')
             ->assertSet('sendError', 'ברשימה "ספקים" אין עדיין נמענים עם כתובת דוא"ל.')
-            ->set('sendListId', (string) MailingList::primaryList()->id)
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
             ->call('send')
             ->assertSet('sendError', null);
 
@@ -633,9 +659,10 @@ class MaterialsMailingTest extends TestCase
         $customer = $this->createCustomerWithEmailContact();
         MailingMembership::addCustomer(MailingList::primaryList(), $customer);
         $send = \App\Models\MailingListSend::create([
-            'mailing_list_id' => MailingList::primaryList()->id, 'user_id' => $this->owner->id, 'subject' => 'שלום',
+            'user_id' => $this->owner->id, 'subject' => 'שלום',
             'content_type' => 'text', 'body_html' => '<p>שלום</p>', 'status' => \App\Models\MailingListSend::STATUS_QUEUED,
         ]);
+        $send->mailingLists()->attach(MailingList::primaryList());
 
         (new \App\Jobs\SendMailingListEmail($send->id))->handle(app(ExternalOperationRunner::class), app(SmoveClient::class));
 

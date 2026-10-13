@@ -52,9 +52,25 @@ class MailingList extends Model
         return $this->hasMany(MailingMembership::class);
     }
 
-    public function sends(): HasMany
+    /** The general list reads as "כללית" wherever lists are offered. */
+    public function displayName(): string
     {
-        return $this->hasMany(MailingListSend::class);
+        return $this->list_type === self::TYPE_PRIMARY ? 'כללית' : $this->name;
+    }
+
+    /**
+     * recipients() across several lists — one entry per address.
+     *
+     * @param  iterable<MailingList>  $lists
+     * @return array<int, array{email: string, name: ?string}>
+     */
+    public static function recipientsOf(iterable $lists): array
+    {
+        return collect($lists)
+            ->flatMap(fn (MailingList $list) => $list->recipients())
+            ->unique(fn (array $r) => mb_strtolower(trim($r['email'])))
+            ->values()
+            ->all();
     }
 
     /**

@@ -5,9 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
-/** One email sent to a mailing list from ⚡mailing-lists — sent by App\Jobs\SendMailingListEmail. */
-#[Fillable(['mailing_list_id', 'user_id', 'subject', 'content_type', 'body_html', 'recipient_count', 'status', 'error_message', 'sent_at'])]
+/** One email sent to one or more mailing lists from ⚡mailing-lists — sent by App\Jobs\SendMailingListEmail. */
+#[Fillable(['user_id', 'subject', 'content_type', 'body_html', 'recipient_count', 'status', 'error_message', 'sent_at'])]
 class MailingListSend extends Model
 {
     public const STATUS_QUEUED = 'queued';
@@ -27,9 +28,20 @@ class MailingListSend extends Model
         return ['sent_at' => 'datetime'];
     }
 
-    public function mailingList(): BelongsTo
+    public function mailingLists(): BelongsToMany
     {
-        return $this->belongsTo(MailingList::class);
+        return $this->belongsToMany(MailingList::class);
+    }
+
+    /** Every address on any of the chosen lists, once. */
+    public function recipients(): array
+    {
+        return MailingList::recipientsOf($this->mailingLists);
+    }
+
+    public function listNames(): string
+    {
+        return $this->mailingLists->map->displayName()->implode(', ');
     }
 
     public function user(): BelongsTo

@@ -39,7 +39,8 @@ class extends Component
     use Notifies;
     use WithFileUploads;
 
-    public string $sendListId = '';
+    /** @var array<int, string> ids of the lists the email goes to */
+    public array $sendListIds = [];
     public string $sendSubject = '';
     /** text = the owner's text in the branded shell; html = an uploaded HTML file, as is. */
     public string $sendMode = 'text';
@@ -107,9 +108,10 @@ class extends Component
         $this->sendError = null;
 
         $data = $this->validate([
-            'sendListId' => ['required', 'exists:mailing_lists,id'],
+            'sendListIds' => ['required', 'array', 'min:1'],
+            'sendListIds.*' => ['exists:mailing_lists,id'],
             'sendSubject' => ['required', 'string', 'max:255'],
-        ], [], ['sendListId' => 'רשימה', 'sendSubject' => 'נושא']);
+        ], ['sendListIds.required' => 'יש לבחור לפחות רשימה אחת.'], ['sendListIds' => 'רשימות', 'sendSubject' => 'נושא']);
 
         $html = $this->buildBody();
 
@@ -117,17 +119,19 @@ class extends Component
             return;
         }
 
-        $list = MailingList::findOrFail($data['sendListId']);
-        $recipientCount = count($list->recipients());
+        $lists = MailingList::whereIn('id', $data['sendListIds'])->get();
+        $names = $lists->map->displayName()->implode(', ');
+        $recipientCount = count(MailingList::recipientsOf($lists));
 
         if ($recipientCount === 0) {
-            $this->sendError = "ברשימה \"{$list->name}\" אין עדיין נמענים עם כתובת דוא\"ל.";
+            $this->sendError = $lists->count() === 1
+                ? "ברשימה \"{$names}\" אין עדיין נמענים עם כתובת דוא\"ל."
+                : 'ברשימות שנבחרו אין עדיין נמענים עם כתובת דוא"ל.';
 
             return;
         }
 
         $send = MailingListSend::create([
-            'mailing_list_id' => $list->id,
             'user_id' => auth()->id(),
             'subject' => $data['sendSubject'],
             'content_type' => $this->sendMode,
@@ -135,16 +139,17 @@ class extends Component
             'recipient_count' => $recipientCount,
             'status' => MailingListSend::STATUS_QUEUED,
         ]);
+        $send->mailingLists()->attach($lists->pluck('id'));
 
         SendMailingListEmail::dispatch($send->id);
 
-        $activityLogger->log('mailing_list.email_sent', "נשלח מייל לרשימת התפוצה \"{$list->name}\" ({$recipientCount} נמענים): {$send->subject}", [
+        $activityLogger->log('mailing_list.email_sent', "נשלח מייל לרשימות התפוצה {$names} ({$recipientCount} נמענים): {$send->subject}", [
             'metadata' => ['mailing_list_send_id' => $send->id],
         ]);
 
-        $this->reset(['sendSubject', 'sendBody', 'htmlFile', 'previewHtml']);
+        $this->reset(['sendListIds', 'sendSubject', 'sendBody', 'htmlFile', 'previewHtml']);
         unset($this->sends);
-        $this->notifySuccess("המייל נשלח ל-{$recipientCount} נמענים ברשימה \"{$list->name}\". השליחה מתבצעת ברקע.");
+        $this->notifySuccess("המייל נשלח ל-{$recipientCount} נמענים ({$names}). השליחה מתבצעת ברקע.");
     }
 
     /** The email's HTML — or null after setting $sendError / a validation error. */
@@ -187,10 +192,17 @@ class extends Component
             });
     }
 
+    /** Unique addresses across the lists currently ticked — what "שליחה" would reach. */
+    #[Computed]
+    public function selectedRecipientCount(): int
+    {
+        return $this->sendListIds ? count(MailingList::recipientsOf(MailingList::whereIn('id', $this->sendListIds)->get())) : 0;
+    }
+
     #[Computed]
     public function sends()
     {
-        return MailingListSend::with('mailingList', 'user')->latest('id')->limit(20)->get();
+        return MailingListSend::with('mailingLists', 'user')->latest('id')->limit(20)->get();
     }
 
     private const TYPE_LABELS = [
@@ -248,19 +260,24 @@ class extends Component
     </div>
 
     <div class="card" style="margin-bottom:var(--sp-lg)">
-        <h3>שליחת מייל לרשימה</h3>
+        <h3>שליחת מייל לרשימות</h3>
         <form wire:submit="send" class="form-grid">
-            <div>
-                <label for="sendListId">רשימה</label>
-                <select id="sendListId" wire:model.live="sendListId">
-                    <option value="">בחרו רשימה</option>
+            <div class="full">
+                <label>רשימות</label>
+                <div style="display:flex; flex-wrap:wrap; gap:var(--sp-sm) var(--sp-lg)">
                     @foreach ($this->lists as $list)
-                        <option value="{{ $list->id }}">{{ $list->list_type === 'primary' ? 'כללית' : $list->name }} ({{ $list->recipients_count }})</option>
+                        <label wire:key="pick-{{ $list->id }}" style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer">
+                            <input type="checkbox" value="{{ $list->id }}" wire:model.live="sendListIds" style="width:auto; margin:0">
+                            {{ $list->displayName() }} <span class="text-text-secondary ltr-num" style="font-weight:400">({{ $list->recipients_count }})</span>
+                        </label>
                     @endforeach
-                </select>
-                @error('sendListId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                @if ($sendListIds)
+                    <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">סה"כ <span class="ltr-num">{{ $this->selectedRecipientCount }}</span> כתובות — כתובת שמופיעה בכמה רשימות תקבל את המייל פעם אחת.</div>
+                @endif
+                @error('sendListIds') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>
-            <div>
+            <div class="full">
                 <label for="sendSubject">נושא</label>
                 <input type="text" id="sendSubject" wire:model="sendSubject">
                 @error('sendSubject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
@@ -284,7 +301,7 @@ class extends Component
             @endif
             <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                 <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile"
-                    wire:confirm="לשלוח את המייל לכל הנמענים ברשימה שנבחרה?">שליחה לרשימה</button>
+                    wire:confirm="לשלוח את המייל לכל הנמענים ברשימות שנבחרו?">שליחה לרשימות</button>
                 <button type="button" class="btn btn-secondary" wire:click="preview" wire:loading.attr="disabled" wire:target="preview, htmlFile">תצוגה מקדימה</button>
                 <button type="button" class="btn btn-ghost" wire:click="sendTest" wire:loading.attr="disabled" wire:target="sendTest, htmlFile">שליחת בדיקה אליי</button>
             </div>
@@ -309,12 +326,12 @@ class extends Component
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>תאריך</th><th>רשימה</th><th>נושא</th><th>נמענים</th><th>סטטוס</th><th>נשלח ע"י</th></tr></thead>
+                <thead><tr><th>תאריך</th><th>רשימות</th><th>נושא</th><th>נמענים</th><th>סטטוס</th><th>נשלח ע"י</th></tr></thead>
                 <tbody>
                     @foreach ($this->sends as $send)
                         <tr wire:key="send-{{ $send->id }}">
                             <td class="ltr-num">{{ $send->created_at->format('d/m/Y H:i') }}</td>
-                            <td>{{ $send->mailingList?->list_type === 'primary' ? 'כללית' : $send->mailingList?->name }}</td>
+                            <td>{{ $send->listNames() }}</td>
                             <td>{{ $send->subject }}</td>
                             <td class="ltr-num">{{ $send->recipient_count }}</td>
                             <td>

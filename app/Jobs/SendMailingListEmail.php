@@ -25,20 +25,20 @@ class SendMailingListEmail implements ShouldQueue
 
     public function handle(ExternalOperationRunner $runner, SmoveClient $smove): void
     {
-        $send = MailingListSend::with('mailingList', 'user')->find($this->sendId);
+        $send = MailingListSend::with('mailingLists', 'user')->find($this->sendId);
 
         if (! $send || $send->status !== MailingListSend::STATUS_QUEUED) {
             return;
         }
 
-        $recipients = $send->mailingList->recipients();
+        $recipients = $send->recipients();
 
         $operation = $runner->run(
             'smove',
             'mailing_list_email',
             'app_action',
             fn () => $smove->sendListEmail($recipients, $send->subject, $send->body_html),
-            ['user' => $send->user, 'description' => "שליחת מייל לרשימת התפוצה \"{$send->mailingList->name}\": {$send->subject}"],
+            ['user' => $send->user, 'description' => "שליחת מייל לרשימות התפוצה {$send->listNames()}: {$send->subject}"],
         );
 
         $sent = $operation->status === ExternalOperation::STATUS_SUCCESS;
