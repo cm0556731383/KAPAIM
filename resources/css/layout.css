@@ -40,7 +40,7 @@
 .sidebar nav span.nav-disabled { color: #B7D5E2; cursor: not-allowed; }
 .sidebar nav span.nav-disabled svg { opacity: .45; }
 
-main { padding: var(--sp-xl) var(--sp-2xl); }
+main { padding: var(--sp-xl) var(--sp-2xl); overflow-x: clip; }
 .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--sp-lg); }
 .topbar-user { display: flex; align-items: center; gap: var(--sp-md); font-size: var(--fs-small); color: var(--color-text-secondary); }
 .topbar-user form { margin: 0; }
@@ -391,8 +391,7 @@ td.mono { display: table-cell; }
 /* ===== מסך עבודה (home) — the logo's mark carries the greeting band; everything below stays quiet. ===== */
 .home-hero {
   position: relative;
-  margin-top: -6px;
-  overflow: hidden;
+  margin-top: 10px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -401,32 +400,44 @@ td.mono { display: table-cell; }
   padding: var(--sp-xl) var(--sp-xl) 28px;
   min-height: 176px;
   border-radius: 16px;
-  background: linear-gradient(135deg, #1C5679 0%, #286E9A 55%, #2F8399 100%);
-  color: #FFFFFF;
+  /* The system's beige inside, the logo's blue gradient as a 3px frame. */
+  border: 3px solid transparent;
+  background:
+    linear-gradient(var(--color-background), var(--color-background)) padding-box,
+    linear-gradient(135deg, #1C5679 0%, #286E9A 55%, #2F8399 100%) border-box;
+  color: var(--color-text-primary);
 }
 .home-hero-text { position: relative; z-index: 1; max-width: 60ch; }
 /* The user's role and "יציאה", in the band's top corner (the work screen hides the usual user bar). */
-.home-hero-user { position: absolute; z-index: 2; top: 14px; inset-inline-end: 16px; display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; padding-inline-start: 12px; border-radius: var(--radius-pill); background: rgba(10, 40, 60, .45); font-size: var(--fs-caption); color: #E7F1F6; }
+.home-hero-user { position: absolute; z-index: 3; top: 14px; inset-inline-end: 16px; display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; padding-inline-start: 12px; border-radius: var(--radius-pill); background: #DFE6E6; box-shadow: 0 0 0 4px var(--color-background); font-size: var(--fs-caption); color: var(--color-text-secondary); }
 .home-hero-user form { margin: 0; }
-.home-hero-user button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: none; border-radius: var(--radius-pill); background: transparent; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer; }
-.home-hero-user button:hover { background: rgba(255, 255, 255, .14); }
-.home-hero-user button:focus-visible { outline: 2px solid #FFFFFF; outline-offset: 1px; }
+.home-hero-user button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: none; border-radius: var(--radius-pill); background: transparent; color: #1C5679; font: inherit; font-weight: 600; cursor: pointer; }
+.home-hero-user button:hover { background: rgba(40, 110, 154, .14); }
+.home-hero-user button:focus-visible { outline: 2px solid #1C5679; outline-offset: 1px; }
 .home-hero-user svg { width: 14px; height: 14px; }
-.home-hero h1 { margin: 0 0 6px; font-size: 38px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; color: #FFFFFF; }
-.home-hero-date { margin: 0 0 var(--sp-sm); font-size: var(--fs-small); font-weight: 500; color: #CFE3EE; }
-.home-hero-date .ltr-num { opacity: .75; }
-.home-hero-summary { margin: 0; font-size: 17px; font-weight: 400; color: #E7F1F6; }
+.home-hero h1 { margin: 0 0 6px; font-size: 38px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; color: #1C5679; }
+.home-hero-date { margin: 0 0 var(--sp-sm); font-size: var(--fs-small); font-weight: 500; color: var(--color-text-secondary); }
+.home-hero-date .ltr-num { opacity: .8; }
+.home-hero-summary { margin: 0; font-size: 17px; font-weight: 400; color: var(--color-text-primary); }
 .home-hero-cta {
   display: inline-flex; margin-top: var(--sp-md);
   background: var(--color-accent); color: #3B2A05; border: none; font-weight: 700;
 }
 .home-hero-cta:hover { background: #FFC94F; color: #3B2A05; }
-.home-hero-cta:focus-visible { outline: 3px solid #FFFFFF; outline-offset: 2px; }
+.home-hero-cta:focus-visible { outline: 3px solid #1C5679; outline-offset: 2px; }
 
-/* The mark sits half off the band's end edge (RTL: the left), like the logo's own "כ". */
-.home-hero-mark { position: absolute; inset-inline-end: -46px; top: 50%; width: 250px; height: 250px; transform: translateY(-50%); pointer-events: none; }
+/* The mark rides over the frame's top-end corner (RTL: top-left), spilling past it — its outer arc
+   runs off the page's top and left edges, and its bottom over the figure tiles below. main clips
+   anything past the page's side; above the page's top is simply off-screen. */
+.home-hero-mark {
+  position: absolute; z-index: 2; width: 380px; height: 380px; pointer-events: none;
+  /* Pinned to the page's top-left corner, past both edges so the arcs' ends are cut off (~12px past the
+     left, ~40px past the top): main's padding + the band's margin-top / the 3px frame + the arc's inset in the viewBox + that. */
+  inset-inline-end: calc(-1 * (var(--sp-2xl) + 3px + 34px + 12px));
+  top: calc(-1 * (var(--sp-xl) + 10px + 3px + 13px + 40px));
+}
 .home-hero-mark .ring { fill: none; stroke: var(--color-secondary); stroke-width: 34; stroke-linecap: butt; }
-.home-hero-mark .dot { fill: #6FC3CF; }
+.home-hero-mark .dot { fill: #2F8399; }
 .home-hero-mark .arc { fill: none; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 150 14 6 14 400; }
 .home-hero-mark .arc-outer { stroke: var(--color-accent); }
 .home-hero-mark .arc-inner { stroke: #F39A2B; stroke-dasharray: 120 12 5 12 400; }
@@ -445,6 +456,8 @@ td.mono { display: table-cell; }
 .home .kpi.tone-amber { --kpi-tone: var(--color-accent); }
 .home .kpi.tone-teal { --kpi-tone: #2F8399; }
 .home .kpi.tone-blue { --kpi-tone: var(--color-primary); }
+/* The hero's mark spills over the first tiles: over their white, under their words and icons. */
+.home .kpi > * { position: relative; z-index: 3; }
 .home .kpi .icon-chip { border: none; background: color-mix(in srgb, var(--kpi-tone) 14%, transparent); color: var(--kpi-tone); }
 .home .kpi.tone-amber .icon-chip { color: #9A6608; }
 
@@ -460,7 +473,10 @@ td.mono { display: table-cell; }
 
 @media (max-width: 768px) {
   .home-hero { flex-direction: column; align-items: flex-start; padding: var(--sp-lg) var(--sp-lg) var(--sp-lg); min-height: 0; }
+  .home-hero { margin-bottom: var(--sp-lg); }
   .home-hero h1 { font-size: 30px; }
-  .home-hero-user { position: static; align-self: flex-end; margin-bottom: calc(-1 * var(--sp-sm)); }
-  .home-hero-mark { width: 150px; height: 150px; inset-inline-end: -40px; top: auto; bottom: -38px; transform: none; }
+  .home-hero-user { position: static; align-self: flex-start; margin-bottom: calc(-1 * var(--sp-sm)); }
+  .home-hero-date { margin-top: 14px; }
+
+  .home-hero-mark { width: 140px; height: 140px; inset-inline-end: -14px; top: -32px; }
 }
