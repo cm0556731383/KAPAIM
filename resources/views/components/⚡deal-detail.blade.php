@@ -362,12 +362,16 @@ class extends Component
 
     public function addCheckRow(): void
     {
-        // A new row continues the last one: next number, a month later, same amount.
+        // A new row continues the last one: next number, a month later, same
+        // amount — and the same bank/branch/account (same checkbook).
         $last = end($this->checkRows) ?: null;
         $this->checkRows[] = [
             'number' => $last && ctype_digit((string) $last['number']) ? (string) ((int) $last['number'] + 1) : '',
             'due_date' => $last && $last['due_date'] ? \Illuminate\Support\Carbon::parse($last['due_date'])->addMonthNoOverflow()->toDateString() : now()->toDateString(),
             'amount' => $last['amount'] ?? '',
+            'bank' => $last['bank'] ?? '',
+            'branch' => $last['branch'] ?? '',
+            'account' => $last['account'] ?? '',
         ];
     }
 
@@ -391,7 +395,13 @@ class extends Component
             'checkRows.*.number' => ['required', 'string', 'max:50'],
             'checkRows.*.due_date' => ['required', 'date'],
             'checkRows.*.amount' => ['required', 'numeric', 'gt:0'],
-        ], [], ['checkRows.*.number' => "מס' צ'ק", 'checkRows.*.due_date' => 'תאריך פירעון', 'checkRows.*.amount' => 'סכום']);
+            'checkRows.*.bank' => ['nullable', 'integer', 'between:1,999'],
+            'checkRows.*.branch' => ['nullable', 'digits_between:1,5'],
+            'checkRows.*.account' => ['nullable', 'regex:/^[0-9-]{2,20}$/'],
+        ], [], [
+            'checkRows.*.number' => "מס' צ'ק", 'checkRows.*.due_date' => 'תאריך פירעון', 'checkRows.*.amount' => 'סכום',
+            'checkRows.*.bank' => 'בנק', 'checkRows.*.branch' => 'סניף', 'checkRows.*.account' => 'מס\' חשבון',
+        ]);
 
         try {
             $payments = $this->deal->recordChecks($this->loadedVersion, $this->checkRows, (int) $this->payMethodId ?: null);
@@ -1004,37 +1014,54 @@ class extends Component
                     @elseif ($type === 'check')
                         {{-- One row per check received; each becomes a check payment of its own. --}}
                         <form wire:submit="recordChecks">
-                            <div class="table-scroll">
-                            <table class="check-rows">
-                                <thead><tr><th>מס' צ'ק</th><th>תאריך פירעון</th><th>סכום</th><th></th></tr></thead>
-                                <tbody>
-                                    @foreach ($checkRows as $i => $row)
-                                        <tr wire:key="check-row-{{ $i }}">
-                                            <td>
-                                                <input type="text" wire:model="checkRows.{{ $i }}.number" class="ltr-num" dir="ltr" inputmode="numeric" aria-label="מס' צ'ק">
-                                                @error("checkRows.$i.number") <div class="field-error">{{ $message }}</div> @enderror
-                                            </td>
-                                            <td>
-                                                <input type="date" wire:model="checkRows.{{ $i }}.due_date" aria-label="תאריך פירעון">
-                                                @error("checkRows.$i.due_date") <div class="field-error">{{ $message }}</div> @enderror
-                                            </td>
-                                            <td>
-                                                <input type="text" wire:model="checkRows.{{ $i }}.amount" class="ltr-num" dir="ltr" placeholder="₪" aria-label="סכום">
-                                                @error("checkRows.$i.amount") <div class="field-error">{{ $message }}</div> @enderror
-                                            </td>
-                                            <td>
-                                                @if (count($checkRows) > 1)
-                                                    <button type="button" wire:click="removeCheckRow({{ $i }})" class="btn btn-ghost btn-sm" aria-label="הסרת השורה">×</button>
-                                                @endif
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                            </div>
+                            @foreach ($checkRows as $i => $row)
+                                <div class="check-row" wire:key="check-row-{{ $i }}">
+                                    <span class="check-row-n">{{ $i + 1 }}</span>
+                                    <div>
+                                        <label for="check-{{ $i }}-number">מס' צ'ק</label>
+                                        <input type="text" id="check-{{ $i }}-number" wire:model="checkRows.{{ $i }}.number" class="ltr-num" dir="ltr" inputmode="numeric">
+                                        @error("checkRows.$i.number") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="check-{{ $i }}-due">תאריך פירעון</label>
+                                        <input type="date" id="check-{{ $i }}-due" wire:model="checkRows.{{ $i }}.due_date">
+                                        @error("checkRows.$i.due_date") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="check-{{ $i }}-amount">סכום</label>
+                                        <input type="text" id="check-{{ $i }}-amount" wire:model="checkRows.{{ $i }}.amount" class="ltr-num" dir="ltr" placeholder="₪">
+                                        @error("checkRows.$i.amount") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="check-{{ $i }}-bank">בנק</label>
+                                        <select id="check-{{ $i }}-bank" wire:model="checkRows.{{ $i }}.bank">
+                                            <option value="">—</option>
+                                            @foreach (\App\Models\Payment::BANKS as $code => $bankName)
+                                                <option value="{{ $code }}">{{ $bankName }} ({{ str_pad($code, 2, '0', STR_PAD_LEFT) }})</option>
+                                            @endforeach
+                                        </select>
+                                        @error("checkRows.$i.bank") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="check-{{ $i }}-branch">סניף</label>
+                                        <input type="text" id="check-{{ $i }}-branch" wire:model="checkRows.{{ $i }}.branch" class="ltr-num" dir="ltr" inputmode="numeric">
+                                        @error("checkRows.$i.branch") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="check-{{ $i }}-account">מס' חשבון</label>
+                                        <input type="text" id="check-{{ $i }}-account" wire:model="checkRows.{{ $i }}.account" class="ltr-num" dir="ltr" inputmode="numeric">
+                                        @error("checkRows.$i.account") <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div class="check-row-remove">
+                                        @if (count($checkRows) > 1)
+                                            <button type="button" wire:click="removeCheckRow({{ $i }})" class="btn btn-ghost btn-sm" aria-label="הסרת צ'ק {{ $i + 1 }}">×</button>
+                                        @endif
+                                    </div>
+                                </div>
+                            @endforeach
                             <div class="actions" style="margin-top:var(--sp-sm)">
                                 <button type="button" wire:click="addCheckRow" class="btn btn-ghost btn-sm">+ צ'ק נוסף</button>
-                                <span class="note">השורה החדשה ממשיכה את הקודמת: המספר הבא, חודש אחרי, אותו סכום.</span>
+                                <span class="note">השורה החדשה ממשיכה את הקודמת: המספר הבא, חודש אחרי, אותו סכום ואותו חשבון. בנק, סניף וחשבון — לא חובה.</span>
                             </div>
                             <p class="note" style="margin-top:var(--sp-sm)">כל צ'ק נרשם כ"טרם נפרע". ביום הפירעון שלו תופיע במסך הראשי תזכורת עם כפתור להפקת הקבלה.</p>
                             <div class="actions" style="margin-top:var(--sp-md)">
@@ -1120,6 +1147,7 @@ class extends Component
                                         <div class="ltr-num" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-bottom:4px">
                                             @if ($payment->check_number)מס' {{ $payment->check_number }}@endif
                                             @if ($payment->check_due_date) · פירעון {{ $payment->check_due_date->format('d/m/Y') }}@endif
+                                            @if ($payment->checkBankLabel())<br>{{ $payment->checkBankLabel() }}@endif
                                         </div>
                                     @endif
                                     @if ($payment->cleared_date)

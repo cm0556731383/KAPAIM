@@ -363,6 +363,9 @@ class SummitClient
             'Details_Cheque' => array_filter([
                 'ChequeNumber' => $payment?->check_number,
                 'DueDate' => $payment?->check_due_date?->toDateString(),
+                'BankNumber' => $payment?->check_bank_number,
+                'BranchNumber' => ctype_digit((string) $payment?->check_branch_number) ? (int) $payment->check_branch_number : null,
+                'AccountNumber' => $payment?->check_account_number,
             ]) ?: (object) [],
             default => (object) [],
         };

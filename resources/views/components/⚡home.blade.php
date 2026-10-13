@@ -175,6 +175,9 @@ class extends Component
                             ₪{{ number_format((float) $check->amount, 0) }} ·
                             פירעון {{ $check->check_due_date->format('d/m/Y') }}{{ $check->check_due_date->isToday() ? ' (היום)' : '' }}
                         </div>
+                        @if ($check->checkBankLabel())
+                            <div class="pay-note">{{ $check->checkBankLabel() }}</div>
+                        @endif
                     </div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap">
                         <button type="button" wire:click="clearCheck({{ $check->id }})" wire:loading.attr="disabled" class="btn btn-primary btn-sm">נפרע — הפקת קבלה</button>

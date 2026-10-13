@@ -116,7 +116,10 @@ class extends Component
                         <tr>
                             <td>{{ $payment->deal->customer->school?->name ?? '—' }}</td>
                             <td><a href="{{ route('deal-detail', $payment->deal) }}">{{ $payment->deal->program_name_snapshot ?? $payment->deal->bundle_name_snapshot }}</a></td>
-                            <td class="ltr-num">{{ $payment->check_number ?? '—' }}</td>
+                            <td class="ltr-num">
+                                {{ $payment->check_number ?? '—' }}
+                                @if ($payment->checkBankLabel())<div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">{{ $payment->checkBankLabel() }}</div>@endif
+                            </td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
                             <td class="ltr-num">{{ $payment->check_due_date?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>

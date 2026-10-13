@@ -2,7 +2,7 @@
    ported from the docs/storyboard/*.html mockups so every real screen shares
    one implementation instead of re-declaring these per Blade view. */
 
-.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+.app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
 
 .sidebar {
   background: #16262D;
@@ -48,13 +48,13 @@ section { margin-bottom: var(--sp-2xl); }
 section > .section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sp-md); }
 section > .section-head p { margin: 2px 0 0; color: var(--color-text-secondary); font-size: var(--fs-small); }
 
-.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-lg); align-items: start; }
+.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-lg); align-items: start; }
 
 .perm-table th:not(:first-child), .perm-table td:not(:first-child) { text-align: center; }
 .perm-cell-yes { color: var(--color-success); font-weight: 700; }
 .perm-cell-no { color: var(--color-border); }
 
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-md); }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-md); }
 .form-grid .full { grid-column: 1 / -1; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; }
 .checkbox-row input { width: auto; }
@@ -200,7 +200,7 @@ td.mono { display: table-cell; }
 .kpi .num { font-family: var(--font-display); font-weight: 500; font-size: 34px; line-height: 1; }
 .kpi .delta { font-size: var(--fs-caption); font-weight: 600; margin-top: var(--sp-sm); display: flex; align-items: center; gap: 4px; }
 
-.cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-lg); align-items: start; }
+.cols { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--sp-lg); align-items: start; }
 .list-item { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
 .list-item:last-child { border-bottom: none; }
 .list-item .who { font-size: var(--fs-caption); color: var(--color-text-secondary); }
@@ -362,8 +362,19 @@ td.mono { display: table-cell; }
 .pay-note, .pay-panel .note, .pay-secondary .note { font-size: var(--fs-caption); color: var(--color-text-secondary); margin: 0; }
 .pay-panel .actions { display: flex; gap: var(--sp-sm); flex-wrap: wrap; align-items: center; }
 .pay-secondary { display: flex; gap: var(--sp-sm); flex-wrap: wrap; align-items: center; margin-top: var(--sp-md); padding-top: var(--sp-md); border-top: 1px dashed var(--color-border); }
-.check-rows td { vertical-align: top; }
-.check-rows input { width: 100%; min-width: 110px; }
+/* One check being recorded: number · due date · amount on the first line, bank · branch · account under them */
+.check-row { display: grid; grid-template-columns: 24px repeat(3, minmax(0, 1fr)) 32px; gap: var(--sp-sm); align-items: start; padding: var(--sp-sm) 0; border-bottom: 1px solid var(--color-border); }
+.check-row label { font-size: var(--fs-caption); margin-bottom: 2px; }
+.check-row input, .check-row select { width: 100%; min-width: 0; box-sizing: border-box; }
+.check-row > div:nth-of-type(4) { grid-column: 2 / 3; }
+.check-row-n { width: 22px; height: 22px; margin-top: 22px; border-radius: 50%; background: var(--color-background); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.check-row-remove { grid-row: 1; grid-column: 5; padding-top: 20px; }
+@media (max-width: 560px) {
+  .check-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .check-row-n { margin-top: 0; }
+  .check-row > div:nth-of-type(4) { grid-column: auto; }
+  .check-row-remove { grid-column: 2; justify-self: end; padding-top: 0; }
+}
 .field-error { color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px; }
 
 /* ===== Dashboard: checks due reminder ===== */

@@ -402,12 +402,12 @@ class SumitPaymentsTest extends TestCase
 
         $component = Livewire::test('deal-detail', ['deal' => $deal])
             ->call('selectPaymentMethod', $checks->id)
-            ->set('checkRows.0', ['number' => '1001', 'due_date' => '2026-11-01', 'amount' => '300'])
+            ->set('checkRows.0', ['number' => '1001', 'due_date' => '2026-11-01', 'amount' => '300', 'bank' => '12', 'branch' => '600', 'account' => '123456'])
             ->call('addCheckRow')
             ->call('addCheckRow');
 
-        // A new row continues the last one.
-        $this->assertSame(['number' => '1002', 'due_date' => '2026-12-01', 'amount' => '300'], $component->get('checkRows.1'));
+        // A new row continues the last one — same checkbook.
+        $this->assertSame(['number' => '1002', 'due_date' => '2026-12-01', 'amount' => '300', 'bank' => '12', 'branch' => '600', 'account' => '123456'], $component->get('checkRows.1'));
 
         $component->call('recordChecks')->assertSet('paymentError', null)->assertHasNoErrors();
 
@@ -415,6 +415,9 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(['2026-11-01', '2026-12-01', '2027-01-01'], $deal->payments()->orderBy('id')->get()->map(fn ($p) => $p->check_due_date->toDateString())->all());
         $this->assertSame(0, Receipt::count());
         $this->assertEquals(900, $deal->fresh()->totalPaid());
+        $first = $deal->payments()->orderBy('id')->first();
+        $this->assertSame([12, '600', '123456'], [$first->check_bank_number, $first->check_branch_number, $first->check_account_number]);
+        $this->assertSame('בנק הפועלים (12) · סניף 600 · חשבון 123456', $first->checkBankLabel());
     }
 
     public function test_a_check_row_needs_a_number_due_date_and_amount(): void
@@ -425,9 +428,9 @@ class SumitPaymentsTest extends TestCase
 
         Livewire::test('deal-detail', ['deal' => $deal])
             ->call('selectPaymentMethod', $checks->id)
-            ->set('checkRows.0', ['number' => '', 'due_date' => '', 'amount' => '0'])
+            ->set('checkRows.0', ['number' => '', 'due_date' => '', 'amount' => '0', 'bank' => 'x', 'branch' => 'abc', 'account' => 'a'])
             ->call('recordChecks')
-            ->assertHasErrors(['checkRows.0.number', 'checkRows.0.due_date', 'checkRows.0.amount']);
+            ->assertHasErrors(['checkRows.0.number', 'checkRows.0.due_date', 'checkRows.0.amount', 'checkRows.0.bank', 'checkRows.0.branch', 'checkRows.0.account']);
 
         $this->assertSame(0, $deal->payments()->count());
     }
@@ -439,7 +442,7 @@ class SumitPaymentsTest extends TestCase
         $this->actingAsOwner();
         $method = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
         [$due, $later] = $deal->recordChecks($deal->version, [
-            ['number' => '501', 'due_date' => today()->toDateString(), 'amount' => 300],
+            ['number' => '501', 'due_date' => today()->toDateString(), 'amount' => 300, 'bank' => '10', 'branch' => '800', 'account' => '55-123'],
             ['number' => '502', 'due_date' => today()->addMonth()->toDateString(), 'amount' => 300],
         ], $method->id);
 
@@ -451,7 +454,7 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(1, Receipt::where('payment_id', $due->id)->count());
         Http::assertSent(fn ($request) => str_ends_with($request->url(), '/accounting/documents/create/')
             && ($request['Payments'][0]['Type'] ?? null) === 4
-            && $request['Payments'][0]['Details_Cheque'] == ['ChequeNumber' => '501', 'DueDate' => today()->toDateString()]);
+            && $request['Payments'][0]['Details_Cheque'] == ['ChequeNumber' => '501', 'DueDate' => today()->toDateString(), 'BankNumber' => 10, 'BranchNumber' => 800, 'AccountNumber' => '55-123']);
         $home->assertDontSee("מס' 501");
 
         // A check not due yet can't be cleared from the reminder.

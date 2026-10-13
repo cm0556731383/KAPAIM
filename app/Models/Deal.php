@@ -495,7 +495,7 @@ class Deal extends Model
      * each a check payment of its own with its number and due date; its
      * receipt is issued when it clears. All or none: a failure records none.
      *
-     * @param  array<int, array{number: string, due_date: string, amount: float|string}>  $checks
+     * @param  array<int, array{number: string, due_date: string, amount: float|string, bank?: ?string, branch?: ?string, account?: ?string}>  $checks
      * @return array<int, Payment>
      *
      * @throws RuntimeException on a version conflict or when there's no check.
@@ -517,7 +517,13 @@ class Deal extends Model
             $payments = [];
 
             foreach ($checks as $check) {
-                $payments[] = $this->recordPayment($version, (float) $check['amount'], null, $method->id, (string) $check['number'], (string) $check['due_date']);
+                $payment = $this->recordPayment($version, (float) $check['amount'], null, $method->id, (string) $check['number'], (string) $check['due_date']);
+                $payment->update([
+                    'check_bank_number' => filled($check['bank'] ?? null) ? (int) $check['bank'] : null,
+                    'check_branch_number' => filled($check['branch'] ?? null) ? trim((string) $check['branch']) : null,
+                    'check_account_number' => filled($check['account'] ?? null) ? trim((string) $check['account']) : null,
+                ]);
+                $payments[] = $payment;
                 $version = $this->version;
             }
 

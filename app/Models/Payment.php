@@ -22,7 +22,7 @@ use RuntimeException;
  */
 #[Fillable([
     'deal_id', 'payment_method_id', 'status_id', 'amount',
-    'check_status', 'check_number', 'check_due_date', 'payment_date', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
+    'check_status', 'check_number', 'check_due_date', 'check_bank_number', 'check_branch_number', 'check_account_number', 'payment_date', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
 ])]
 class Payment extends Model
 {
@@ -31,6 +31,26 @@ class Payment extends Model
     public const CHECK_RECEIVED = 'received';
 
     public const CHECK_CLEARED = 'cleared';
+
+    /** Israeli bank codes (בנק ישראל) for a check's bank — the number SUMIT's receipt takes. */
+    public const BANKS = [
+        4 => 'בנק יהב', 9 => 'בנק הדואר', 10 => 'בנק לאומי', 11 => 'בנק דיסקונט', 12 => 'בנק הפועלים',
+        13 => 'בנק אגוד', 14 => 'בנק אוצר החייל', 17 => 'בנק מרכנתיל דיסקונט', 18 => 'וואן זירו',
+        20 => 'בנק מזרחי טפחות', 26 => 'יובנק', 31 => 'הבנק הבינלאומי', 46 => 'בנק מסד',
+        52 => 'בנק פועלי אגודת ישראל', 54 => 'בנק ירושלים',
+    ];
+
+    /** "בנק הפועלים (12) · סניף 600 · חשבון 123456" — whichever of the three are known. */
+    public function checkBankLabel(): ?string
+    {
+        $parts = array_filter([
+            $this->check_bank_number ? (self::BANKS[$this->check_bank_number] ?? 'בנק').' ('.$this->check_bank_number.')' : null,
+            $this->check_branch_number ? "סניף {$this->check_branch_number}" : null,
+            $this->check_account_number ? "חשבון {$this->check_account_number}" : null,
+        ]);
+
+        return $parts ? implode(' · ', $parts) : null;
+    }
 
     protected function casts(): array
     {
