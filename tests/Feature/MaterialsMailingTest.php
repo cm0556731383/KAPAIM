@@ -167,6 +167,7 @@ class MaterialsMailingTest extends TestCase
     {
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
+        Deal::createForCustomer($customer, $program, null);
         $file = UploadedFile::fake()->create('doc.pdf', 10);
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
@@ -221,6 +222,43 @@ class MaterialsMailingTest extends TestCase
         $this->assertSame(0, MaterialDelivery::where('customer_id', $customer->id)->count());
     }
 
+    public function test_the_materials_program_list_holds_only_programs_the_customer_bought(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $bought = $this->createProgram('תוכנית שנרכשה');
+        $inBundle = $this->createProgram('תוכנית בתוך מארז');
+        $cancelled = $this->createProgram('תוכנית מעסקה מבוטלת');
+        $notBought = $this->createProgram('תוכנית שלא נרכשה');
+        $bundle = Bundle::create(['name' => 'מארז בדיקה', 'description' => null, 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $bundle->programs()->attach($inBundle->id);
+
+        Deal::createForCustomer($customer, $bought, null);
+        Deal::createForCustomer($customer, null, $bundle);
+        $cancelledDeal = Deal::createForCustomer($customer, $cancelled, null);
+        $cancelledStatus = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => 'מבוטלת'], ['is_active' => true, 'sort_order' => 4]);
+        $cancelledDeal->updateStatusWithLock($cancelledDeal->version, $cancelledStatus->id);
+
+        $ids = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->instance()->materialsPrograms->pluck('id')->all();
+
+        $this->assertEqualsCanonicalizing([$bought->id, $inBundle->id], $ids);
+        $this->assertNotContains($notBought->id, $ids);
+    }
+
+    public function test_materials_cannot_be_sent_for_a_program_the_customer_did_not_buy(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('doc.pdf', 10)])
+            ->call('sendMaterials')
+            ->assertSet('materialsError', 'ניתן לשלוח חומרים רק עבור תוכנית שהלקוחה רכשה.');
+
+        $this->assertSame(0, MaterialDelivery::count());
+    }
+
     public function test_materials_can_be_sent_as_a_link_with_or_without_a_file(): void
     {
         ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
@@ -228,6 +266,7 @@ class MaterialsMailingTest extends TestCase
         Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
+        Deal::createForCustomer($customer, $program, null);
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('materialsProgramId', (string) $program->id)

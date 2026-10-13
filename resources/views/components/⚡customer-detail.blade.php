@@ -769,11 +769,23 @@ class extends Component
             ->get();
     }
 
-    /** FR-5.19: any active catalog program's materials may be sent, premium included. */
+    /**
+     * Only programs this customer bought — directly, or inside a bundle — on
+     * a deal that wasn't cancelled (business owner's call, 2026-10-13;
+     * replaces FR-5.19's "any active catalog program").
+     */
     #[Computed]
     public function materialsPrograms()
     {
-        return Program::where('is_active', true)->orderBy('name')->get();
+        $deals = $this->customer->deals()
+            ->whereDoesntHave('status', fn ($q) => $q->where('name', Deal::CANCELLED_STATUS_NAME))
+            ->get(['id', 'program_id', 'bundle_id']);
+
+        return Program::where(fn ($q) => $q
+            ->whereIn('id', $deals->pluck('program_id')->filter())
+            ->orWhereHas('bundles', fn ($b) => $b->whereIn('bundles.id', $deals->pluck('bundle_id')->filter())))
+            ->orderBy('name')
+            ->get();
     }
 
     /** FR-5.5: adds an ad-hoc recipient for this send only — never touches contacts.is_primary. */
@@ -873,7 +885,14 @@ class extends Component
             'name' => trim((string) ($link['name'] ?? '')) ?: (parse_url(trim($link['url']), PHP_URL_HOST) ?: trim($link['url'])),
         ], $this->materialsLinks);
 
-        $program = Program::find($this->materialsProgramId);
+        $program = $this->materialsPrograms->firstWhere('id', (int) $this->materialsProgramId);
+
+        if (! $program) {
+            $this->materialsError = 'ניתן לשלוח חומרים רק עבור תוכנית שהלקוחה רכשה.';
+
+            return;
+        }
+
         $attachments = array_map(
             fn ($file) => [
                 'file_reference' => $file->storeAs('material-attachments', $file->getFilename(), 'local'),
@@ -1602,7 +1621,7 @@ class extends Component
                     <div class="full">
                         <label for="materialsProgramId">תוכנית</label>
                         <select id="materialsProgramId" wire:model="materialsProgramId">
-                            <option value="">בחרו תוכנית</option>
+                            <option value="">{{ $this->materialsPrograms->isEmpty() ? 'הלקוחה עדיין לא רכשה תוכניות' : 'בחרו תוכנית' }}</option>
                             @foreach ($this->materialsPrograms as $program)
                                 <option value="{{ $program->id }}">{{ $program->name }}</option>
                             @endforeach
