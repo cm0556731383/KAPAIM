@@ -45,6 +45,26 @@ class DashboardSummary
     /** FR-1.6 (build-plan 04): the only sub_status value meaning "ממתינה לשיחה חוזרת". */
     private const AWAITING_CALLBACK_SUB_STATUS = 'ממתינה לשיחה חוזרת';
 
+    /** How a failed external operation reads on the home screen, instead of its technical name. */
+    private const SYSTEM_LABELS = ['summit' => 'SUMIT', 'smove' => 'Smove', 'landing_page' => 'דף הנחיתה'];
+
+    private const OPERATION_LABELS = [
+        'issue_invoice' => 'הפקת חשבונית',
+        'issue_receipt' => 'הפקת קבלה',
+        'issue_credit_note' => 'הפקת חשבונית זיכוי',
+        'card_charge' => 'חיוב כרטיס אשראי',
+        'standing_order_registered' => 'הקמת הוראת קבע',
+        'payment_link_created' => 'יצירת קישור לתשלום',
+        'payment_link_send' => 'שליחת קישור לתשלום',
+        'document_send' => 'שליחת מסמך',
+        'materials_send' => 'שליחת חומרי לימוד',
+        'mailing_list_join' => 'הצטרפות לרשימת תפוצה',
+        'mailing_list_remove' => 'הסרה מרשימת תפוצה',
+        'mailing_list_email' => 'שליחת מייל לרשימות',
+        'mailing_list_email_test' => 'מייל בדיקה לרשימות',
+        'payments_sync' => 'סנכרון תשלומים',
+    ];
+
     public function newLeadsCount(User $user): int
     {
         if (! $this->canSeeAnyLeads($user)) {
@@ -367,7 +387,7 @@ class DashboardSummary
             ->limit(10)
             ->get()
             ->map(fn (ExternalOperation $operation) => [
-                'label' => "כשל אינטגרציה: {$operation->system} — {$operation->operation_type}",
+                'label' => 'כשל ב-'.(self::SYSTEM_LABELS[$operation->system] ?? $operation->system).': '.(self::OPERATION_LABELS[$operation->operation_type] ?? $operation->operation_type),
                 'subtitle' => Str::limit((string) $operation->error_message, 70) ?: '—',
                 'badge' => 'כשל',
                 'badgeClass' => 'badge-error',

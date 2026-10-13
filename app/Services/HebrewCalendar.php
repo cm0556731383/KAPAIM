@@ -79,7 +79,13 @@ class HebrewCalendar
         return $formatter->format($calendar).' '.self::yearInLetters($calendar->get(IntlCalendar::FIELD_YEAR));
     }
 
-    /** 5787 => "תשפ״ז" (thousands dropped, as customary). */
+    /** A full Hebrew date, e.g. "י״ב תשרי תשפ״ז". */
+    public static function dateLabel(DateTimeInterface $date): string
+    {
+        return self::yearInLetters(self::calendarAt($date)->get(IntlCalendar::FIELD_DAY_OF_MONTH)).' '.self::monthLabel($date);
+    }
+
+    /** 5787 => "תשפ״ז" (thousands dropped, as customary); also a day of the month, 15 => "ט״ו". */
     public static function yearInLetters(int $year): string
     {
         $n = $year % 1000;

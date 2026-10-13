@@ -192,7 +192,8 @@
     </aside>
 
     <main>
-        @auth
+        {{-- A page whose own header carries the user and "יציאה" (the work screen) passes hideUserBar. --}}
+        @if (auth()->check() && ! ($hideUserBar ?? false))
             <div class="topbar-user" style="justify-content:flex-end; margin-bottom: var(--sp-md);">
                 <span>{{ auth()->user()->name }} · {{ auth()->user()->role?->name }}</span>
                 <form method="POST" action="{{ route('logout') }}">
@@ -200,7 +201,7 @@
                     <button type="submit" class="btn btn-ghost" style="padding:6px 12px;"><svg style="width:15px;height:15px;"><use href="#icon-logout"></use></svg>יציאה</button>
                 </form>
             </div>
-        @endauth
+        @endif
 
         {{ $slot }}
     </main>

@@ -20,7 +20,7 @@ use Livewire\Component;
  * sections at all — see that service's docblock.
  */
 new
-#[Layout('layouts.app', ['title' => 'מסך הבית — כפיים'])]
+#[Layout('layouts.app', ['title' => 'מסך הבית — כפיים', 'hideUserBar' => true])]
 class extends Component
 {
     use Notifies;
@@ -149,18 +149,45 @@ class extends Component
 };
 ?>
 
-<div>
-    <div class="topbar">
-        <div>
-            <h1 class="mb-0.5">שלום, {{ auth()->user()->name }}</h1>
-            <p class="text-text-secondary m-0 ltr-num" style="direction:ltr; text-align:start">{{ now()->format('d/m/Y') }}</p>
-        </div>
-        @if ($this->canSeeLeadItems)
-            <a href="{{ route('leads') }}" class="btn btn-primary">+ ליד חדש</a>
-        @endif
-    </div>
+<div class="home">
+    @php
+        $dueChecks = $this->dueChecks->reject(fn ($p) => $this->isSnoozed($p->id));
+        $openCount = $this->attentionItems->count() + $dueChecks->count();
+    @endphp
 
-    @php $dueChecks = $this->dueChecks->reject(fn ($p) => $this->isSnoozed($p->id)); @endphp
+    {{-- The day's greeting, on the logo's own mark (the "כ" ring and its arcs). --}}
+    <section class="home-hero">
+        <svg class="home-hero-mark" viewBox="0 0 240 240" aria-hidden="true" focusable="false">
+            <path class="arc arc-outer" d="M 120 12 A 108 108 0 1 1 26 174" />
+            <path class="arc arc-inner" d="M 196 58 A 92 92 0 0 1 64 192" />
+            <path class="ring" d="M 82 66 A 62 62 0 1 1 82 174" />
+            <circle class="dot" cx="120" cy="120" r="13" />
+        </svg>
+        <div class="home-hero-user">
+            <span>{{ auth()->user()->role?->name }}</span>
+            <form method="POST" action="{{ route('logout') }}">
+                @csrf
+                <button type="submit"><svg aria-hidden="true"><use href="#icon-logout"></use></svg>יציאה</button>
+            </form>
+        </div>
+        <div class="home-hero-text">
+            <p class="home-hero-date">{{ now()->locale('he')->dayName === 'שבת' ? 'שבת' : 'יום '.now()->locale('he')->dayName }}, {{ \App\Services\HebrewCalendar::dateLabel(now()) }} <span class="ltr-num">({{ now()->format('d/m/Y') }})</span></p>
+            <h1>שלום, {{ auth()->user()->name }}</h1>
+            <p class="home-hero-summary">
+                @if ($openCount === 0)
+                    אין היום פריטים שמחכים לטיפול.
+                @elseif ($openCount === 1)
+                    פריט אחד מחכה לטיפול היום.
+                @else
+                    <span class="ltr-num">{{ $openCount }}</span> פריטים מחכים לטיפול היום.
+                @endif
+            </p>
+            @if ($this->canSeeLeadItems)
+                <a href="{{ route('leads') }}" class="btn home-hero-cta">+ ליד חדש</a>
+            @endif
+        </div>
+    </section>
+
     @if ($dueChecks->isNotEmpty())
         {{-- Reminder: a check's due date has come — has it cleared? Then issue its receipt. --}}
         <div class="card check-reminder" role="alert">
@@ -190,21 +217,21 @@ class extends Component
 
     <div class="kpis">
         @if ($this->canSeeLeadItems)
-            <a class="card kpi" href="{{ route('leads') }}" style="text-decoration:none; color:inherit">
+            <a class="card kpi tone-pink" href="{{ route('leads') }}" style="text-decoration:none; color:inherit">
                 <div class="kpi-head">
                     <span class="label">לידים</span>
                     <span class="icon-chip tone-secondary"><svg><use href="#icon-leads"></use></svg></span>
                 </div>
                 <div class="num">{{ $this->newLeadsCount }}</div>
             </a>
-            <div class="card kpi">
+            <div class="card kpi tone-amber">
                 <div class="kpi-head">
                     <span class="label">ממתינות לשיחה חוזרת</span>
                     <span class="icon-chip tone-accent"><svg><use href="#icon-phone"></use></svg></span>
                 </div>
                 <div class="num">{{ $this->awaitingCallbackCount }}</div>
             </div>
-            <div class="card kpi">
+            <div class="card kpi tone-teal">
                 <div class="kpi-head">
                     <span class="label">Up Follow להיום</span>
                     <span class="icon-chip tone-primary"><svg><use href="#icon-activity"></use></svg></span>
@@ -213,7 +240,7 @@ class extends Component
             </div>
         @endif
         @if ($this->canSeeFinancials)
-            <div class="card kpi">
+            <div class="card kpi tone-pink">
                 <div class="kpi-head">
                     <span class="label">סך פתוח לגבייה</span>
                     <span class="icon-chip tone-error"><svg><use href="#icon-payments"></use></svg></span>
@@ -221,7 +248,7 @@ class extends Component
                 <div class="num ltr-num" style="direction:ltr">₪{{ number_format($this->openCollectionsTotal['amount'], 0) }}</div>
                 <div class="delta" style="color:var(--color-error)">{{ $this->openCollectionsTotal['customerCount'] }} לקוחות</div>
             </div>
-            <div class="card kpi">
+            <div class="card kpi tone-blue">
                 <div class="kpi-head">
                     <span class="label">צ'קים להפקדה</span>
                     <span class="icon-chip tone-primary"><svg><use href="#icon-check"></use></svg></span>
@@ -238,9 +265,8 @@ class extends Component
     <div class="cols">
         <div class="card">
             <h3>משימות ופריטי טיפול</h3>
-            <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin:-8px 0 var(--sp-sm)">כל שורה מובילה ישירות לכרטיס הרלוונטי · פריט שהושלם נעלם מהרשימה</p>
             @forelse ($this->attentionItems as $item)
-                <a class="list-item" href="{{ $item['url'] }}" style="text-decoration:none; color:inherit">
+                <a class="list-item attention-item {{ $item['badgeClass'] }}-mark" href="{{ $item['url'] }}" style="text-decoration:none; color:inherit">
                     <div>
                         <div>{{ $item['label'] }}</div>
                         <div class="who">{{ $item['subtitle'] }}</div>
@@ -255,8 +281,7 @@ class extends Component
         @if ($this->latestProgramSummary)
             @php $summary = $this->latestProgramSummary; @endphp
             <div class="card">
-                <h3>תוכנית אחרונה — "{{ $summary['program']->name }}"</h3>
-                <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin:-8px 0 var(--sp-sm)">מי כבר רכשה ומי רק התעניינה</p>
+                <h3>מי רכשה ומי התעניינה ב"{{ $summary['program']->name }}"</h3>
                 @forelse ($summary['purchased'] as $customer)
                     <a class="list-item" href="{{ route('customer-detail', $customer) }}" style="text-decoration:none; color:inherit">
                         <div style="display:flex; align-items:center; gap:10px">
