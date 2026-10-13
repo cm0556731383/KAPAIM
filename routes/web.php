@@ -56,6 +56,11 @@ Route::get('/materials/{material}/acknowledge', function (
 Route::get('/materials/attachments/{attachment}/download', function (
     \App\Models\MaterialDeliveryAttachment $attachment,
 ) {
+    // A link attachment (a video on YouTube/Drive) has no file here — its email links straight to it.
+    if ($attachment->isLink()) {
+        return redirect()->away($attachment->url);
+    }
+
     return \Illuminate\Support\Facades\Storage::disk('local')->download($attachment->file_reference, $attachment->file_name);
 })->middleware('signed')->name('materials.attachment.download');
 

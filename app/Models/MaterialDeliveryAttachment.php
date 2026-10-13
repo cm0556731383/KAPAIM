@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\URL;
  * expiring download link is embedded in the Smove email body instead (see
  * downloadUrl() below and MaterialDelivery::sendFor()).
  */
-#[Fillable(['material_delivery_id', 'file_reference', 'file_name'])]
+#[Fillable(['material_delivery_id', 'file_reference', 'file_name', 'url'])]
 class MaterialDeliveryAttachment extends Model
 {
     use HasFactory;
@@ -26,9 +26,19 @@ class MaterialDeliveryAttachment extends Model
         return $this->belongsTo(MaterialDelivery::class);
     }
 
-    /** A 14-day signed link a recipient (not logged into this app) can download the file from — see routes/web.php. */
+    /** A link sent as-is (e.g. a video on YouTube/Drive) rather than a file stored here. */
+    public function isLink(): bool
+    {
+        return filled($this->url);
+    }
+
+    /**
+     * What the email links to: the link itself, or a 14-day signed link a
+     * recipient (not logged into this app) can download the file from — see
+     * routes/web.php.
+     */
     public function downloadUrl(): string
     {
-        return URL::temporarySignedRoute('materials.attachment.download', now()->addDays(14), ['attachment' => $this->id]);
+        return $this->url ?: URL::temporarySignedRoute('materials.attachment.download', now()->addDays(14), ['attachment' => $this->id]);
     }
 }

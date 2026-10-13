@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use RuntimeException;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class MaterialsMailingTest extends TestCase
@@ -178,15 +179,21 @@ class MaterialsMailingTest extends TestCase
     }
 
     /**
-     * Stage 19 hardening: an oversized attachment (over the 25MB cap from
-     * docs/storyboard/materials-send.html) is rejected by real Livewire
-     * validation before anything is sent, and no delivery is created.
+     * An attachment over the 95MB cap (just under Cloudflare's 100MB request
+     * limit — raised from 25MB on 2026-10-13) is rejected by real Livewire
+     * validation before anything is sent, and no delivery is created; one
+     * just under it is accepted.
      */
     public function test_an_oversized_attachment_is_rejected(): void
     {
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
-        $file = UploadedFile::fake()->create('huge.pdf', 25601);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsFiles', [UploadedFile::fake()->create('video.mp4', 90000)])
+            ->assertHasNoErrors(['materialsFiles.*']);
+
+        $file = UploadedFile::fake()->create('huge.pdf', 97281);
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('materialsProgramId', (string) $program->id)
@@ -210,6 +217,52 @@ class MaterialsMailingTest extends TestCase
             ->set('materialsProgramId', (string) $program->id)
             ->set('materialsFiles', [$file])
             ->assertHasErrors(['materialsFiles.*']);
+
+        $this->assertSame(0, MaterialDelivery::where('customer_id', $customer->id)->count());
+    }
+
+    public function test_materials_can_be_sent_as_a_link_with_or_without_a_file(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        // Smove's contact lookup answers a list; everything else an id.
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->call('addMaterialsLink')
+            ->set('materialsLinks.0', ['name' => 'סרטון הדרכה', 'url' => 'https://youtu.be/abc123'])
+            ->call('addMaterialsLink')
+            ->set('materialsLinks.1', ['name' => '', 'url' => 'https://drive.google.com/file/d/xyz/view'])
+            ->call('sendMaterials')
+            ->assertSet('materialsError', null)
+            ->assertSet('materialsLinks', []);
+
+        $delivery = MaterialDelivery::where('customer_id', $customer->id)->sole();
+        $links = $delivery->attachments()->orderBy('id')->get();
+        $this->assertSame(['סרטון הדרכה', 'drive.google.com'], $links->pluck('file_name')->all());
+        $this->assertTrue($links->every->isLink());
+        $this->assertSame('https://youtu.be/abc123', $links->first()->downloadUrl());
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
+            && str_contains($request['body'], 'https://youtu.be/abc123') && str_contains($request['body'], 'סרטון הדרכה'));
+
+        // An old email's signed link to a link attachment forwards to it.
+        $this->get(\Illuminate\Support\Facades\URL::temporarySignedRoute('materials.attachment.download', now()->addDay(), ['attachment' => $links->first()->id]))
+            ->assertRedirect('https://youtu.be/abc123');
+    }
+
+    public function test_a_materials_link_must_be_a_web_address(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->call('addMaterialsLink')
+            ->set('materialsLinks.0', ['name' => 'x', 'url' => 'javascript:alert(1)'])
+            ->call('sendMaterials')
+            ->assertHasErrors(['materialsLinks.0.url']);
 
         $this->assertSame(0, MaterialDelivery::where('customer_id', $customer->id)->count());
     }

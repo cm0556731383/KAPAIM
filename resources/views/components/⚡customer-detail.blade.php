@@ -133,6 +133,9 @@ class extends Component
     /** @var \Livewire\Features\SupportFileUploads\TemporaryUploadedFile[] */
     public array $materialsFiles = [];
 
+    /** [{name, url}, ...] — links sent with the files, e.g. a video too big to upload. */
+    public array $materialsLinks = [];
+
     /** Business-rule error from MaterialDelivery::sendFor() (FR-5.2/FR-5.3/FR-8.13/FR-8.14). */
     public ?string $materialsError = null;
 
@@ -152,7 +155,8 @@ class extends Component
      * content-based scan to matter, and `extensions` is what Livewire's own
      * temporary-upload test doubles reliably report.
      */
-    private const MATERIALS_FILE_RULES = ['file', 'max:25600', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mp3'];
+    /** 95MB — Cloudflare (in front of the site) refuses an upload over 100MB; bigger videos go as a link instead. */
+    private const MATERIALS_FILE_RULES = ['file', 'max:97280', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mov,mp3'];
 
     public function mount(Customer $customer): void
     {
@@ -741,6 +745,18 @@ class extends Component
         $this->materialsRecipients = array_values($this->materialsRecipients);
     }
 
+    public function addMaterialsLink(): void
+    {
+        $this->materialsLinks[] = ['name' => '', 'url' => ''];
+    }
+
+    public function removeMaterialsLink(int $index): void
+    {
+        unset($this->materialsLinks[$index]);
+        $this->materialsLinks = array_values($this->materialsLinks);
+        $this->resetErrorBag();
+    }
+
     /**
      * Stage 19 hardening: validates each newly-selected attachment the
      * moment Livewire finishes uploading it to temp storage, so an
@@ -774,7 +790,17 @@ class extends Component
             return;
         }
 
-        $this->validate(['materialsFiles.*' => self::MATERIALS_FILE_RULES]);
+        $this->validate([
+            'materialsFiles.*' => self::MATERIALS_FILE_RULES,
+            'materialsLinks.*.url' => ['required', 'url:http,https', 'max:2048'],
+            'materialsLinks.*.name' => ['nullable', 'string', 'max:255'],
+        ], [], ['materialsLinks.*.url' => 'קישור', 'materialsLinks.*.name' => 'שם הקישור']);
+
+        // A link without a name is shown by its address.
+        $links = array_map(fn (array $link) => [
+            'url' => trim($link['url']),
+            'name' => trim((string) ($link['name'] ?? '')) ?: (parse_url(trim($link['url']), PHP_URL_HOST) ?: trim($link['url'])),
+        ], $this->materialsLinks);
 
         $program = Program::find($this->materialsProgramId);
         $attachments = array_map(
@@ -786,7 +812,7 @@ class extends Component
         );
 
         try {
-            $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove);
+            $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove, $links);
         } catch (\RuntimeException $e) {
             $this->materialsError = $e->getMessage();
 
@@ -804,6 +830,7 @@ class extends Component
         }
 
         $this->materialsFiles = [];
+        $this->materialsLinks = [];
         $this->materialsProgramId = '';
         unset($this->materialDeliveries);
 
@@ -1500,9 +1527,9 @@ class extends Component
                         x-on:livewire-upload-cancel="uploading = false">
                         <label for="materialsFiles">קובץ מצורף</label>
                         <input type="file" id="materialsFiles" wire:model="materialsFiles" multiple>
-                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint או קובץ מדיה — עד 25MB לקובץ</div>
+                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint, תמונה, וידאו או שמע — עד 95MB לקובץ. סרטון גדול יותר — כקישור (למטה).</div>
                         <div x-show="uploading" x-cloak class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">מעלה את הקבצים… <span class="ltr-num" x-text="progress + '%'"></span></div>
-                        <div x-show="failed" x-cloak style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">העלאת הקובץ נכשלה — ייתכן שהוא גדול מ-25MB או שהחיבור נקטע. נסו לבחור אותו שוב.</div>
+                        <div x-show="failed" x-cloak style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">העלאת הקובץ נכשלה — ייתכן שהוא גדול מ-95MB (או שכמה קבצים יחד עוברים 100MB), או שהחיבור נקטע. נסו לבחור אותו שוב, או שלחו סרטון גדול כקישור.</div>
                         @error('materialsFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         @if (! empty($materialsFiles))
                             <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-top:var(--sp-sm)">
@@ -1511,6 +1538,26 @@ class extends Component
                                 @endforeach
                             </div>
                         @endif
+                    </div>
+
+                    {{-- A video too big to upload goes as a link (YouTube unlisted, Vimeo, Google Drive…). --}}
+                    <div class="full">
+                        <label>קישורים <span class="text-text-secondary" style="font-weight:400">(לסרטון גדול — יוטיוב, Vimeo, Google Drive)</span></label>
+                        @foreach ($materialsLinks as $i => $link)
+                            <div class="material-link-row" wire:key="material-link-{{ $i }}">
+                                <div>
+                                    <input type="text" wire:model="materialsLinks.{{ $i }}.name" placeholder="שם (למשל: סרטון הדרכה)" aria-label="שם הקישור">
+                                    @error("materialsLinks.$i.name") <div class="field-error">{{ $message }}</div> @enderror
+                                </div>
+                                <div>
+                                    <input type="url" wire:model="materialsLinks.{{ $i }}.url" class="ltr-num" dir="ltr" placeholder="https://" aria-label="כתובת הקישור">
+                                    @error("materialsLinks.$i.url") <div class="field-error">{{ $message }}</div> @enderror
+                                </div>
+                                <button type="button" wire:click="removeMaterialsLink({{ $i }})" class="btn btn-ghost btn-sm" aria-label="הסרת הקישור">×</button>
+                            </div>
+                        @endforeach
+                        <button type="button" wire:click="addMaterialsLink" class="btn btn-ghost btn-sm">+ הוספת קישור</button>
+                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ביוטיוב — העלו כ"לא רשום"; ב-Google Drive — שתפו כ"כל מי שיש לו את הקישור".</div>
                     </div>
 
                     <div class="full">
@@ -1532,8 +1579,8 @@ class extends Component
                         </div>
                     </div>
 
-                    @if (empty($materialsFiles) || empty($materialsRecipients))
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
+                    @if ((empty($materialsFiles) && empty($materialsLinks)) || empty($materialsRecipients))
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ או קישור אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
                     @endif
 
                     <div class="full"><button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="materialsFiles, sendMaterials">שליחה באמצעות Smove</button></div>

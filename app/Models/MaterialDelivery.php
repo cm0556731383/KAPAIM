@@ -153,6 +153,7 @@ class MaterialDelivery extends Model
      *
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      * @param  array<int, array{file_reference: string, file_name: string}>  $attachments
+     * @param  array<int, array{name: string, url: string}>  $links  sent as-is — e.g. a video on YouTube/Drive too big to upload
      *
      * Build-plan 12: the actual outbound Smove send now happens here too,
      * via $runner/$smove — non-blocking (see ExternalOperationRunner's
@@ -171,6 +172,7 @@ class MaterialDelivery extends Model
         ActivityLogger $activityLogger,
         ExternalOperationRunner $runner,
         SmoveClient $smove,
+        array $links = [],
     ): self {
         $validRecipients = array_values(array_filter(
             $recipients,
@@ -181,8 +183,8 @@ class MaterialDelivery extends Model
             throw new RuntimeException('יש לבחור לפחות איש קשר אחד עם כתובת דוא"ל תקינה לפני שליחת חומרי הלימוד.');
         }
 
-        if (empty($attachments)) {
-            throw new RuntimeException('יש לצרף לפחות קובץ אחד לפני שליחת חומרי הלימוד.');
+        if (empty($attachments) && empty($links)) {
+            throw new RuntimeException('יש לצרף לפחות קובץ אחד או קישור אחד לפני שליחת חומרי הלימוד.');
         }
 
         $status = StatusDefinition::firstOrCreate(
@@ -205,12 +207,21 @@ class MaterialDelivery extends Model
             ]);
         }
 
-        $attachmentModels = array_map(
-            fn (array $attachment) => $delivery->attachments()->create([
-                'file_reference' => $attachment['file_reference'],
-                'file_name' => $attachment['file_name'],
-            ]),
-            $attachments,
+        $attachmentModels = array_merge(
+            array_map(
+                fn (array $attachment) => $delivery->attachments()->create([
+                    'file_reference' => $attachment['file_reference'],
+                    'file_name' => $attachment['file_name'],
+                ]),
+                $attachments,
+            ),
+            array_map(
+                fn (array $link) => $delivery->attachments()->create([
+                    'file_name' => $link['name'],
+                    'url' => $link['url'],
+                ]),
+                $links,
+            ),
         );
 
         // FR-5.8: best-effort — attach the relevant deal's id if one exists
@@ -228,6 +239,7 @@ class MaterialDelivery extends Model
                     'program_id' => $program->id,
                     'recipient_count' => count($validRecipients),
                     'attachment_count' => count($attachments),
+                    'link_count' => count($links),
                 ],
             ],
         );

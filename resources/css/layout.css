@@ -380,3 +380,5 @@ td.mono { display: table-cell; }
 /* ===== Dashboard: checks due reminder ===== */
 .check-reminder { border: 1.5px solid var(--color-warning); background: var(--color-warning-bg); margin-bottom: var(--sp-lg); }
 .check-reminder-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-md); flex-wrap: wrap; padding: var(--sp-sm) 0; border-top: 1px solid rgb(0 0 0 / 0.08); }
+.material-link-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 32px; gap: var(--sp-sm); align-items: start; margin-bottom: var(--sp-sm); }
+@media (max-width: 560px) { .material-link-row { grid-template-columns: minmax(0, 1fr) 32px; } .material-link-row > div:nth-of-type(2) { grid-column: 1; } }
