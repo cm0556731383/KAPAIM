@@ -1,6 +1,8 @@
 <?php
 
+use App\Models\Deal;
 use App\Models\Payment;
+use App\Models\PaymentLink;
 use App\Models\Task;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -8,10 +10,12 @@ use Livewire\Component;
 
 /**
  * Build-plan 08 — מסך גבייה ותשלומים (docs/storyboard/collections.html).
- * Read-only overview of every open collection TASK (task_type = 'collection'
- * — created/renewed/closed by App\Console\Commands\ProcessCollectionTasks,
- * see routes/console.php) with a direct link into the underlying deal
- * (FR-2.16), plus every check payment still awaiting clearance. All actual
+ * Read-only overview, live: every deal still owing money that was sent an
+ * invoice or a payment link — whatever its status — with its open
+ * collection TASK's due date if it has one (task_type = 'collection',
+ * created/renewed/closed by App\Console\Commands\ProcessCollectionTasks)
+ * and a direct link into the deal (FR-2.16), plus every check payment
+ * still awaiting clearance. All actual
  * actions — recording a payment, marking a check cleared, issuing a receipt
  * — happen on the deal's own card (⚡deal-detail.blade.php).
  */
@@ -24,15 +28,35 @@ class extends Component
         abort_unless(auth()->user()->can('payments.manage'), 403);
     }
 
+    /** Deals sent an invoice or a payment link that still have a balance, oldest request first. */
     #[Computed]
-    public function openCollectionTasks()
+    public function awaitingPayment()
     {
-        return Task::where('task_type', 'collection')
-            ->where('status', 'open')
-            ->with(['deal.customer.school', 'deal.paymentMethod', 'deal.payments'])
-            ->orderBy('due_at')
+        $deals = Deal::whereHas('status', fn ($q) => $q->whereNotIn('name', [Deal::PAID_STATUS_NAME, Deal::CANCELLED_STATUS_NAME]))
+            ->where(fn ($q) => $q
+                ->whereHas('documents', fn ($d) => $d->where('document_type', 'invoice')->whereNotNull('sent_at'))
+                ->orWhereHas('paymentLinks', fn ($l) => $l->where('status', PaymentLink::STATUS_PENDING)))
+            ->with(['customer.school', 'paymentMethod', 'payments', 'paymentLinks'])
             ->get()
-            ->filter(fn (Task $task) => $task->deal !== null);
+            ->filter(fn (Deal $deal) => $deal->outstandingBalance() > 0);
+
+        $tasks = Task::where('task_type', 'collection')->where('status', 'open')
+            ->whereIn('deal_id', $deals->pluck('id'))
+            ->get()
+            ->keyBy('deal_id');
+
+        return $deals->map(function (Deal $deal) use ($tasks) {
+            $invoice = $deal->issuedInvoice();
+            $link = $deal->paymentLinks->where('status', PaymentLink::STATUS_PENDING)->sortByDesc('id')->first();
+
+            return (object) [
+                'deal' => $deal,
+                'invoiceSentAt' => $invoice?->sent_at,
+                'link' => $link,
+                'task' => $tasks->get($deal->id),
+                'since' => collect([$invoice?->sent_at, $link?->created_at])->filter()->min(),
+            ];
+        })->sortBy('since')->values();
     }
 
     #[Computed]
@@ -50,7 +74,7 @@ class extends Component
     #[Computed]
     public function totalOutstanding(): float
     {
-        return (float) $this->openCollectionTasks->sum(fn (Task $task) => $task->deal->outstandingBalance());
+        return (float) $this->awaitingPayment->sum(fn ($row) => $row->deal->outstandingBalance());
     }
 }
 ?>
@@ -67,33 +91,41 @@ class extends Component
             <div class="field"><div class="k">סך פתוח לגבייה</div><div class="v ltr-num" style="color:var(--color-error); font-size:var(--fs-h2)">₪{{ number_format($this->totalOutstanding, 0) }}</div></div>
         </div>
         <div class="card">
-            <div class="field"><div class="k">משימות גבייה פתוחות</div><div class="v" style="font-size:var(--fs-h2)">{{ $this->openCollectionTasks->count() }}</div></div>
+            <div class="field"><div class="k">עסקאות ממתינות לתשלום</div><div class="v" style="font-size:var(--fs-h2)">{{ $this->awaitingPayment->count() }}</div></div>
         </div>
     </div>
 
     <div class="card" style="margin-bottom:var(--sp-lg)">
-        <h3>משימות גבייה פתוחות</h3>
-        @if ($this->openCollectionTasks->isEmpty())
-            <div class="empty-state">אין כרגע משימות גבייה פתוחות.</div>
+        <h3>עסקאות ממתינות לתשלום</h3>
+        @if ($this->awaitingPayment->isEmpty())
+            <div class="empty-state">אין כרגע עסקאות הממתינות לתשלום.</div>
         @else
             <div class="table-scroll">
             <table>
                 <thead>
                     <tr>
-                        <th>בית ספר</th><th>עסקה</th><th>סכום עסקה</th><th>שולם עד כה</th><th>יתרת חוב</th><th>אמצעי תשלום</th><th>תאריך יעד</th><th></th>
+                        <th>בית ספר</th><th>עסקה</th><th>סכום עסקה</th><th>שולם עד כה</th><th>יתרת חוב</th><th>אמצעי תשלום</th><th>נשלח ללקוחה</th><th>יעד משימת גבייה</th><th></th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach ($this->openCollectionTasks as $task)
-                        @php $deal = $task->deal; @endphp
+                    @foreach ($this->awaitingPayment as $row)
+                        @php $deal = $row->deal; @endphp
                         <tr class="row-link" onclick="location.href='{{ route('deal-detail', $deal) }}'">
                             <td>{{ $deal->customer->school?->name ?? '—' }}</td>
                             <td>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
-                            <td class="ltr-num">₪{{ number_format($deal->totalPaid(), 0) }}</td>
+                            <td class="ltr-num">
+                                ₪{{ number_format($deal->totalPaid(), 0) }}
+                                @php $pendingChecks = $deal->pendingChecks(); @endphp
+                                @if ($pendingChecks->isNotEmpty())<div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">+ ₪{{ number_format($pendingChecks->sum('amount'), 0) }} בצ'קים שטרם נפרעו</div>@endif
+                            </td>
                             <td class="ltr-num" style="color:var(--color-error); font-weight:700">₪{{ number_format($deal->outstandingBalance(), 0) }}</td>
                             <td>{{ $deal->paymentMethod?->name ?? '—' }}</td>
-                            <td class="ltr-num">{{ $task->due_at?->format('d/m/Y') ?? '—' }}</td>
+                            <td>
+                                @if ($row->invoiceSentAt)<div>חשבונית · <span class="ltr-num">{{ $row->invoiceSentAt->format('d/m/Y') }}</span></div>@endif
+                                @if ($row->link)<div>קישור תשלום · <span class="ltr-num">{{ $row->link->created_at->format('d/m/Y') }}</span>@if ($row->link->isExpired()) <span class="badge badge-error">פג תוקף</span>@endif</div>@endif
+                            </td>
+                            <td class="ltr-num">{{ $row->task?->due_at?->format('d/m/Y') ?? '—' }}</td>
                             <td><a href="{{ route('deal-detail', $deal) }}" class="btn btn-secondary btn-sm" onclick="event.stopPropagation()">רישום תשלום</a></td>
                         </tr>
                     @endforeach

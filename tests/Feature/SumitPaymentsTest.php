@@ -392,6 +392,64 @@ class SumitPaymentsTest extends TestCase
         $this->assertNotSame($check->id, $deal->fresh()->payment_method_id); // the box never touches the deal's planned method
     }
 
+    public function test_a_check_marks_the_deal_paid_only_once_it_clears_and_is_receipted(): void
+    {
+        $this->fakeSumit();
+        $deal = $this->cardDealWithInvoice(400);
+        $this->actingAsOwner();
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+
+        $component = Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $check->id)
+            ->set('paymentAmount', '400')
+            ->call('recordPayment')
+            ->assertSet('paymentError', null);
+
+        $this->assertNotSame('שולמה', $deal->fresh()->status->name);
+        $this->assertEquals(400, $deal->fresh()->outstandingBalance());
+
+        $component->call('markCheckCleared', $deal->payments()->sole()->id);
+
+        $this->assertSame(1, Receipt::count());
+        $this->assertSame('שולמה', $deal->fresh()->status->name);
+        $this->assertEquals(0, $deal->fresh()->outstandingBalance());
+    }
+
+    public function test_a_cleared_check_without_a_receipt_does_not_pay_the_deal(): void
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        $payment = $deal->recordPayment($deal->version, 400, null, $check->id, '77');
+
+        $payment->markCleared();
+
+        $this->assertNotSame('שולמה', $deal->fresh()->status->name);
+        $this->assertEquals(400, $deal->fresh()->outstandingBalance());
+    }
+
+    public function test_recording_a_check_while_a_payment_link_is_pending_warns_and_keeps_the_deal_open(): void
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $this->actingAsOwner();
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        \App\Models\PaymentLink::create([
+            'deal_id' => $deal->id, 'token' => str_repeat('b', 40), 'amount' => 400, 'purpose' => 'payment',
+            'url' => 'https://pay.example.com/y', 'status' => 'pending', 'expires_at' => now()->addDay(),
+        ]);
+
+        Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $check->id)
+            ->set('paymentAmount', '400')
+            ->call('recordPayment')
+            ->assertSet('paymentError', null)
+            ->assertDispatched('notify', type: 'warning');
+
+        $this->assertNotSame('שולמה', $deal->fresh()->status->name);
+        $this->assertSame('pending', $deal->paymentLinks()->sole()->status);
+
+        Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertSee('קישור תשלום');
+    }
+
     // ----- checks -----
 
     public function test_several_checks_are_recorded_with_numbers_and_due_dates_and_no_receipt_yet(): void
@@ -415,7 +473,9 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(['1001', '1002', '1003'], $deal->payments()->orderBy('id')->pluck('check_number')->all());
         $this->assertSame(['2026-11-01', '2026-12-01', '2027-01-01'], $deal->payments()->orderBy('id')->get()->map(fn ($p) => $p->check_due_date->toDateString())->all());
         $this->assertSame(0, Receipt::count());
-        $this->assertEquals(900, $deal->fresh()->totalPaid());
+        // Checks aren't paid until they clear and are receipted.
+        $this->assertEquals(0, $deal->fresh()->totalPaid());
+        $this->assertEquals(900, $deal->fresh()->pendingChecks()->sum('amount'));
         $first = $deal->payments()->orderBy('id')->first();
         $this->assertSame([12, '600', '123456'], [$first->check_bank_number, $first->check_branch_number, $first->check_account_number]);
         $this->assertSame('בנק הפועלים (12) · סניף 600 · חשבון 123456', $first->checkBankLabel());

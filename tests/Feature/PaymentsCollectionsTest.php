@@ -224,6 +224,58 @@ class PaymentsCollectionsTest extends TestCase
         $response->assertOk();
     }
 
+    public function test_collections_page_lists_an_unpaid_deal_with_a_sent_invoice_right_away_whatever_its_status(): void
+    {
+        $deal = $this->dealWithInvoice(1200);
+        $this->assertSame('פתוחה', $deal->fresh()->status->name);
+
+        Livewire::actingAs($this->owner)->test('collections')
+            ->assertSee($deal->program_name_snapshot)
+            ->assertSee('1,200')
+            ->assertSet('totalOutstanding', 1200.0);
+    }
+
+    public function test_collections_page_lists_an_unpaid_deal_with_a_pending_payment_link(): void
+    {
+        $deal = $this->createDeal(800);
+        \App\Models\PaymentLink::create([
+            'deal_id' => $deal->id, 'token' => str_repeat('a', 40), 'amount' => 800, 'purpose' => 'payment',
+            'url' => 'https://pay.example.com/x', 'status' => 'pending', 'expires_at' => now()->addDay(),
+        ]);
+
+        Livewire::actingAs($this->owner)->test('collections')
+            ->assertSee($deal->program_name_snapshot)
+            ->assertSee('קישור תשלום');
+    }
+
+    public function test_collections_page_leaves_out_paid_deals_and_deals_never_sent_an_invoice_or_link(): void
+    {
+        $notSent = $this->createDeal(500);
+        $paid = $this->dealWithInvoice(300);
+        $paid->recordPayment($paid->version, 300, null, $this->createPaymentMethod()->id);
+
+        Livewire::actingAs($this->owner)->test('collections')
+            ->assertDontSee($notSent->program_name_snapshot)
+            ->assertDontSee($paid->program_name_snapshot)
+            ->assertSee('אין כרגע עסקאות הממתינות לתשלום');
+    }
+
+    public function test_sending_an_invoice_moves_an_open_deal_to_invoice_sent(): void
+    {
+        $deal = $this->dealWithInvoice(600);
+        $this->summitConnectedFor($deal);
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]); // generated, not yet sent
+
+        $invoice->sendTo([['name' => 'אחראית חשבונות', 'email' => 'billing@example.com']], 'digital',
+            app(\App\Services\ActivityLogger::class), app(\App\Services\Integrations\ExternalOperationRunner::class),
+            app(\App\Services\Integrations\SummitClient::class), app(\App\Services\Integrations\SmoveClient::class));
+
+        $this->assertNotNull($invoice->fresh()->sent_at);
+        $this->assertSame('נשלחה חשבונית', $deal->fresh()->status->name);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'deal.status_changed', 'deal_id' => $deal->id]);
+    }
+
     // ----- FR-4.32/FR-4.33: partial vs. full payment -----
 
     public function test_partial_payment_does_not_close_the_deal(): void

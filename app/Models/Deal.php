@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\ActivityLogger;
 use App\Services\HebrewCalendar;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SummitClient;
@@ -42,6 +43,8 @@ class Deal extends Model
 
     /** Build-plan 08 (FR-4.32/FR-4.33): a deal reaches this status only once fully paid. */
     public const PAID_STATUS_NAME = 'שולמה';
+
+    public const INVOICE_SENT_STATUS_NAME = 'נשלחה חשבונית';
 
     /** Terminal statuses (build-plan 06 judgment call) mark `completed_at`. */
     private const TERMINAL_STATUS_NAMES = ['שולמה', 'מבוטלת'];
@@ -159,10 +162,23 @@ class Deal extends Model
         return $this->hasOne(Subscription::class);
     }
 
-    /** FR-4.32/FR-4.33: always computed from recorded payments — never a stored column. */
+    /**
+     * FR-4.32/FR-4.33: always computed from recorded payments — never a
+     * stored column. A check counts only once cleared and receipted
+     * (Payment::isSettled()); until then it's in pendingChecksTotal().
+     */
     public function totalPaid(): float
     {
-        return (float) $this->payments()->sum('amount');
+        return (float) $this->payments()->with('paymentMethod')->get()
+            ->filter(fn (Payment $payment) => $payment->isSettled())
+            ->sum('amount');
+    }
+
+    /** Checks recorded on the deal that haven't cleared and been receipted yet. */
+    public function pendingChecks()
+    {
+        return $this->payments()->with('paymentMethod')->get()
+            ->filter(fn (Payment $payment) => $payment->isCheck() && ! $payment->isSettled());
     }
 
     /**
@@ -402,6 +418,34 @@ class Deal extends Model
     }
 
     /**
+     * Document::sendTo(): sending an invoice moves a still-open, not yet
+     * paid deal to "נשלחה חשבונית" (bumping version like any status
+     * change). A deal already further along keeps its status.
+     */
+    public function markInvoiceSent(ActivityLogger $activityLogger): void
+    {
+        $this->refresh();
+        $oldStatusName = $this->status?->name;
+
+        if ($oldStatusName !== self::DEFAULT_STATUS_NAME || $this->isFullyPaid()) {
+            return;
+        }
+
+        $status = StatusDefinition::firstOrCreate(
+            ['scope' => 'deal', 'name' => self::INVOICE_SENT_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 2],
+        );
+
+        $this->updateStatusWithLock((int) $this->version, $status->id);
+
+        $activityLogger->log('deal.status_changed', "סטטוס עסקה #{$this->id} שונה מ\"{$oldStatusName}\" ל\"{$status->name}\" עם שליחת החשבונית", [
+            'deal_id' => $this->id,
+            'customer_id' => $this->customer_id,
+            'metadata' => ['old_status' => $oldStatusName, 'new_status' => $status->name],
+        ]);
+    }
+
+    /**
      * Subscription::cancel()'s deal side: the subscription deal becomes
      * "מבוטלת" (bumping version like updateStatusWithLock(), so a stale tab
      * editing this deal is refused).
@@ -463,7 +507,9 @@ class Deal extends Model
         }
 
         return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate, $method, $checkNumber, $checkDueDate) {
-            $prospectiveTotal = $this->totalPaid() + $amount;
+            $isCheck = $method->type === 'check';
+            // A check doesn't pay the deal yet — only once it clears and is receipted.
+            $prospectiveTotal = $this->totalPaid() + ($isCheck ? 0 : $amount);
             $becomesFullyPaid = $prospectiveTotal >= $this->amountDue();
 
             $attributes = ['version' => DB::raw('version + 1')];
@@ -489,8 +535,6 @@ class Deal extends Model
                 ['scope' => 'payment', 'name' => $becomesFullyPaid ? 'שולם' : 'חלקי'],
                 ['is_active' => true, 'sort_order' => $becomesFullyPaid ? 2 : 3],
             );
-
-            $isCheck = $method->type === 'check';
 
             $payment = $this->payments()->create([
                 'payment_method_id' => $method->id,
@@ -533,7 +577,7 @@ class Deal extends Model
         DB::transaction(function () use ($expectedVersion, $payment, $attributes) {
             $this->bumpVersion($expectedVersion);
             $payment->update($attributes);
-            $this->syncPaidStatus();
+            $this->refreshPaidStatus();
         });
     }
 
@@ -550,7 +594,7 @@ class Deal extends Model
         DB::transaction(function () use ($expectedVersion, $payment) {
             $this->bumpVersion($expectedVersion);
             $payment->delete();
-            $this->syncPaidStatus();
+            $this->refreshPaidStatus();
         });
     }
 
@@ -575,12 +619,12 @@ class Deal extends Model
     }
 
     /**
-     * After a payment is corrected/removed: fully paid → "שולמה" (as
-     * recordPayment() does); a "שולמה" deal no longer fully paid goes back to
-     * "נשלחה חשבונית" (or "פתוחה" with no issued invoice). A cancelled deal
-     * keeps its status.
+     * After a payment is corrected/removed, a check cleared or a receipt
+     * issued: fully paid → "שולמה" (as recordPayment() does); a "שולמה" deal
+     * no longer fully paid goes back to "נשלחה חשבונית" (or "פתוחה" with no
+     * issued invoice). A cancelled deal keeps its status.
      */
-    private function syncPaidStatus(): void
+    public function refreshPaidStatus(): void
     {
         $this->refresh();
         $statusName = $this->status?->name;

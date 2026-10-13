@@ -972,6 +972,10 @@ class Document extends Model
             'metadata' => ['format' => $format, 'recipient_count' => count($recipients)],
         ]);
 
+        if ($this->document_type === 'invoice' && $this->totalAmount() > 0) {
+            $this->deal?->markInvoiceSent($logger);
+        }
+
         $emailRecipients = array_values(array_filter(
             $recipients,
             fn (array $r) => ! empty($r['email']) && filter_var($r['email'], FILTER_VALIDATE_EMAIL),

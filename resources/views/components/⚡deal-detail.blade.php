@@ -526,7 +526,8 @@ class extends Component
 
         // A check's receipt waits for it to clear (FR-4.28) — markCheckCleared().
         if ($payment->isCheck()) {
-            $this->notifySuccess("הצ'ק נרשם (₪{$data['paymentAmount']}). הקבלה תופק כשיסומן כנפרע.");
+            $this->notifySuccess("הצ'ק נרשם (₪{$data['paymentAmount']}). העסקה תסומן כשולמה כשהצ'ק ייפרע ותופק קבלה.");
+            $this->warnIfPaymentLinkPending();
 
             return;
         }
@@ -602,6 +603,19 @@ class extends Component
         unset($this->payments);
 
         $this->notifySuccess(count($payments)." צ'קים נרשמו (₪".number_format($total, 0).'). ביום הפירעון של כל צ\'ק תופיע תזכורת להפקת קבלה.');
+        $this->warnIfPaymentLinkPending();
+    }
+
+    /**
+     * A check recorded while a payment link is still waiting: both stay open,
+     * and the deal isn't "שולמה" until one of them is actually paid — the
+     * user is warned so the customer isn't charged twice.
+     */
+    private function warnIfPaymentLinkPending(): void
+    {
+        if ($this->deal->paymentLinks()->where('status', PaymentLink::STATUS_PENDING)->exists()) {
+            $this->notifyWarning("לעסקה זו נשלח קישור לתשלום שעדיין לא שולם. העסקה תסומן כשולמה רק כשהצ'ק ייפרע ותופק עבורו קבלה, או כשהלקוחה תשלם בקישור. אם הצ'ק מחליף את הקישור, כדאי לבטל את הקישור ב-SUMIT כדי למנוע חיוב כפול.", sticky: true);
+        }
     }
 
     /**
@@ -833,6 +847,8 @@ class extends Component
         unset($this->payments);
 
         $this->notifyPaymentWithReceipt($payment->fresh(), "הצ'ק סומן כנפרע", $runner, $summit);
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
     }
 
     /**
@@ -861,6 +877,8 @@ class extends Component
         ]);
 
         unset($this->payments, $this->beforePaymentReceipt);
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
 
         if (! $summit->isActive()) {
             $this->notifyInfo('הקבלה נרשמה במערכת בלבד — החיבור ל-SUMIT מושבת.');
@@ -1121,9 +1139,9 @@ class extends Component
                 <div class="cell"><div class="k">זוכה</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
             @endif
             <div class="cell"><div class="k">שולם</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
-            @php $unclearedChecks = $this->payments->filter(fn ($p) => $p->check_status && ! $p->cleared_date); @endphp
-            @if ($unclearedChecks->isNotEmpty())
-                <div class="cell"><div class="k">מתוכם בצ'קים שטרם נפרעו ({{ $unclearedChecks->count() }})</div><div class="v ltr-num">₪{{ number_format($unclearedChecks->sum('amount'), 0) }}</div></div>
+            @php $pendingChecks = $this->deal->pendingChecks(); @endphp
+            @if ($pendingChecks->isNotEmpty())
+                <div class="cell"><div class="k">צ'קים שטרם נפרעו ({{ $pendingChecks->count() }}) — לא כלולים בשולם</div><div class="v ltr-num">₪{{ number_format($pendingChecks->sum('amount'), 0) }}</div></div>
             @endif
             <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>

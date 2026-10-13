@@ -101,6 +101,26 @@ class Payment extends Model
         return $this->paymentMethod?->type === 'check';
     }
 
+    /**
+     * Whether this payment counts toward what the deal has been paid. A check
+     * counts only once it cleared AND a receipt covers it — its own, one
+     * SUMIT issued, or the deal's receipt-before-payment. Until then it's on
+     * its way, and the deal is not "שולמה" (business owner's call, 2026-10-13).
+     */
+    public function isSettled(): bool
+    {
+        if (! $this->isCheck()) {
+            return true;
+        }
+
+        if (! $this->cleared_date) {
+            return false;
+        }
+
+        return $this->sumit_document_id || $this->receipt()->exists()
+            || Receipt::where('issued_before_payment', true)->whereHas('document', fn ($q) => $q->where('deal_id', $this->deal_id))->exists();
+    }
+
     /** An uncleared check whose due date has come — the dashboard asks whether to issue its receipt. */
     public function isCheckDue(): bool
     {
@@ -136,5 +156,6 @@ class Payment extends Model
         }
 
         $this->update(['check_status' => self::CHECK_CLEARED, 'cleared_date' => now()]);
+        $this->deal->refreshPaidStatus();
     }
 }
