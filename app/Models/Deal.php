@@ -164,15 +164,35 @@ class Deal extends Model
         return (float) $this->payments()->sum('amount');
     }
 
+    /**
+     * What credit notes issued in SUMIT took off the deal (e.g. a cancelled
+     * subscription's credit). A draft credit note, or one SUMIT refused,
+     * doesn't count — only a sent one (Document::sendTo()).
+     */
+    public function totalCredited(): float
+    {
+        return (float) DocumentLine::whereHas('document', fn ($q) => $q
+            ->where('deal_id', $this->id)
+            ->where('document_type', 'credit_note')
+            ->whereNotNull('sent_at'))
+            ->sum('amount');
+    }
+
+    /** What the customer owes in all: the agreed amount less what was credited. */
+    public function amountDue(): float
+    {
+        return max(0.0, (float) $this->agreed_amount - $this->totalCredited());
+    }
+
     /** FR-4.33: the balance still owed — visible on the deal/customer card. */
     public function outstandingBalance(): float
     {
-        return max(0.0, (float) $this->agreed_amount - $this->totalPaid());
+        return max(0.0, $this->amountDue() - $this->totalPaid());
     }
 
     public function isFullyPaid(): bool
     {
-        return $this->totalPaid() >= (float) $this->agreed_amount;
+        return $this->totalPaid() >= $this->amountDue();
     }
 
     public static function badgeClassForStatusName(?string $statusName): string
@@ -430,7 +450,7 @@ class Deal extends Model
 
         return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate) {
             $prospectiveTotal = $this->totalPaid() + $amount;
-            $becomesFullyPaid = $prospectiveTotal >= (float) $this->agreed_amount;
+            $becomesFullyPaid = $prospectiveTotal >= $this->amountDue();
 
             $attributes = ['version' => DB::raw('version + 1')];
 

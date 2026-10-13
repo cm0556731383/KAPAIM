@@ -754,6 +754,9 @@ class extends Component
         <div class="cols2" style="margin-bottom:var(--sp-lg)">
             <div class="field"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>
             <div class="field"><div class="k">שולם עד כה</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
+            @if (($credited = $deal->totalCredited()) > 0)
+                <div class="field"><div class="k">זוכה (חשבונית זיכוי)</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
+            @endif
         </div>
         <div class="field" style="margin-bottom:var(--sp-lg)">
             <div class="k">יתרת חוב</div>

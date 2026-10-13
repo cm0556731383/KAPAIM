@@ -229,6 +229,29 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(0, Receipt::count());
     }
 
+    // ----- balance -----
+
+    public function test_an_issued_credit_note_comes_off_the_balance_and_a_draft_doesnt(): void
+    {
+        DocumentTemplate::create(['document_type' => 'credit_note', 'name' => 'זיכוי', 'content' => 'זיכוי', 'is_active' => true]);
+        $deal = $this->cardDealWithInvoice(400);
+        $deal->recordPayment($deal->version, 100);
+        $creditNote = Document::generateCreditNoteFor($deal->fresh(), 250);
+
+        $this->assertEquals(300, $deal->fresh()->outstandingBalance()); // draft: not credited yet
+
+        $creditNote->update(['sent_at' => now()]);
+        $deal = $deal->fresh();
+
+        $this->assertEquals(250, $deal->totalCredited());
+        $this->assertEquals(50, $deal->outstandingBalance());
+        $this->assertFalse($deal->isFullyPaid());
+
+        $deal->recordPayment($deal->version, 50);
+        $this->assertSame(Deal::PAID_STATUS_NAME, $deal->fresh()->status->name);
+        $this->assertEquals(0, $deal->fresh()->outstandingBalance());
+    }
+
     // ----- standing orders -----
 
     public function test_registering_a_standing_order_records_the_first_charge_and_its_receipt(): void
