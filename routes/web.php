@@ -13,6 +13,13 @@ use Illuminate\Support\Facades\Route;
 
 Route::livewire('/login', 'login')->middleware('guest')->name('login');
 
+/**
+ * The user guide (מדריך למשתמשת) — deliberately public, no login needed, so it
+ * can be shared with a new user before she has an account. Static content
+ * only; its screenshots (public/images/guide) were taken on demo data.
+ */
+Route::view('/guide', 'guide')->name('guide');
+
 Route::post('/logout', function () {
     Auth::logout();
 
