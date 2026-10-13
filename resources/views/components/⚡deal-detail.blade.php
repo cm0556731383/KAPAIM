@@ -5,6 +5,7 @@ use App\Models\BusinessEntity;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
+use App\Models\Payment;
 use App\Models\PaymentLink;
 use App\Models\PaymentMethod;
 use App\Models\ExternalOperation;
@@ -300,7 +301,7 @@ class extends Component
      * payment — Deal::recordPayment() enforces the version-guarded
      * optimistic lock and the paid/partial status rules server-side.
      */
-    public function recordPayment(ActivityLogger $activityLogger): void
+    public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         $this->paymentError = null;
 
@@ -332,7 +333,68 @@ class extends Component
         $this->syncFields();
         unset($this->payments);
 
-        $this->notifySuccess("התשלום נרשם בהצלחה (₪{$data['paymentAmount']}).");
+        // A check's receipt waits for it to clear (FR-4.28) — markCheckCleared().
+        if ($payment->isCheck()) {
+            $this->notifySuccess("הצ'ק נרשם (₪{$data['paymentAmount']}). הקבלה תופק כשיסומן כנפרע.");
+
+            return;
+        }
+
+        $this->notifyPaymentWithReceipt($payment, "התשלום נרשם (₪{$data['paymentAmount']})", $runner, $summit);
+    }
+
+    /**
+     * Issues the receipt for a payment just recorded/cleared and tells the
+     * user how it went. The payment stands either way; a receipt that
+     * couldn't be issued stays available from the payments table.
+     */
+    private function notifyPaymentWithReceipt(Payment $payment, string $done, ExternalOperationRunner $runner, SummitClient $summit): void
+    {
+        if ($this->beforePaymentReceipt) {
+            $this->notifySuccess("{$done} — מכוסה בקבלה שהופקה לפני התשלום.");
+
+            return;
+        }
+
+        if (! $this->deal->issuedInvoice()) {
+            $this->notifySuccess("{$done}. הקבלה תופק אחרי הפקת חשבונית לעסקה.");
+
+            return;
+        }
+
+        try {
+            Receipt::issueFor($this->deal->refresh(), $payment, $runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = "{$done}, אך הקבלה לא הופקה: {$e->getMessage()}";
+
+            return;
+        } finally {
+            unset($this->payments);
+        }
+
+        $this->notifySuccess($summit->isActive() ? "{$done} והקבלה נשלחה ללקוחה." : "{$done} והקבלה נרשמה במערכת (SUMIT מושבת).");
+    }
+
+    /**
+     * The payments box's type choice — the deal's payment method (FR-4.30),
+     * changeable only until a payment exists (FR-4.31, Deal::updatePaymentMethod()).
+     */
+    public function selectPaymentMethod(int $methodId): void
+    {
+        $this->paymentError = null;
+
+        try {
+            $this->deal->updatePaymentMethod(PaymentMethod::where('is_active', true)->findOrFail($methodId)->id);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $this->deal->refresh()->load('paymentMethod');
+        $this->syncFields();
+        $this->resetLinkForm();
+        $this->resetErrorBag();
     }
 
     /**
@@ -395,8 +457,10 @@ class extends Component
             'linkEmail' => ['required', 'email'],
         ], [], ['linkAmount' => 'סכום לתשלום', 'linkEmail' => 'דוא"ל הנמענת']);
 
+        $purpose = $this->deal->paymentMethod?->type === 'recurring' ? PaymentLink::PURPOSE_STANDING_ORDER : PaymentLink::PURPOSE_PAYMENT;
+
         try {
-            $link = PaymentLink::createFor($this->deal, (float) $data['linkAmount'], $runner, $summit);
+            $link = PaymentLink::createFor($this->deal, (float) $data['linkAmount'], $runner, $summit, $purpose);
         } catch (\RuntimeException $e) {
             $this->paymentError = $e->getMessage();
 
@@ -448,6 +512,23 @@ class extends Component
         return $this->linkRecipients->firstWhere('email', $email)?->name ?? ($this->deal->customer->school?->name ?? $email);
     }
 
+    /** A standing order's months at the monthly amount typed in (the payments box's preview). */
+    #[Computed]
+    public function standingOrderPlan(): array
+    {
+        return $this->deal->standingOrderPlan(is_numeric($this->linkAmount) && (float) $this->linkAmount > 0 ? (float) $this->linkAmount : null);
+    }
+
+    #[Computed]
+    public function activePaymentMethods()
+    {
+        return PaymentMethod::where('is_active', true)
+            ->orWhere('id', $this->deal->payment_method_id)
+            ->orderByRaw("CASE type WHEN 'card' THEN 1 WHEN 'recurring' THEN 2 WHEN 'bank_transfer' THEN 3 WHEN 'check' THEN 4 ELSE 5 END")
+            ->orderBy('name')
+            ->get();
+    }
+
     /** The customer's contacts with an email — who a payment link can go to. */
     #[Computed]
     public function linkRecipients()
@@ -467,7 +548,7 @@ class extends Component
         $this->paymentError = null;
 
         try {
-            $firstPayment = $this->deal->registerStandingOrderWithSummit($runner, $summit);
+            $firstPayment = $this->deal->registerStandingOrderWithSummit($runner, $summit, is_numeric($this->linkAmount) ? (float) $this->linkAmount : null);
         } catch (\RuntimeException $e) {
             $this->paymentError = $e->getMessage();
 
@@ -484,7 +565,7 @@ class extends Component
     }
 
     /** FR-4.28: a separate explicit action from "received" — never inferred. */
-    public function markCheckCleared(int $paymentId, ActivityLogger $activityLogger): void
+    public function markCheckCleared(int $paymentId, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         $this->paymentError = null;
 
@@ -503,6 +584,8 @@ class extends Component
         ]);
 
         unset($this->payments);
+
+        $this->notifyPaymentWithReceipt($payment->fresh(), "הצ'ק סומן כנפרע", $runner, $summit);
     }
 
     /**
@@ -614,15 +697,6 @@ class extends Component
                         <label for="agreedAmount">סכום מוסכם</label>
                         <input type="text" id="agreedAmount" wire:model="agreedAmount" class="ltr-num" dir="ltr">
                         @error('agreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="paymentMethodId">אמצעי תשלום</label>
-                        <select id="paymentMethodId" wire:model="paymentMethodId" @disabled($this->payments->isNotEmpty())>
-                            <option value="">— ללא —</option>
-                            @foreach ($this->paymentMethods as $method)
-                                <option value="{{ $method->id }}">{{ $method->name }}</option>
-                            @endforeach
-                        </select>
                     </div>
                     <div>
                         <label for="studentsCount">מספר תלמידות</label>
@@ -745,148 +819,191 @@ class extends Component
         @endif
     </div>
 
-    {{-- ===== תשלומים וקבלות (PAYMENT/RECEIPT) — build-plan 08 ===== --}}
+    {{-- ===== תשלומים וקבלות (PAYMENT/RECEIPT) =====
+         Summary → 1. payment type (the deal's payment method, locked once a
+         payment exists — FR-4.30/FR-4.31) → 2. amount and the action that
+         type takes: a SUMIT payment link (card), a link that sets up a
+         standing order (recurring), or recording it here with its receipt. --}}
+    @php
+        $method = $deal->paymentMethod;
+        $type = $method?->type;
+        $locked = $this->payments->isNotEmpty();
+        $hasInvoice = $deal->issuedInvoice() !== null;
+        $credited = $deal->totalCredited();
+        $standingOrderRegistered = $type === 'recurring' && $deal->standingOrderItemIds() !== [];
+        $typeHints = ['card' => 'קישור לתשלום ללקוחה', 'recurring' => 'חיוב חודשי אוטומטי', 'bank_transfer' => 'רישום ידני + קבלה', 'check' => 'קבלה בעת פירעון'];
+    @endphp
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>תשלומים</h3>
 
         <x-business-error-banner :message="$paymentError" />
 
-        <div class="cols2" style="margin-bottom:var(--sp-lg)">
-            <div class="field"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>
-            <div class="field"><div class="k">שולם עד כה</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
-            @if (($credited = $deal->totalCredited()) > 0)
-                <div class="field"><div class="k">זוכה (חשבונית זיכוי)</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
+        <div class="pay-summary">
+            <div class="cell"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>
+            @if ($credited > 0)
+                <div class="cell"><div class="k">זוכה</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
             @endif
-        </div>
-        <div class="field" style="margin-bottom:var(--sp-lg)">
-            <div class="k">יתרת חוב</div>
-            <div class="v ltr-num" style="{{ $this->outstandingBalance > 0 ? 'color:var(--color-error)' : 'color:var(--color-success)' }}">₪{{ number_format($this->outstandingBalance, 0) }}</div>
+            <div class="cell"><div class="k">שולם</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
+            <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>
 
-        @if (in_array($deal->paymentMethod?->type, ['card', 'recurring'], true))
-            {{-- The customer pays by herself on a SUMIT payment page; SUMIT issues and emails the receipt. --}}
-            <h4 style="margin:0 0 var(--sp-sm)">שליחת קישור לתשלום</h4>
-            @if ($deal->paymentMethod?->type === 'recurring' && $deal->standingOrderItemIds() === [])
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:-4px 0 var(--sp-sm)">תשלום ראשון בקישור שומר את כרטיס הלקוחה ב-SUMIT — אחריו אפשר לרשום את הוראת הקבע, שתתחיל מהחודש הבא.</p>
-            @endif
-            <form wire:submit="sendPaymentLink" class="form-grid" style="margin-bottom:var(--sp-md)">
-                <div>
-                    <label for="linkAmount">סכום לתשלום</label>
-                    <input type="text" id="linkAmount" wire:model="linkAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                    @error('linkAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="linkEmail">נשלח אל</label>
-                    @if ($this->linkRecipients->isNotEmpty())
-                        <select id="linkEmail" wire:model="linkEmail">
-                            @foreach ($this->linkRecipients as $contact)
-                                <option value="{{ $contact->email }}">{{ $contact->name }} — {{ $contact->email }}</option>
-                            @endforeach
-                        </select>
+        @if ($this->outstandingBalance > 0)
+            {{-- 1. סוג תשלום --}}
+            <p class="pay-step"><span class="n">1</span> אמצעי תשלום
+                @if ($locked)<span class="scope-pill" title="אמצעי התשלום ננעל לאחר שהתקבל תשלום בפועל">נעול — כבר התקבל תשלום</span>@endif
+            </p>
+            <div class="pay-types" role="radiogroup" aria-label="אמצעי תשלום">
+                @foreach ($this->activePaymentMethods as $option)
+                    <button type="button" role="radio" aria-checked="{{ $option->id === $deal->payment_method_id ? 'true' : 'false' }}"
+                        class="pay-type {{ $option->id === $deal->payment_method_id ? 'selected' : '' }}"
+                        wire:click="selectPaymentMethod({{ $option->id }})"
+                        @disabled($locked)>
+                        <span class="label">{{ $option->name }}</span>
+                        <span class="hint">{{ $typeHints[$option->type] ?? 'רישום ידני + קבלה' }}</span>
+                    </button>
+                @endforeach
+            </div>
+
+            {{-- 2. סכום ופעולה --}}
+            @if ($method)
+                <p class="pay-step"><span class="n">2</span>
+                    {{ match ($type) { 'card' => 'סכום ושליחת קישור לתשלום', 'recurring' => 'הקמת הוראת קבע', 'check' => "רישום צ'ק", default => 'רישום התשלום והפקת קבלה' } }}
+                </p>
+                <div class="pay-panel">
+                    @if ($type === 'recurring' && $standingOrderRegistered)
+                        <div class="actions">
+                            <span class="badge badge-success">הוראת קבע רשומה ב-SUMIT</span>
+                            <p class="note">כל חיוב חודשי נרשם כאן אוטומטית, והקבלה נשלחת ללקוחה מ-SUMIT.</p>
+                        </div>
+                    @elseif ($type === 'recurring' && $deal->subscription && ! $deal->subscription->isActive())
+                        <p class="note">המנוי של העסקה בוטל — לא מקימים עבורו הוראת קבע. ניתן לבחור אמצעי תשלום אחר לגביית היתרה.</p>
+                    @elseif (in_array($type, ['card', 'recurring'], true))
+                        <form wire:submit="sendPaymentLink" class="form-grid">
+                            <div>
+                                <label for="linkAmount">{{ $type === 'recurring' ? 'סכום חודשי' : 'סכום לתשלום' }}</label>
+                                <input type="text" id="linkAmount" wire:model.live.debounce.400ms="linkAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                                @error('linkAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div>
+                                <label for="linkEmail">שליחה אל</label>
+                                @if ($this->linkRecipients->isNotEmpty())
+                                    <select id="linkEmail" wire:model="linkEmail">
+                                        @foreach ($this->linkRecipients as $contact)
+                                            <option value="{{ $contact->email }}">{{ $contact->name }} — {{ $contact->email }}</option>
+                                        @endforeach
+                                    </select>
+                                @else
+                                    <input type="text" id="linkEmail" wire:model="linkEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל">
+                                @endif
+                                @error('linkEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            @if ($type === 'recurring')
+                                @php $plan = $this->standingOrderPlan; @endphp
+                                <p class="full note">
+                                    ₪{{ number_format($plan['monthly'], 0) }} × {{ $plan['months'] }} חודשים.
+                                    הלקוחה משלמת בקישור את החודש הראשון (הכרטיס נשמר ב-SUMIT), ומהחודש הבא החיוב אוטומטי מאותו כרטיס. על כל תשלום נשלחת קבלה.
+                                </p>
+                            @else
+                                <p class="full note">הלקוחה משלמת בכרטיס אשראי בדף המאובטח של SUMIT. התשלום נרשם כאן והקבלה נשלחת אליה אוטומטית.</p>
+                            @endif
+                            <div class="full actions">
+                                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="sendPaymentLink" @disabled(! $hasInvoice)>
+                                    {{ $type === 'recurring' ? 'שליחת קישור להקמת הוראת קבע' : 'שליחת קישור לתשלום' }}
+                                </button>
+                                @unless ($hasInvoice)
+                                    <span class="note">יש להפיק חשבונית לעסקה תחילה.</span>
+                                @endunless
+                            </div>
+                        </form>
+
+                        {{-- Without a link: the card is already saved on the customer's SUMIT card. --}}
+                        <details class="pay-secondary">
+                            <summary class="note" style="cursor:pointer">{{ $type === 'recurring' ? 'הכרטיס כבר שמור ב-SUMIT? רישום הוראת הקבע ישירות' : 'הכרטיס כבר שמור ב-SUMIT? חיוב ישיר' }}</summary>
+                            @if ($type === 'recurring')
+                                @php $plan = $this->standingOrderPlan; @endphp
+                                <div class="actions" style="margin-top:var(--sp-sm)">
+                                    <button type="button" wire:click="registerStandingOrder"
+                                        wire:confirm="הוראת קבע מהכרטיס השמור של הלקוחה ב-SUMIT: ₪{{ number_format($plan['monthly'], 2) }} × {{ $plan['months'] }} חודשים, {{ $plan['startDate'] ? 'החל מ-'.\Illuminate\Support\Carbon::parse($plan['startDate'])->format('d/m/Y') : 'החיוב הראשון מיד' }}. להמשיך?"
+                                        wire:loading.attr="disabled" class="btn btn-secondary" @disabled($deal->subscription && ! $deal->subscription->isActive())>רישום הוראת קבע מהכרטיס השמור</button>
+                                </div>
+                            @else
+                                <form wire:submit="chargeCard" class="actions" style="margin-top:var(--sp-sm)">
+                                    <input type="text" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪ סכום" style="max-width:160px" aria-label="סכום לחיוב">
+                                    <button type="submit" class="btn btn-secondary" wire:confirm="לחייב עכשיו את הכרטיס השמור של הלקוחה?">חיוב הכרטיס השמור</button>
+                                    @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption)">{{ $message }}</div> @enderror
+                                </form>
+                            @endif
+                        </details>
                     @else
-                        <input type="text" id="linkEmail" wire:model="linkEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל">
+                        <form wire:submit="recordPayment" class="form-grid">
+                            <div>
+                                <label for="paymentAmount">סכום שהתקבל</label>
+                                <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪ {{ number_format($this->outstandingBalance, 0) }}">
+                                @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div>
+                                <label for="paymentDate">תאריך קבלה</label>
+                                <input type="date" id="paymentDate" wire:model="paymentDate">
+                            </div>
+                            <p class="full note">
+                                @if ($type === 'check')
+                                    הצ'ק נרשם כ"טרם נפרע". כשיסומן כנפרע בטבלה למטה, הקבלה תופק ותישלח ללקוחה.
+                                @elseif ($hasInvoice)
+                                    הקבלה תופק ותישלח ללקוחה מיד עם הרישום.
+                                @else
+                                    לעסקה טרם הופקה חשבונית — התשלום יירשם, והקבלה תופק אחרי הפקת החשבונית.
+                                @endif
+                            </p>
+                            <div class="full actions">
+                                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="recordPayment">
+                                    {{ $type === 'check' ? "רישום הצ'ק" : ($hasInvoice ? 'רישום תשלום והפקת קבלה' : 'רישום תשלום') }}
+                                </button>
+                            </div>
+                        </form>
                     @endif
-                    @error('linkEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </div>
-                <div class="full">
-                    <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="sendPaymentLink" @disabled($deal->issuedInvoice() === null || $this->outstandingBalance <= 0)>שליחת קישור לתשלום</button>
-                    @if ($deal->issuedInvoice() === null)
-                        <span class="text-text-secondary" style="font-size:var(--fs-caption); margin-inline-start:8px">יש להפיק חשבונית תחילה.</span>
-                    @endif
-                </div>
-            </form>
-
-            @if ($this->paymentLinks->isNotEmpty())
-                <div class="table-scroll" style="margin-bottom:var(--sp-lg)">
-                <table>
-                    <thead><tr><th>נוצר</th><th>סכום</th><th>נשלח אל</th><th>סטטוס</th><th>בתוקף עד</th><th></th></tr></thead>
-                    <tbody>
-                        @foreach ($this->paymentLinks as $link)
-                            <tr wire:key="paylink-{{ $link->id }}">
-                                <td class="ltr-num">{{ $link->created_at->format('d/m/Y H:i') }}</td>
-                                <td class="ltr-num">₪{{ number_format((float) $link->amount, 0) }}</td>
-                                <td class="ltr-num">{{ $link->sent_to_email ?? '—' }}</td>
-                                <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
-                                <td class="ltr-num">{{ $link->expires_at?->format('d/m/Y') }}</td>
-                                <td style="display:flex; gap:6px">
-                                    @unless ($link->isPaid() || $link->isExpired())
-                                        <button type="button" class="btn btn-ghost btn-sm" x-data x-on:click="navigator.clipboard.writeText(@js($link->url)); $el.textContent = 'הועתק'">העתקת קישור</button>
-                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="resendPaymentLink({{ $link->id }})">שליחה חוזרת</button>
-                                    @endunless
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-                </div>
+            @else
+                <p class="pay-note" style="margin-bottom:var(--sp-lg)">בחרו אמצעי תשלום כדי להמשיך.</p>
             @endif
-
         @endif
 
-        @if ($deal->paymentMethod?->type === 'card')
-            {{-- Charging a card already saved on the customer's SUMIT card, without her. --}}
-            <details style="margin-bottom:var(--sp-lg)">
-                <summary class="text-text-secondary" style="cursor:pointer; font-size:var(--fs-small)">חיוב כרטיס שכבר שמור אצל הלקוחה ב-SUMIT</summary>
-                <form wire:submit="chargeCard" class="form-grid" style="margin-top:var(--sp-sm)">
-                    <div>
-                        <label for="paymentAmount">סכום לסליקה</label>
-                        <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                        @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div class="full"><button type="submit" class="btn btn-secondary" wire:confirm="לחייב עכשיו את הכרטיס השמור של הלקוחה?">חיוב הכרטיס השמור</button></div>
-                </form>
-            </details>
-        @else
-            <form wire:submit="recordPayment" class="form-grid" style="margin-bottom:var(--sp-lg)">
-                <div>
-                    <label for="paymentAmount">סכום שהתקבל</label>
-                    <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                    @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="paymentDate">תאריך קבלה (ברירת מחדל: היום)</label>
-                    <input type="date" id="paymentDate" wire:model="paymentDate">
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary" @disabled(! $deal->payment_method_id)>רישום תשלום</button></div>
-                @unless ($deal->payment_method_id)
-                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">יש לבחור אמצעי תשלום בפרטי העסקה לפני רישום תשלום.</p>
-                @endunless
-            </form>
-        @endif
-
-        @if ($deal->paymentMethod?->type === 'recurring')
-            <div style="display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap; margin-bottom:var(--sp-lg)">
-                @if ($deal->standingOrderItemIds() !== [])
-                    <span class="badge badge-success">הוראת קבע רשומה ב-SUMIT</span>
-                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">כל חיוב חודשי נרשם כאן אוטומטית, והקבלה נשלחת ללקוחה מ-SUMIT.</span>
-                @else
-                    @php $plan = $deal->standingOrderPlan(); @endphp
-                    <button type="button" wire:click="registerStandingOrder"
-                        wire:confirm="הוראת קבע מהכרטיס השמור של הלקוחה ב-SUMIT: ₪{{ number_format($plan['monthly'], 2) }} × {{ $plan['months'] }} חודשים, {{ $plan['startDate'] ? 'החל מ-'.\Illuminate\Support\Carbon::parse($plan['startDate'])->format('d/m/Y') : 'החיוב הראשון מיד' }}. להמשיך?"
-                        wire:loading.attr="disabled" class="btn btn-secondary" @disabled($this->outstandingBalance <= 0 || ($deal->subscription && ! $deal->subscription->isActive()))>רישום הוראת קבע מול Summit</button>
-                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">₪{{ number_format($plan['monthly'], 0) }} × {{ $plan['months'] }} חודשים{{ $plan['startDate'] ? ', מהחודש הבא' : '' }}</span>
-                @endif
+        @if ($this->paymentLinks->isNotEmpty())
+            <h4 style="margin:0 0 var(--sp-sm)">קישורים שנשלחו</h4>
+            <div class="table-scroll" style="margin-bottom:var(--sp-lg)">
+            <table>
+                <thead><tr><th>נוצר</th><th>סוג</th><th>סכום</th><th>נשלח אל</th><th>סטטוס</th><th>בתוקף עד</th><th></th></tr></thead>
+                <tbody>
+                    @foreach ($this->paymentLinks as $link)
+                        <tr wire:key="paylink-{{ $link->id }}">
+                            <td class="ltr-num">{{ $link->created_at->format('d/m/Y H:i') }}</td>
+                            <td>{{ $link->isStandingOrder() ? 'הקמת הוראת קבע' : 'תשלום' }}</td>
+                            <td class="ltr-num">₪{{ number_format((float) $link->amount, 0) }}</td>
+                            <td class="ltr-num">{{ $link->sent_to_email ?? '—' }}</td>
+                            <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
+                            <td class="ltr-num">{{ $link->expires_at?->format('d/m/Y') }}</td>
+                            <td style="display:flex; gap:6px">
+                                @unless ($link->isPaid() || $link->isExpired())
+                                    <button type="button" class="btn btn-ghost btn-sm" x-data x-on:click="navigator.clipboard.writeText(@js($link->url)); $el.textContent = 'הועתק'">העתקת קישור</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" wire:click="resendPaymentLink({{ $link->id }})">שליחה חוזרת</button>
+                                @endunless
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
             </div>
         @endif
 
-        <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg)">
-            @if ($this->beforePaymentReceipt)
-                <span class="badge badge-info">הופקה קבלה לפני תשלום <span class="ltr-num">{{ $this->beforePaymentReceipt->issued_at?->format('d/m/Y') }}</span></span>
-                <span class="badge {{ $this->outstandingBalance > 0 ? 'badge-warning' : 'badge-success' }}">{{ $this->outstandingBalance > 0 ? 'ממתינה לתשלום' : 'התשלום התקבל' }}</span>
-            @else
-                <button type="button" wire:click="issueReceipt(null)" wire:confirm="קבלה לפני תשלום מופקת על מלוא סכום החשבונית ומכסה את כל תשלומי העסקה — להמשיך?" class="btn btn-secondary" @disabled($deal->issuedInvoice() === null || $this->payments->contains(fn ($p) => $p->receipt))>הפקת קבלה לפני תשלום</button>
-            @endif
-        </div>
-
+        <h4 style="margin:0 0 var(--sp-sm)">תשלומים שהתקבלו</h4>
         @if ($this->payments->isEmpty())
             <div class="empty-state">טרם נרשמו תשלומים לעסקה זו.</div>
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th><th></th></tr></thead>
+                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th></tr></thead>
                 <tbody>
                     @foreach ($this->payments as $payment)
-                        <tr>
+                        <tr wire:key="payment-{{ $payment->id }}">
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
                             <td>{{ $payment->paymentMethod?->name }}</td>
@@ -896,7 +1013,7 @@ class extends Component
                                         <span class="badge badge-success">נפרע <span class="ltr-num">{{ $payment->cleared_date->format('d/m/Y') }}</span></span>
                                     @else
                                         <span class="badge badge-warning">טרם נפרע</span>
-                                        <button type="button" wire:click="markCheckCleared({{ $payment->id }})" class="btn btn-ghost btn-sm">סימון כנפרע</button>
+                                        <button type="button" wire:click="markCheckCleared({{ $payment->id }})" wire:confirm="לסמן את הצ'ק כנפרע ולהפיק קבלה?" class="btn btn-ghost btn-sm">סימון כנפרע</button>
                                     @endif
                                 @else
                                     —
@@ -907,16 +1024,28 @@ class extends Component
                                     <span class="badge badge-info">הופקה קבלה</span>
                                 @elseif ($this->beforePaymentReceipt)
                                     <span class="text-text-secondary" style="font-size:var(--fs-caption)">בקבלה לפני תשלום</span>
+                                @elseif ($payment->check_status && ! $payment->cleared_date)
+                                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">אחרי פירעון</span>
                                 @else
-                                    <button type="button" wire:click="issueReceipt({{ $payment->id }})" class="btn btn-ghost btn-sm" @disabled($payment->check_status && ! $payment->cleared_date)>הפקת קבלה</button>
+                                    <button type="button" wire:click="issueReceipt({{ $payment->id }})" class="btn btn-ghost btn-sm" @disabled(! $hasInvoice)>הפקת קבלה</button>
                                 @endif
                             </td>
-                            <td></td>
                         </tr>
                     @endforeach
                 </tbody>
             </table>
             </div>
         @endif
+
+        {{-- FR-4.24/FR-4.25 — the exception, kept out of the main flow. --}}
+        <div class="pay-secondary">
+            @if ($this->beforePaymentReceipt)
+                <span class="badge badge-info">הופקה קבלה לפני תשלום <span class="ltr-num">{{ $this->beforePaymentReceipt->issued_at?->format('d/m/Y') }}</span></span>
+                <span class="badge {{ $this->outstandingBalance > 0 ? 'badge-warning' : 'badge-success' }}">{{ $this->outstandingBalance > 0 ? 'ממתינה לתשלום' : 'התשלום התקבל' }}</span>
+            @else
+                <button type="button" wire:click="issueReceipt(null)" wire:confirm="קבלה לפני תשלום מופקת על מלוא סכום החשבונית ומכסה את כל תשלומי העסקה — להמשיך?" class="btn btn-ghost btn-sm" @disabled(! $hasInvoice || $this->payments->contains(fn ($p) => $p->receipt))>הפקת קבלה לפני תשלום</button>
+                <span class="text-text-secondary" style="font-size:var(--fs-caption)">למקרים חריגים בלבד — קבלה על מלוא החשבונית לפני שהכסף התקבל.</span>
+            @endif
+        </div>
     </div>
 </div>

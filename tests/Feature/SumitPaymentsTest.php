@@ -318,12 +318,68 @@ class SumitPaymentsTest extends TestCase
         Http::assertNotSent(fn ($request) => str_ends_with($request->url(), '/billing/recurring/charge/'));
     }
 
-    public function test_a_standing_order_deal_can_pay_its_first_month_by_link(): void
+    public function test_a_standing_order_link_takes_the_first_month_then_registers_the_rest(): void
+    {
+        $this->recurringResponse = ['RecurringCustomerItemIDs' => [90]]; // starts next month: nothing charged now
+        $this->fakeSumit();
+        $deal = $this->standingOrderDeal(); // ₪400, no subscription
+        $link = PaymentLink::createFor($deal, 100, app(ExternalOperationRunner::class), app(SummitClient::class), PaymentLink::PURPOSE_STANDING_ORDER);
+        $this->fakeSumit([$this->sumitPayment($link, 70)]);
+
+        $this->get(route('payment-links.return', $link->token).'?OG-PaymentID=70')->assertOk()->assertSee('התשלום התקבל');
+
+        $this->assertSame(['90'], $deal->fresh()->standingOrderItemIds());
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/billing/recurring/charge/')
+            && $request['Items'][0]['UnitPrice'] == 100
+            && $request['Items'][0]['Recurrence'] === 3
+            && $request['Items'][0]['Date_Start'] === now()->addMonthNoOverflow()->toDateString());
+
+        // A card deal gets no standing-order link, and a registered one gets no second link.
+        $this->assertRefused(fn () => PaymentLink::createFor($deal->fresh(), 100, app(ExternalOperationRunner::class), app(SummitClient::class), PaymentLink::PURPOSE_STANDING_ORDER));
+        $this->assertRefused(fn () => PaymentLink::createFor($this->cardDealWithInvoice(), 100, app(ExternalOperationRunner::class), app(SummitClient::class), PaymentLink::PURPOSE_STANDING_ORDER));
+    }
+
+    // ----- the deal screen's payments box -----
+
+    public function test_recording_a_bank_transfer_issues_its_receipt(): void
     {
         $this->fakeSumit();
-        $link = $this->newLink($this->standingOrderDeal(), 40);
+        $deal = $this->cardDealWithInvoice();
+        $this->actingAsOwner();
+        $transfer = PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
 
-        $this->assertSame(PaymentLink::STATUS_PENDING, $link->status);
+        Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $transfer->id)
+            ->set('paymentAmount', '150')
+            ->call('recordPayment')
+            ->assertSet('paymentError', null)
+            ->assertDispatched('notify', type: 'success');
+
+        $payment = $deal->payments()->sole();
+        $this->assertSame($transfer->id, $payment->payment_method_id);
+        $this->assertSame(1, Receipt::where('payment_id', $payment->id)->count());
+    }
+
+    public function test_a_checks_receipt_is_issued_when_it_clears_and_the_type_locks_after_a_payment(): void
+    {
+        $this->fakeSumit();
+        $deal = $this->cardDealWithInvoice();
+        $this->actingAsOwner();
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+
+        $component = Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $check->id)
+            ->set('paymentAmount', '200')
+            ->call('recordPayment');
+        $payment = $deal->payments()->sole();
+        $this->assertSame(0, Receipt::count());
+
+        $component->call('markCheckCleared', $payment->id);
+        $this->assertSame(1, Receipt::where('payment_id', $payment->id)->count());
+
+        $card = PaymentMethod::where('type', 'card')->firstOrFail();
+        $component->call('selectPaymentMethod', $card->id)->assertSet('paymentError', fn ($e) => filled($e));
+        $this->assertSame($check->id, $deal->fresh()->payment_method_id);
     }
 
     // ----- fixtures -----

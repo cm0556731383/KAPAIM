@@ -27,7 +27,7 @@ use RuntimeException;
  * (Deal::recordSumitPayment()).
  */
 #[Fillable([
-    'deal_id', 'payment_id', 'created_by_user_id', 'token', 'amount', 'url', 'status',
+    'deal_id', 'payment_id', 'created_by_user_id', 'token', 'amount', 'purpose', 'url', 'status',
     'sent_to_email', 'sent_at', 'expires_at', 'paid_at',
 ])]
 class PaymentLink extends Model
@@ -35,6 +35,17 @@ class PaymentLink extends Model
     public const STATUS_PENDING = 'pending';
 
     public const STATUS_PAID = 'paid';
+
+    /** A one-off payment. */
+    public const PURPOSE_PAYMENT = 'payment';
+
+    /**
+     * The first month of a standing order: SUMIT's payment page takes one-off
+     * payments only, so she pays the first month there — which saves her card
+     * in SUMIT — and the standing order for the rest of the balance, at the
+     * same monthly amount, is registered on that card once it's paid.
+     */
+    public const PURPOSE_STANDING_ORDER = 'standing_order';
 
     /** SUMIT's maximum (10 days). */
     public const EXPIRATION_HOURS = 240;
@@ -70,6 +81,11 @@ class PaymentLink extends Model
         return preg_match('/^kapaim-paylink-(\d+)$/', (string) $identifier, $m) ? (int) $m[1] : null;
     }
 
+    public function isStandingOrder(): bool
+    {
+        return $this->purpose === self::PURPOSE_STANDING_ORDER;
+    }
+
     public function isPaid(): bool
     {
         return $this->status === self::STATUS_PAID;
@@ -94,14 +110,24 @@ class PaymentLink extends Model
      *
      * @throws RuntimeException on a business-rule violation or a SUMIT failure.
      */
-    public static function createFor(Deal $deal, float $amount, ExternalOperationRunner $runner, SummitClient $summit): self
+    public static function createFor(Deal $deal, float $amount, ExternalOperationRunner $runner, SummitClient $summit, string $purpose = self::PURPOSE_PAYMENT): self
     {
         $deal->loadMissing('paymentMethod');
 
-        // A standing-order deal too: its first payment through the page also
-        // saves her card in SUMIT, for the standing order that follows.
-        if (! in_array($deal->paymentMethod?->type, ['card', 'recurring'], true)) {
-            throw new RuntimeException('קישור לתשלום נשלח רק לעסקה שאמצעי התשלום שלה הוא אשראי או הוראת קבע.');
+        if ($purpose === self::PURPOSE_STANDING_ORDER) {
+            if ($deal->paymentMethod?->type !== 'recurring') {
+                throw new RuntimeException('קישור להקמת הוראת קבע נשלח רק לעסקה שאמצעי התשלום שלה הוא הוראת קבע.');
+            }
+
+            if ($deal->standingOrderItemIds() !== []) {
+                throw new RuntimeException('לעסקה זו כבר רשומה הוראת קבע ב-SUMIT.');
+            }
+
+            if ($deal->subscription && ! $deal->subscription->isActive()) {
+                throw new RuntimeException('המנוי של העסקה אינו פעיל — לא ניתן להקים עבורו הוראת קבע.');
+            }
+        } elseif ($deal->paymentMethod?->type !== 'card') {
+            throw new RuntimeException('קישור לתשלום נשלח רק לעסקה שאמצעי התשלום שלה הוא אשראי.');
         }
 
         if (! $deal->issuedInvoice()) {
@@ -125,6 +151,7 @@ class PaymentLink extends Model
             'created_by_user_id' => auth()->id(),
             'token' => Str::random(40),
             'amount' => $amount,
+            'purpose' => $purpose,
             'status' => self::STATUS_PENDING,
             'expires_at' => now()->addHours(self::EXPIRATION_HOURS),
         ]);
@@ -162,12 +189,23 @@ class PaymentLink extends Model
         $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
         $amount = number_format((float) $this->amount, 2);
 
+        if ($this->isStandingOrder()) {
+            $plan = $deal->standingOrderPlan((float) $this->amount);
+            $subject = "הקמת הוראת קבע — {$item}";
+            $intro = "להקמת הוראת קבע עבור \"{$item}\": ₪{$amount} לחודש, {$plan['months']} חודשים. "
+                ."התשלום הראשון מתבצע עכשיו בכרטיס אשראי בדף התשלום המאובטח של SUMIT, והתשלומים הבאים יחויבו אוטומטית מאותו כרטיס בכל חודש. "
+                .'על כל תשלום תישלח אלייך קבלה במייל.';
+        } else {
+            $subject = "קישור לתשלום — {$item}";
+            $intro = "לתשלום עבור \"{$item}\" בסך ₪{$amount}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.";
+        }
+
         $operation = $runner->run('smove', 'payment_link_send', 'app_action',
             fn () => $smove->sendPaymentLinkEmail(
                 $email,
                 $name,
-                "קישור לתשלום — {$item}",
-                "לתשלום עבור \"{$item}\" בסך ₪{$amount}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.",
+                $subject,
+                $intro,
                 $this->url,
                 'הקישור בתוקף עד '.$this->expires_at->format('d/m/Y').'.',
             ),
@@ -207,8 +245,32 @@ class PaymentLink extends Model
                 'user' => null,
                 'metadata' => ['amount' => (float) $payment->amount, 'payment_id' => $payment->id, 'payment_link_id' => $this->id],
             ]);
+
+            if ($this->isStandingOrder()) {
+                $this->registerStandingOrder($runner);
+            }
         }
 
         return true;
+    }
+
+    /**
+     * The first month is paid and her card is saved in SUMIT: registers the
+     * standing order for the rest of the balance at the same monthly amount,
+     * from next month. A failure is recorded by the runner (the deal screen
+     * still offers registering it from the saved card by hand).
+     */
+    private function registerStandingOrder(ExternalOperationRunner $runner): void
+    {
+        $deal = $this->deal->fresh();
+
+        if ($deal->standingOrderItemIds() !== [] || $deal->outstandingBalance() <= 0) {
+            return;
+        }
+
+        try {
+            $deal->registerStandingOrderWithSummit($runner, app(SummitClient::class), (float) $this->amount);
+        } catch (RuntimeException) {
+        }
     }
 }

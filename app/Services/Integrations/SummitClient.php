@@ -298,7 +298,7 @@ class SummitClient
     /**
      * Explicit user-triggered action — Deal::registerStandingOrderWithSummit().
      * Sets up a monthly recurring charge on the customer's saved SUMIT payment
-     * method, per Deal::standingOrderPlan().
+     * method, per $plan.
      *
      * SUMIT charges the first month right away (unless the plan starts next
      * month, when the deal was already paid in part) and every later month on
@@ -307,12 +307,11 @@ class SummitClient
      * DocumentID, and the RecurringCustomerItemIDs that later collections
      * carry (how the payment sync finds this deal's months).
      */
-    public function registerStandingOrder(Deal $deal): array
+    /** @param array{monthly: float, months: int, startDate: ?string} $plan Deal::standingOrderPlan() */
+    public function registerStandingOrder(Deal $deal, array $plan): array
     {
         $entity = $this->entityForDeal($deal);
-        $deal->loadMissing('customer.school', 'customer.contacts', 'subscription');
-
-        $plan = $deal->standingOrderPlan();
+        $deal->loadMissing('customer.school', 'customer.contacts');
 
         $data = $this->dataOrFail($this->post($entity, '/billing/recurring/charge/', [
             'Customer' => $this->customer($deal),

@@ -602,7 +602,7 @@ class Deal extends Model
      *                          standing order, one is already registered, or
      *                          SUMIT fails the request.
      */
-    public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit): ?Payment
+    public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit, ?float $monthly = null): ?Payment
     {
         if ($this->paymentMethod?->type !== 'recurring') {
             throw new RuntimeException('רישום הוראת קבע מול Summit זמין רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
@@ -621,14 +621,14 @@ class Deal extends Model
         }
 
         $result = [];
-        $plan = $this->standingOrderPlan();
+        $plan = $this->standingOrderPlan($monthly);
 
         $operation = $runner->run(
             'summit',
             'standing_order_registered',
             'user_action',
-            function () use ($summit, &$result) {
-                $result = $summit->registerStandingOrder($this);
+            function () use ($summit, $plan, &$result) {
+                $result = $summit->registerStandingOrder($this, $plan);
 
                 return implode(',', (array) ($result['RecurringCustomerItemIDs'] ?? []));
             },
@@ -650,24 +650,24 @@ class Deal extends Model
     }
 
     /**
-     * What the standing order charges: the subscription's monthly payment for
-     * as many months as the balance still needs (all its deliveries when
-     * nothing was paid yet), or the whole balance once with no subscription.
-     * When the deal was already paid in part — typically the first month,
-     * paid through a payment link, which is also how the customer's card gets
-     * saved in SUMIT — it starts next month, so that month isn't charged twice.
+     * What the standing order charges: $monthly (or, by default, the
+     * subscription's monthly payment — the whole balance with no
+     * subscription) for as many months as the balance still needs. When the
+     * deal was already paid in part — typically the first month, paid through
+     * a standing-order payment link, which is also how the customer's card
+     * gets saved in SUMIT — it starts next month, so that month isn't charged
+     * twice.
      *
      * @return array{monthly: float, months: int, startDate: ?string}
      */
-    public function standingOrderPlan(): array
+    public function standingOrderPlan(?float $monthly = null): array
     {
         $balance = $this->outstandingBalance();
-        $subscription = $this->subscription;
-        $monthly = $subscription ? min($subscription->monthlyPayment(), $balance) : $balance;
+        $monthly = min($monthly ?? ($this->subscription?->monthlyPayment() ?? $balance), $balance);
 
         return [
             'monthly' => round($monthly, 2),
-            'months' => $subscription && $monthly > 0 ? max(1, (int) ceil(round($balance / $monthly, 2))) : 1,
+            'months' => $monthly > 0 ? max(1, (int) ceil(round($balance / $monthly, 2))) : 1,
             'startDate' => $this->payments()->exists() ? now()->addMonthNoOverflow()->toDateString() : null,
         ];
     }
