@@ -36,6 +36,13 @@ class PaymentLink extends Model
 
     public const STATUS_PAID = 'paid';
 
+    /**
+     * Withdrawn by the user (e.g. the customer paid by check instead). SUMIT
+     * has no API to close its payment page, so a payment that still comes
+     * through it is recorded as usual (complete()) — the money was taken.
+     */
+    public const STATUS_CANCELLED = 'cancelled';
+
     /** A one-off payment. */
     public const PURPOSE_PAYMENT = 'payment';
 
@@ -91,15 +98,31 @@ class PaymentLink extends Model
         return $this->status === self::STATUS_PAID;
     }
 
+    public function isCancelled(): bool
+    {
+        return $this->status === self::STATUS_CANCELLED;
+    }
+
     public function isExpired(): bool
     {
-        return ! $this->isPaid() && $this->expires_at?->isPast();
+        return ! $this->isPaid() && ! $this->isCancelled() && $this->expires_at?->isPast();
+    }
+
+    /** @throws RuntimeException when the link was already paid. */
+    public function cancel(): void
+    {
+        if ($this->isPaid()) {
+            throw new RuntimeException('הקישור כבר שולם — לא ניתן לבטל אותו.');
+        }
+
+        $this->update(['status' => self::STATUS_CANCELLED]);
     }
 
     public function statusLabel(): string
     {
         return match (true) {
             $this->isPaid() => 'שולם',
+            $this->isCancelled() => 'בוטל',
             $this->isExpired() => 'פג תוקף',
             default => 'ממתין לתשלום',
         };

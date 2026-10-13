@@ -613,8 +613,70 @@ class extends Component
      */
     private function warnIfPaymentLinkPending(): void
     {
-        if ($this->deal->paymentLinks()->where('status', PaymentLink::STATUS_PENDING)->exists()) {
-            $this->notifyWarning("לעסקה זו נשלח קישור לתשלום שעדיין לא שולם. העסקה תסומן כשולמה רק כשהצ'ק ייפרע ותופק עבורו קבלה, או כשהלקוחה תשלם בקישור. אם הצ'ק מחליף את הקישור, כדאי לבטל את הקישור ב-SUMIT כדי למנוע חיוב כפול.", sticky: true);
+        unset($this->doublePayment);
+
+        if ($this->doublePayment) {
+            $this->notifyWarning("לעסקה זו נשלח גם קישור לתשלום שעדיין לא שולם — יש סיכון לתשלום כפול. בתיבת התשלומים אפשר לבטל את הקישור או את הצ'ק.", sticky: true);
+        }
+    }
+
+    /**
+     * A check waiting to clear AND a payment link waiting to be paid on the
+     * same deal — the customer may pay twice. Shown with a choice of which
+     * to cancel for as long as both stand; the deal isn't "שולמה" until one
+     * of them is actually paid.
+     *
+     * @return ?array{links: \Illuminate\Support\Collection, checks: \Illuminate\Support\Collection}
+     */
+    #[Computed]
+    public function doublePayment(): ?array
+    {
+        $links = $this->deal->paymentLinks()->where('status', PaymentLink::STATUS_PENDING)->get()->reject->isExpired();
+        $checks = $this->deal->pendingChecks()->filter->isEditable();
+
+        return $links->isNotEmpty() && $checks->isNotEmpty() ? ['links' => $links, 'checks' => $checks] : null;
+    }
+
+    /** Double payment: the check replaces the link — the link is withdrawn. */
+    public function cancelPendingPaymentLinks(ActivityLogger $activityLogger): void
+    {
+        foreach ($this->doublePayment['links'] ?? [] as $link) {
+            $link->cancel();
+            $activityLogger->log('payment_link.cancelled', "בוטל קישור לתשלום בסך ₪".number_format((float) $link->amount, 0)." בעסקה #{$this->deal->id} (שולם בצ'ק)", [
+                'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id, 'metadata' => ['payment_link_id' => $link->id],
+            ]);
+        }
+
+        unset($this->paymentLinks, $this->doublePayment);
+        $this->notifySuccess("הקישור לתשלום בוטל — הלקוחה תשלם בצ'ק. אם היא כבר פתחה את דף התשלום, כדאי לעדכן אותה שאין לשלם בו.");
+    }
+
+    /** Double payment: the link replaces the check(s) — they're removed (logically, as any mistaken payment). */
+    public function cancelPendingChecks(ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+
+        foreach ($this->doublePayment['checks'] ?? [] as $payment) {
+            try {
+                $this->deal->deletePayment($this->deal->fresh()->version, $payment);
+            } catch (\RuntimeException $e) {
+                $this->paymentError = $e->getMessage();
+
+                break;
+            }
+
+            $activityLogger->log('payment.deleted', "בוטל צ'ק #{$payment->check_number} בסך ₪".number_format((float) $payment->amount, 0)." בעסקה #{$this->deal->id} (ישולם בקישור)", [
+                'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+                'metadata' => ['payment_id' => $payment->id, 'amount' => (float) $payment->amount],
+            ]);
+        }
+
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments, $this->doublePayment);
+
+        if (! $this->paymentError) {
+            $this->notifySuccess("הצ'ק בוטל — הלקוחה תשלם בקישור.");
         }
     }
 
@@ -749,8 +811,8 @@ class extends Component
 
         $link = $this->deal->paymentLinks()->findOrFail($linkId);
 
-        if ($link->isPaid() || $link->isExpired()) {
-            $this->paymentError = 'הקישור כבר '.($link->isPaid() ? 'שולם' : 'פג תוקפו').' — אין לשלוח אותו שוב.';
+        if ($link->isPaid() || $link->isExpired() || $link->isCancelled()) {
+            $this->paymentError = 'הקישור כבר '.($link->isPaid() ? 'שולם' : ($link->isCancelled() ? 'בוטל' : 'פג תוקפו')).' — אין לשלוח אותו שוב.';
 
             return;
         }
@@ -1146,6 +1208,20 @@ class extends Component
             <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>
 
+        @if ($double = $this->doublePayment)
+            <div class="card" style="border-color:var(--color-warning); background:var(--color-warning-bg); margin-bottom:var(--sp-lg)">
+                <strong>סיכון לתשלום כפול</strong>
+                <p style="margin:var(--sp-xs) 0 var(--sp-sm)">
+                    לעסקה נרשמו צ'קים שטרם נפרעו (₪{{ number_format($double['checks']->sum('amount'), 0) }}) וגם נשלח קישור לתשלום שעדיין לא שולם (₪{{ number_format($double['links']->sum('amount'), 0) }}).
+                    העסקה תסומן כשולמה רק כשאחד מהם ישולם בפועל. בחרו מה לבטל:
+                </p>
+                <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                    <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelPendingPaymentLinks" wire:confirm="לבטל את הקישור לתשלום? הלקוחה תשלם בצ'ק.">ביטול הקישור לתשלום</button>
+                    <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelPendingChecks" wire:confirm="לבטל את הצ'קים שטרם נפרעו? הלקוחה תשלם בקישור.">ביטול הצ'ק</button>
+                </div>
+            </div>
+        @endif
+
         @if ($this->outstandingBalance > 0)
             {{-- 1. סוג תשלום --}}
             <p class="pay-step"><span class="n">1</span> איך משלמים הפעם?</p>
@@ -1329,10 +1405,10 @@ class extends Component
                             <td>{{ $link->isStandingOrder() ? 'הקמת הוראת קבע' : 'תשלום' }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $link->amount, 0) }}</td>
                             <td class="ltr-num">{{ $link->sent_to_email ?? '—' }}</td>
-                            <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
+                            <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() || $link->isCancelled() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
                             <td class="ltr-num">{{ $link->expires_at?->format('d/m/Y') }}</td>
                             <td style="display:flex; gap:6px">
-                                @unless ($link->isPaid() || $link->isExpired())
+                                @unless ($link->isPaid() || $link->isExpired() || $link->isCancelled())
                                     <button type="button" class="btn btn-ghost btn-sm" x-data x-on:click="navigator.clipboard.writeText(@js($link->url)); $el.textContent = 'הועתק'">העתקת קישור</button>
                                     <button type="button" class="btn btn-ghost btn-sm" wire:click="resendPaymentLink({{ $link->id }})">שליחה חוזרת</button>
                                 @endunless

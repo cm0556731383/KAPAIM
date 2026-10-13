@@ -450,6 +450,64 @@ class SumitPaymentsTest extends TestCase
         Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertSee('קישור תשלום');
     }
 
+    public function test_double_payment_cancelling_the_link_leaves_only_the_check(): void
+    {
+        [$deal, $link] = $this->dealWithCheckAndPendingLink();
+
+        $component = Livewire::test('deal-detail', ['deal' => $deal]);
+        $this->assertNotNull($component->instance()->doublePayment);
+        $component->assertSee('סיכון לתשלום כפול')->call('cancelPendingPaymentLinks');
+
+        $this->assertSame('cancelled', $link->fresh()->status);
+        $this->assertSame(1, $deal->payments()->count());
+        $this->assertNotSame('שולמה', $deal->fresh()->status->name);
+        $component->assertDontSee('סיכון לתשלום כפול');
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'payment_link.cancelled', 'deal_id' => $deal->id]);
+
+        Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertDontSee('קישור תשלום ·')->assertSee('הגיע מועד הפירעון');
+    }
+
+    public function test_double_payment_cancelling_the_check_leaves_only_the_link(): void
+    {
+        [$deal, $link] = $this->dealWithCheckAndPendingLink();
+
+        Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('cancelPendingChecks')
+            ->assertSet('paymentError', null)
+            ->assertDontSee('סיכון לתשלום כפול');
+
+        $this->assertSame(0, $deal->payments()->count());
+        $this->assertSame('pending', $link->fresh()->status);
+        $this->assertNotSame('שולמה', $deal->fresh()->status->name);
+
+        Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertSee('קישור תשלום ·')->assertSee("אין כרגע צ'קים הממתינים לפירעון", false);
+    }
+
+    public function test_a_cancelled_payment_link_cannot_be_resent(): void
+    {
+        [$deal, $link] = $this->dealWithCheckAndPendingLink();
+        $link->cancel();
+
+        Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('resendPaymentLink', $link->id)
+            ->assertSet('paymentError', 'הקישור כבר בוטל — אין לשלוח אותו שוב.');
+    }
+
+    /** @return array{0: Deal, 1: \App\Models\PaymentLink} */
+    private function dealWithCheckAndPendingLink(): array
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $this->actingAsOwner();
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        $deal->recordPayment($deal->version, 400, null, $check->id, '55', now()->toDateString());
+        $link = \App\Models\PaymentLink::create([
+            'deal_id' => $deal->id, 'token' => str_repeat('c', 40), 'amount' => 400, 'purpose' => 'payment',
+            'url' => 'https://pay.example.com/z', 'status' => 'pending', 'expires_at' => now()->addDay(),
+        ]);
+
+        return [$deal->fresh(), $link];
+    }
+
     // ----- checks -----
 
     public function test_several_checks_are_recorded_with_numbers_and_due_dates_and_no_receipt_yet(): void
