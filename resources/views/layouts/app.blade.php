@@ -170,7 +170,6 @@
         <div class="sidebar-scroll">
             <nav>
                 <a href="{{ url('/') }}" class="{{ request()->is('/') ? 'active' : '' }}"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
-                <a href="{{ route('search') }}" class="{{ request()->routeIs('search') ? 'active' : '' }}"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
                 <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
                 <a href="{{ route('customers') }}" class="{{ request()->routeIs('customers') || request()->routeIs('customer-detail') ? 'active' : '' }}"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
                 <a href="{{ route('collections') }}" class="{{ request()->routeIs('collections') ? 'active' : '' }}"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>
@@ -183,6 +182,7 @@
                 <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
                 <a href="{{ route('users-roles') }}" class="{{ request()->routeIs('users-roles') ? 'active' : '' }}"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
                 <a href="{{ route('activity-log') }}" class="{{ request()->routeIs('activity-log') ? 'active' : '' }}"><svg><use href="#icon-activity"></use></svg>יומן פעילות</a>
+                <a href="{{ route('search') }}" class="{{ request()->routeIs('search') ? 'active' : '' }}"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
             </nav>
         </div>
     </aside>
