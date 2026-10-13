@@ -101,7 +101,8 @@ h3 { font-family: var(--font-body); font-weight: 600; font-size: var(--fs-h3); }
 /* Numbers/dates/currency stay LTR inside RTL flow */
 .ltr-num { unicode-bidi: isolate; direction: ltr; display: inline-block; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* display:inline-block above is for a <span> inside RTL prose — on a <td> (how every table uses this class) it breaks the row/column grid, so keep it a real cell. */
-td.ltr-num { display: table-cell; }
+/* direction:ltr would also flip text-align:start to the left, off its right-aligned (RTL) header. */
+td.ltr-num { display: table-cell; text-align: right; }
 
 /* ===== Components ===== */
 .btn {

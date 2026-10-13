@@ -1169,7 +1169,7 @@ class extends Component
                             <td class="ltr-num">{{ $document->sent_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->received_at?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $document->signed_at?->format('d/m/Y') ?? '—' }}</td>
-                            <td style="display:flex; gap:6px">
+                            <td style="white-space:nowrap">
                                 <a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a>
                                 @if ($document->isDeletableDraft())
                                     <button type="button" wire:click="deleteDocument({{ $document->id }})" wire:confirm="למחוק את הטיוטה?" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
@@ -1440,7 +1440,7 @@ class extends Component
                             <td class="ltr-num">{{ $link->sent_to_email ?? '—' }}</td>
                             <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() || $link->isCancelled() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
                             <td class="ltr-num">{{ $link->expires_at?->format('d/m/Y') }}</td>
-                            <td style="display:flex; gap:6px">
+                            <td style="white-space:nowrap">
                                 @unless ($link->isPaid() || $link->isExpired() || $link->isCancelled())
                                     <button type="button" class="btn btn-ghost btn-sm" x-data x-on:click="navigator.clipboard.writeText(@js($link->url)); $el.textContent = 'הועתק'">העתקת קישור</button>
                                     <button type="button" class="btn btn-ghost btn-sm" wire:click="resendPaymentLink({{ $link->id }})">שליחה חוזרת</button>
