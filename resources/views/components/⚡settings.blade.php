@@ -2,6 +2,7 @@
 
 use App\Concerns\Notifies;
 use App\Console\Commands\ProcessMaterialReminders;
+use App\Models\AppSetting;
 use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
 use App\Models\EmailTemplateField;
@@ -10,6 +11,7 @@ use App\Models\LeadSource;
 use App\Models\PaymentMethod;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
+use App\Services\HebrewCalendar;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Model;
 use Livewire\Attributes\Computed;
@@ -91,9 +93,14 @@ class extends Component
 
     public string $landingPageWebhookSecret = '';
 
+    // ===== מנויים =====
+    public string $subscriptionStartMonth = '';
+
     public function mount(): void
     {
         abort_unless(auth()->user()->can('settings.manage'), 403);
+
+        $this->subscriptionStartMonth = (string) HebrewCalendar::startMonth();
 
         $smove = ExternalIntegrationSetting::where('system', 'smove')->first()?->settings ?? [];
         $this->smoveApiKey = (string) ($smove['api_key'] ?? '');
@@ -118,6 +125,17 @@ class extends Component
      * is no longer one of them — it's a fixed vendor address, hardcoded in
      * SmoveClient — the business owner never had a "server address" to know.
      */
+    /** HebrewCalendar: the Hebrew month that is month 1 of a newly opened subscription. */
+    public function saveSubscriptionSettings(ActivityLogger $activityLogger): void
+    {
+        $this->validate(['subscriptionStartMonth' => ['required', 'in:'.implode(',', array_keys(HebrewCalendar::MONTHS))]]);
+
+        AppSetting::put(HebrewCalendar::START_MONTH_SETTING, $this->subscriptionStartMonth);
+
+        $activityLogger->log('app_setting.updated', 'חודש תחילת מנוי עודכן ל'.HebrewCalendar::MONTHS[(int) $this->subscriptionStartMonth]);
+        $this->notifySuccess('הגדרות המנוי נשמרו.');
+    }
+
     public function saveSmoveSettings(ActivityLogger $activityLogger): void
     {
         $data = $this->validate([
@@ -550,6 +568,28 @@ class extends Component
                     @error('statusName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </div>
                 <div class="full"><button type="submit" class="btn btn-primary">הוספת סטטוס</button></div>
+            </form>
+        </div>
+    </section>
+
+    {{-- ===== מנויים ===== --}}
+    <section class="settings-section">
+        <div class="section-head">
+            <h2>מנויים</h2>
+        </div>
+        <div class="card" style="max-width:640px">
+            <form wire:submit="saveSubscriptionSettings" class="form-grid">
+                <div>
+                    <label for="subscriptionStartMonth">חודש תחילת מנוי (חודש עברי)</label>
+                    <select id="subscriptionStartMonth" wire:model="subscriptionStartMonth">
+                        @foreach (\App\Services\HebrewCalendar::MONTHS as $value => $name)
+                            <option value="{{ $value }}">{{ $name }}</option>
+                        @endforeach
+                    </select>
+                    @error('subscriptionStartMonth') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">חודש 1 של כל מנוי הוא החודש שנבחר כאן, וממנו נספרים 10 חודשים עבריים (בשנה מעוברת אדר א׳ ואדר ב׳ הם שני חודשים). מנוי שנפתח אחרי תום 10 החודשים מתחיל במחזור הבא. שינוי ההגדרה חל על מנויים חדשים בלבד.</p>
+                <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
             </form>
         </div>
     </section>

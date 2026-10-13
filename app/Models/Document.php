@@ -320,7 +320,7 @@ class Document extends Model
      * @throws RuntimeException on a business-rule violation, or when no
      *                          active credit_note template exists yet.
      */
-    public static function generateCreditNoteFor(Deal $deal, float $creditAmount): self
+    public static function generateCreditNoteFor(Deal $deal, float $creditAmount, string $description = 'זיכוי בגין ביטול מנוי'): self
     {
         $template = DocumentTemplate::where('document_type', 'credit_note')->where('is_active', true)->orderBy('id')->first();
 
@@ -332,7 +332,7 @@ class Document extends Model
 
         $document = self::generateFor($deal, $template, 'digital', $invoice?->business_entity_id);
 
-        $document->addLine('זיכוי בגין ביטול מנוי', $creditAmount);
+        $document->addLine($description, $creditAmount);
 
         return $document;
     }

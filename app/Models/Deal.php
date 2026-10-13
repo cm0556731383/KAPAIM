@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\HebrewCalendar;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SummitClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -346,6 +347,7 @@ class Deal extends Model
             'deal_id' => $this->id,
             'status_id' => $activeStatus->id,
             'start_date' => now()->toDateString(),
+            'first_month_date' => HebrewCalendar::cycleStartFor(now(), HebrewCalendar::startMonth(), Subscription::TOTAL_DELIVERIES)->toDateString(),
             'agreed_price' => $this->agreed_amount,
             'version' => 0,
         ]);
@@ -395,6 +397,21 @@ class Deal extends Model
         }
 
         $this->refresh();
+    }
+
+    /**
+     * Subscription::cancel()'s deal side: the subscription deal becomes
+     * "מבוטלת" (bumping version like updateStatusWithLock(), so a stale tab
+     * editing this deal is refused).
+     */
+    public function cancelForSubscription(): void
+    {
+        $cancelled = StatusDefinition::firstOrCreate(
+            ['scope' => 'deal', 'name' => self::CANCELLED_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 4],
+        );
+
+        $this->updateStatusWithLock((int) self::whereKey($this->id)->value('version'), $cancelled->id);
     }
 
     /**

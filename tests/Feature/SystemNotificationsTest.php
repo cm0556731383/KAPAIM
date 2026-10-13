@@ -156,7 +156,8 @@ class SystemNotificationsTest extends TestCase
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer])
             ->set('activeTab', 'subscription')
-            ->assertSeeHtml('wire:confirm="ביטול המנוי יסמן אותו כמבוטל לצמיתות ויחשב זיכוי לפי התוכניות שטרם סופקו. פעולה זו אינה הפיכה — להמשיך?"');
+            ->set("cancelFromMonths.{$subscription->id}", '3')
+            ->assertSeeHtml('wire:confirm="המנוי יבוטל החל מחודש 3 ('.$subscription->monthLabel(3).') ויחושב זיכוי של ₪'.number_format($subscription->creditFor(3), 0).'. גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה — להמשיך?"');
     }
 
     public function test_generating_a_subscription_credit_note_requires_confirmation(): void

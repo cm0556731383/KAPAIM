@@ -117,6 +117,9 @@ class extends Component
 
     public string $monthlyPaymentOverrideInput = '';
 
+    /** subscription_id => chosen cancellation month (1-10), bound per subscription card. */
+    public array $cancelFromMonths = [];
+
     /** Business-rule error from Subscription::markDeliverySupplied()/cancel()/generateCreditNote(). */
     public ?string $subscriptionError = null;
 
@@ -597,9 +600,9 @@ class extends Component
 
     /**
      * US-010/FR-8.24: the only place this screen cancels a subscription —
-     * Subscription::cancel() computes the dynamic credit and is a
-     * status-only change (never deletes the deal/subscription/delivery
-     * history/activity log).
+     * from the month chosen on its card. Subscription::cancel() computes the
+     * credit for the months from it onward and is a status-only change
+     * (never deletes the deal/subscription/delivery history/activity log).
      */
     public function cancelSubscription(int $subscriptionId, ActivityLogger $activityLogger): void
     {
@@ -609,17 +612,25 @@ class extends Component
 
         $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
+        $fromMonth = (int) ($this->cancelFromMonths[$subscriptionId] ?? 0);
+
+        if ($fromMonth < 1) {
+            $this->subscriptionError = 'יש לבחור החל מאיזה חודש המנוי מבוטל.';
+
+            return;
+        }
+
         try {
-            $subscription->cancel();
+            $subscription->cancel($fromMonth);
         } catch (\RuntimeException $e) {
             $this->subscriptionError = $e->getMessage();
 
             return;
         }
 
-        $activityLogger->log('subscription.cancelled', "מנוי #{$subscription->id} בוטל — קיזוז מחושב: ₪".number_format((float) $subscription->cancellation_credit, 0), [
+        $activityLogger->log('subscription.cancelled', "מנוי #{$subscription->id} בוטל החל מחודש {$fromMonth} ({$subscription->monthLabel($fromMonth)}) — קיזוז מחושב: ₪".number_format((float) $subscription->cancellation_credit, 0), [
             'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
-            'metadata' => ['cancellation_credit' => (float) $subscription->cancellation_credit],
+            'metadata' => ['cancellation_credit' => (float) $subscription->cancellation_credit, 'cancelled_from_month' => $fromMonth],
         ]);
 
         unset($this->subscriptions, $this->hasActiveSubscription);
@@ -1285,6 +1296,9 @@ class extends Component
                     <div><span style="color:var(--color-text-secondary)">תאריך תחילה: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->start_date->format('d/m/Y') }}</span></div>
                     <div><span style="color:var(--color-text-secondary)">מחיר שסוכם: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->agreed_price, 0) }}</span></div>
                     <div><span style="color:var(--color-text-secondary)">התקדמות: </span><span style="font-weight:600">{{ $subscription->suppliedCount() }} מתוך {{ \App\Models\Subscription::TOTAL_DELIVERIES }} תוכניות סופקו</span></div>
+                    @if ($subscription->cancelled_from_month)
+                        <div><span style="color:var(--color-text-secondary)">מבוטל החל מ: </span><span style="font-weight:600">חודש {{ $subscription->cancelled_from_month }} ({{ $subscription->monthLabel($subscription->cancelled_from_month) }})</span></div>
+                    @endif
                     @if ($subscription->end_date)
                         <div><span style="color:var(--color-text-secondary)">תאריך סיום: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->end_date->format('d/m/Y') }}</span></div>
                     @endif
@@ -1315,15 +1329,21 @@ class extends Component
                 <h3 style="font-size:var(--fs-h3)">יומן אספקה</h3>
                 <div class="table-scroll">
                 <table>
-                    <thead><tr><th>#</th><th>תוכנית</th><th>תאריך אספקה</th><th>סומן ע"י</th><th></th></tr></thead>
+                    <thead><tr><th>#</th><th>חודש</th><th>תוכנית</th><th>תאריך אספקה</th><th>סומן ע"י</th><th></th></tr></thead>
                     <tbody>
                         @foreach ($subscription->deliveries as $delivery)
-                            <tr>
+                            @php
+                                $deliveryCancelled = $subscription->isDeliveryCancelled($delivery);
+                                // Months before a cancellation month are still owed and can be marked.
+                                $deliverySuppliable = ! $delivery->is_supplied && ($subscription->isActive() || ($subscription->cancelled_from_month && ! $deliveryCancelled && $subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME));
+                            @endphp
+                            <tr @if ($deliveryCancelled) style="color:var(--color-text-secondary)" @endif>
                                 <td>{{ $delivery->sequence_number }}</td>
+                                <td>{{ $subscription->monthLabel($delivery->sequence_number) }}</td>
                                 <td>
                                     @if ($delivery->is_supplied)
                                         {{ $delivery->program?->name }}
-                                    @elseif ($subscription->isActive())
+                                    @elseif ($deliverySuppliable)
                                         <select wire:model="deliveryProgramSelections.{{ $delivery->id }}">
                                             <option value="">בחרו תוכנית שסופקה</option>
                                             @foreach ($this->availableDeliveryPrograms as $program)
@@ -1339,7 +1359,9 @@ class extends Component
                                 <td>
                                     @if ($delivery->is_supplied)
                                         <span class="badge badge-success">סופקה</span>
-                                    @elseif ($subscription->isActive())
+                                    @elseif ($deliveryCancelled)
+                                        <span class="badge badge-error">בוטלה</span>
+                                    @elseif ($deliverySuppliable)
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="markDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})">סימון כסופקה</button>
                                     @else
                                         <span class="badge badge-neutral">טרם סופקה</span>
@@ -1353,14 +1375,34 @@ class extends Component
 
                 {{-- ===== ביטול מנוי וחישוב קיזוז (US-010) ===== --}}
                 @if ($subscription->isActive())
-                    <div style="margin-top:var(--sp-lg); display:flex; justify-content:flex-end">
-                        <button
-                            type="button"
-                            class="btn btn-destructive"
-                            wire:click="cancelSubscription({{ $subscription->id }})"
-                            wire:confirm="ביטול המנוי יסמן אותו כמבוטל לצמיתות ויחשב זיכוי לפי התוכניות שטרם סופקו. פעולה זו אינה הפיכה — להמשיך?"
-                        >ביטול מנוי</button>
-                    </div>
+                    @php $firstCancellableMonth = $subscription->firstCancellableMonth(); @endphp
+                    @if ($firstCancellableMonth <= \App\Models\Subscription::TOTAL_DELIVERIES)
+                        <div style="margin-top:var(--sp-lg); display:flex; gap:var(--sp-sm); align-items:flex-end; justify-content:flex-end; flex-wrap:wrap">
+                            <div>
+                                <label for="cancelFromMonth{{ $subscription->id }}">ביטול החל מחודש</label>
+                                <select id="cancelFromMonth{{ $subscription->id }}" wire:model.live="cancelFromMonths.{{ $subscription->id }}">
+                                    <option value="">בחרו חודש</option>
+                                    @for ($month = $firstCancellableMonth; $month <= \App\Models\Subscription::TOTAL_DELIVERIES; $month++)
+                                        <option value="{{ $month }}">חודש {{ $month }} — {{ $subscription->monthLabel($month) }}</option>
+                                    @endfor
+                                </select>
+                            </div>
+                            @php $chosenCancelMonth = (int) ($cancelFromMonths[$subscription->id] ?? 0); @endphp
+                            <button
+                                type="button"
+                                class="btn btn-destructive"
+                                wire:click="cancelSubscription({{ $subscription->id }})"
+                                @if ($chosenCancelMonth)
+                                    wire:confirm="המנוי יבוטל החל מחודש {{ $chosenCancelMonth }} ({{ $subscription->monthLabel($chosenCancelMonth) }}) ויחושב זיכוי של ₪{{ number_format($subscription->creditFor($chosenCancelMonth), 0) }}. גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה — להמשיך?"
+                                @else
+                                    disabled
+                                @endif
+                            >ביטול מנוי</button>
+                        </div>
+                        @if ($subscription->deal->standingOrderItemIds() !== [])
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm); text-align:end">לעסקה זו הוראת קבע ב-SUMIT — לאחר הביטול יש לעצור אותה גם ב-SUMIT.</p>
+                        @endif
+                    @endif
                 @elseif ($subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME)
                     <div class="card confirm-row" style="margin-top:var(--sp-lg); background:var(--color-background)">
                         <div style="display:flex; gap:var(--sp-xl); flex-wrap:wrap; font-size:var(--fs-small)">

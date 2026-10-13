@@ -379,6 +379,122 @@ class SubscriptionsTest extends TestCase
         $subscription->generateCreditNote();
     }
 
+    // ----- cancellation from a chosen month -----
+
+    public function test_cancelling_from_a_chosen_month_credits_only_that_month_onward_and_cancels_the_deal(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 5000);
+
+        $cancelled = $subscription->cancel(7);
+
+        $this->assertSame(7, $cancelled->cancelled_from_month);
+        $this->assertEquals(5000 / 10 * 4, (float) $cancelled->cancellation_credit);
+        $this->assertSame(Deal::CANCELLED_STATUS_NAME, $cancelled->deal->fresh()->status?->name);
+        $this->assertNotNull($cancelled->deal->fresh()->completed_at);
+    }
+
+    public function test_cannot_cancel_from_a_month_already_supplied(): void
+    {
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+        $third = $subscription->deliveries()->where('sequence_number', 3)->first();
+        $subscription->markDeliverySupplied($subscription->version, $third->id, $program->id, $this->owner);
+
+        $this->assertSame(4, $subscription->fresh()->firstCancellableMonth());
+
+        $this->expectExceptionMessage('ניתן לבטל את המנוי החל מחודש 4');
+        $subscription->fresh()->cancel(3);
+    }
+
+    public function test_months_before_the_cancellation_month_can_still_be_supplied_but_cancelled_ones_cannot(): void
+    {
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+        $subscription->cancel(5);
+        $subscription = $subscription->fresh();
+
+        $second = $subscription->deliveries()->where('sequence_number', 2)->first();
+        $subscription->markDeliverySupplied($subscription->version, $second->id, $program->id, $this->owner);
+        $this->assertTrue($second->fresh()->is_supplied);
+        $this->assertSame(Subscription::CANCELLED_STATUS_NAME, $subscription->fresh()->status?->name);
+
+        $sixth = $subscription->deliveries()->where('sequence_number', 6)->first();
+        $this->expectException(RuntimeException::class);
+        $subscription->fresh()->markDeliverySupplied($subscription->fresh()->version, $sixth->id, $program->id, $this->owner);
+    }
+
+    public function test_credit_note_line_details_the_cancelled_months(): void
+    {
+        $this->createTemplate('credit_note');
+        $subscription = $this->openSubscription(agreedAmount: 4000);
+        // Month 1 = תשרי תשפ״ז (a leap year: אדר א׳ and אדר ב׳ are months 6 and 7).
+        $subscription->update(['first_month_date' => '2026-09-12']);
+        $this->giveDealAnInvoice($subscription->deal);
+        $subscription->fresh()->cancel(5);
+
+        $document = $subscription->fresh()->generateCreditNote();
+        $line = $document->lines()->firstOrFail();
+
+        $this->assertSame('זיכוי בגין ביטול מנוי החל מחודש 5 (שבט תשפ״ז – סיוון תשפ״ז): 6 חודשים × ₪400.00', $line->description);
+        $this->assertEquals(2400, $document->totalAmount());
+    }
+
+    public function test_customer_card_cancels_from_the_chosen_month_and_the_customers_list_drops_the_frame(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 3000);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->set('activeTab', 'subscription')
+            ->call('cancelSubscription', $subscription->id)
+            ->assertSet('subscriptionError', 'יש לבחור החל מאיזה חודש המנוי מבוטל.')
+            ->set("cancelFromMonths.{$subscription->id}", '8')
+            ->call('cancelSubscription', $subscription->id)
+            ->assertSet('subscriptionError', null)
+            ->assertSee('מבוטל החל מ')
+            ->assertSee('בוטלה');
+
+        $subscription = $subscription->fresh();
+        $this->assertSame(Subscription::CANCELLED_STATUS_NAME, $subscription->status?->name);
+        $this->assertSame(8, $subscription->cancelled_from_month);
+        $this->assertEquals(900, (float) $subscription->cancellation_credit);
+
+        $html = Livewire::actingAs($this->owner)->test('customers')->html();
+        $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*customers\/'.$subscription->customer_id.'\b/u', $html);
+    }
+
+    public function test_a_new_subscription_pins_month_one_to_the_hebrew_month_set_in_settings(): void
+    {
+        $this->travelTo('2026-10-07'); // כ״ו תשרי תשפ״ז
+        \App\Models\AppSetting::put(\App\Services\HebrewCalendar::START_MONTH_SETTING, '1'); // חשוון
+
+        $subscription = $this->openSubscription();
+
+        $this->assertSame('2026-10-12', $subscription->first_month_date->toDateString()); // א׳ חשוון תשפ״ז
+        $this->assertSame('חשוון תשפ״ז', $subscription->monthLabel(1));
+        $this->assertSame('אדר א׳ תשפ״ז', $subscription->monthLabel(5));
+        $this->assertSame('תמוז תשפ״ז', $subscription->monthLabel(10));
+
+        // A later settings change never relabels an existing subscription.
+        \App\Models\AppSetting::put(\App\Services\HebrewCalendar::START_MONTH_SETTING, '0');
+        $this->assertSame('חשוון תשפ״ז', $subscription->fresh()->monthLabel(1));
+    }
+
+    public function test_settings_page_saves_the_subscription_start_month(): void
+    {
+        Livewire::actingAs($this->owner)->test('settings')
+            ->assertSee('חודש תחילת מנוי')
+            ->set('subscriptionStartMonth', '2')
+            ->call('saveSubscriptionSettings')
+            ->assertHasNoErrors();
+
+        $this->assertSame(2, \App\Services\HebrewCalendar::startMonth());
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('subscriptionStartMonth', '6') // not offered — אדר is 5
+            ->call('saveSubscriptionSettings')
+            ->assertHasErrors('subscriptionStartMonth');
+    }
+
     // ----- FR-8.23: standalone-program price-exceeded alert -----
 
     public function test_price_exceeded_alert_appears_when_standalone_purchases_exceed_the_subscription_price(): void

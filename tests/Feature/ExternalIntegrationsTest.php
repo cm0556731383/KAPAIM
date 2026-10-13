@@ -1065,6 +1065,7 @@ class ExternalIntegrationsTest extends TestCase
 
         app(SummitClient::class)->issueCreditNote($this->creditNoteFor($deal));
         Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 7
+            && $request['Details']['Description'] === 'זיכוי'
             && ! isset($request['OriginalDocumentID'])
             && ! isset($request['Items'])
             && $request['Payments'][0]['Amount'] == 100);

@@ -136,8 +136,16 @@ class SummitClient
         $exempt = $entity->classification === self::EXEMPT_CLASSIFICATION;
         $document->deal->loadMissing('paymentMethod');
 
+        // A קבלה זיכוי carries no items, so the credit's detail line (which
+        // months are credited — Subscription::creditDescription()) goes in
+        // its description instead.
+        $details = $this->documentDetails($exempt ? self::DOCUMENT_CREDIT_RECEIPT : self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email);
+        if ($exempt && $document->lines->isNotEmpty()) {
+            $details['Description'] = $document->lines->pluck('description')->implode('; ');
+        }
+
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
-            'Details' => $this->documentDetails($exempt ? self::DOCUMENT_CREDIT_RECEIPT : self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
+            'Details' => $details,
             'Items' => $exempt ? null : $this->documentItems($document),
             'Payments' => $exempt ? [$this->payment($document->totalAmount(), $document->deal->paymentMethod)] : null,
             'VATIncluded' => true,

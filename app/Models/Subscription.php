@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\HebrewCalendar;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -31,8 +33,8 @@ use RuntimeException;
  * status change only, same convention as Deal::updateStatusWithLock().
  */
 #[Fillable([
-    'customer_id', 'deal_id', 'status_id', 'start_date', 'end_date',
-    'cancelled_at', 'agreed_price', 'cancellation_credit', 'monthly_payment_override', 'version',
+    'customer_id', 'deal_id', 'status_id', 'start_date', 'first_month_date', 'end_date',
+    'cancelled_at', 'cancelled_from_month', 'agreed_price', 'cancellation_credit', 'monthly_payment_override', 'version',
 ])]
 class Subscription extends Model
 {
@@ -57,8 +59,10 @@ class Subscription extends Model
     {
         return [
             'start_date' => 'date',
+            'first_month_date' => 'date',
             'end_date' => 'date',
             'cancelled_at' => 'date',
+            'cancelled_from_month' => 'integer',
             'agreed_price' => 'decimal:2',
             'cancellation_credit' => 'decimal:2',
             'monthly_payment_override' => 'decimal:2',
@@ -92,6 +96,61 @@ class Subscription extends Model
     public function isActive(): bool
     {
         return $this->status?->name === self::ACTIVE_STATUS_NAME;
+    }
+
+    /**
+     * The 1st of the Hebrew month that is this subscription's month 1 — see
+     * HebrewCalendar. Pinned at opening (Deal::openSubscriptionIfApplicable());
+     * a subscription opened before that existed follows the current setting.
+     */
+    public function firstMonthDate(): CarbonImmutable
+    {
+        return $this->first_month_date
+            ? CarbonImmutable::parse($this->first_month_date->toDateString())
+            : HebrewCalendar::cycleStartFor($this->start_date, HebrewCalendar::startMonth(), self::TOTAL_DELIVERIES);
+    }
+
+    /** Hebrew month of subscription month $month, e.g. "טבת תשפ״ז". */
+    public function monthLabel(int $month): string
+    {
+        return HebrewCalendar::monthLabel(HebrewCalendar::addMonths($this->firstMonthDate(), $month - 1));
+    }
+
+    /**
+     * Earliest month a cancellation may start from: the month after the last
+     * delivery row already marked supplied — a supplied program is never
+     * credited back.
+     */
+    public function firstCancellableMonth(): int
+    {
+        return ((int) $this->deliveries()->where('is_supplied', true)->max('sequence_number')) + 1;
+    }
+
+    public function creditFor(int $fromMonth): float
+    {
+        return round(((float) $this->agreed_price / self::TOTAL_DELIVERIES) * (self::TOTAL_DELIVERIES - $fromMonth + 1), 2);
+    }
+
+    /** A delivery row falling in the cancelled months. */
+    public function isDeliveryCancelled(SubscriptionDelivery $delivery): bool
+    {
+        return $this->cancelled_from_month !== null && $delivery->sequence_number >= $this->cancelled_from_month;
+    }
+
+    /** The credit note's line text — which months are credited, and at what monthly price. */
+    public function creditDescription(): string
+    {
+        if ($this->cancelled_from_month === null) {
+            return 'זיכוי בגין ביטול מנוי';
+        }
+
+        $months = self::TOTAL_DELIVERIES - $this->cancelled_from_month + 1;
+        $range = $months === 1
+            ? $this->monthLabel($this->cancelled_from_month)
+            : $this->monthLabel($this->cancelled_from_month).' – '.$this->monthLabel(self::TOTAL_DELIVERIES);
+        $monthly = number_format((float) $this->agreed_price / self::TOTAL_DELIVERIES, 2);
+
+        return "זיכוי בגין ביטול מנוי החל מחודש {$this->cancelled_from_month} ({$range}): {$months} חודשים × ₪{$monthly}";
     }
 
     public static function badgeClassForStatusName(?string $statusName): string
@@ -155,11 +214,17 @@ class Subscription extends Model
      */
     public function markDeliverySupplied(int $expectedVersion, int $deliveryId, int $programId, User $user): SubscriptionDelivery
     {
-        if (! $this->isActive()) {
+        $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
+
+        // A cancelled subscription still owes the months before its
+        // cancellation month — only those rows may be marked after it.
+        $suppliableAfterCancel = $this->status?->name === self::CANCELLED_STATUS_NAME
+            && $this->cancelled_from_month !== null
+            && ! $this->isDeliveryCancelled($delivery);
+
+        if (! $this->isActive() && ! $suppliableAfterCancel) {
             throw new RuntimeException('ניתן לסמן אספקה רק עבור מנוי פעיל.');
         }
-
-        $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
 
         if ($delivery->is_supplied) {
             throw new RuntimeException('שורת אספקה זו כבר סומנה כסופקה.');
@@ -189,7 +254,7 @@ class Subscription extends Model
 
             $this->refresh();
 
-            if ($this->suppliedCount() >= self::TOTAL_DELIVERIES) {
+            if ($this->isActive() && $this->suppliedCount() >= self::TOTAL_DELIVERIES) {
                 $ended = StatusDefinition::firstOrCreate(
                     ['scope' => 'subscription', 'name' => self::ENDED_STATUS_NAME],
                     ['is_active' => true, 'sort_order' => 2],
@@ -203,41 +268,53 @@ class Subscription extends Model
     }
 
     /**
-     * US-010/FR-8.24: computes the cancellation credit dynamically from this
-     * subscription's OWN delivery log and OWN agreed_price only —
-     * agreed_price/10 per program, times the number of programs NOT yet
-     * supplied. Bundles and any other deal are never part of this
+     * US-010/FR-8.24: cancels the subscription from subscription month
+     * $fromMonth (default: the first month not yet supplied). The credit is
+     * computed from this subscription's OWN agreed_price only —
+     * agreed_price/10 per month, for every month from $fromMonth through
+     * month 10. Bundles and any other deal are never part of this
      * calculation (FR-3.8) since neither is ever referenced here.
      *
-     * Marks the subscription cancelled (status change only — never deletes
-     * the deal, this row, the delivery history, or any activity log, per
-     * US-010's explicit acceptance criterion). Generating an actual credit
-     * note is a deliberately separate, explicit step — see
+     * Marks the subscription and its deal cancelled (status changes only —
+     * never deletes the deal, this row, the delivery history, or any
+     * activity log, per US-010's explicit acceptance criterion). Generating
+     * an actual credit note is a deliberately separate, explicit step — see
      * generateCreditNote() below — not auto-triggered here (same convention
      * as issuing a receipt being separate from recording a payment, stage 8).
      *
-     * @throws RuntimeException when the subscription isn't currently active.
+     * @throws RuntimeException when the subscription isn't currently active,
+     *                          or $fromMonth is before a supplied month.
      */
-    public function cancel(): self
+    public function cancel(?int $fromMonth = null): self
     {
         if (! $this->isActive()) {
             throw new RuntimeException('ניתן לבטל רק מנוי פעיל.');
         }
 
-        $suppliedCount = $this->suppliedCount();
-        $undeliveredCount = self::TOTAL_DELIVERIES - $suppliedCount;
-        $credit = round(((float) $this->agreed_price / self::TOTAL_DELIVERIES) * $undeliveredCount, 2);
+        $firstCancellable = $this->firstCancellableMonth();
+        $fromMonth ??= $firstCancellable;
+
+        if ($fromMonth < $firstCancellable || $fromMonth > self::TOTAL_DELIVERIES) {
+            throw new RuntimeException($firstCancellable > self::TOTAL_DELIVERIES
+                ? 'כל התוכניות במנוי כבר סופקו — אין חודשים לביטול.'
+                : "ניתן לבטל את המנוי החל מחודש {$firstCancellable} ועד חודש ".self::TOTAL_DELIVERIES.' — חודשים קודמים כבר סופקו.');
+        }
 
         $cancelledStatus = StatusDefinition::firstOrCreate(
             ['scope' => 'subscription', 'name' => self::CANCELLED_STATUS_NAME],
             ['is_active' => true, 'sort_order' => 3],
         );
 
-        $this->update([
-            'status_id' => $cancelledStatus->id,
-            'cancelled_at' => now()->toDateString(),
-            'cancellation_credit' => $credit,
-        ]);
+        DB::transaction(function () use ($cancelledStatus, $fromMonth) {
+            $this->update([
+                'status_id' => $cancelledStatus->id,
+                'cancelled_at' => now()->toDateString(),
+                'cancelled_from_month' => $fromMonth,
+                'cancellation_credit' => $this->creditFor($fromMonth),
+            ]);
+
+            $this->deal->cancelForSubscription();
+        });
 
         $this->removeSubscriptionMailingListMemberships();
 
@@ -284,7 +361,7 @@ class Subscription extends Model
             throw new RuntimeException('ניתן להפיק חשבונית זיכוי רק עבור מנוי שבוטל.');
         }
 
-        return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit);
+        return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription());
     }
 }
 
