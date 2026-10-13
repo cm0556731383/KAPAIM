@@ -23,15 +23,20 @@ class DocumentTemplate extends Model
 {
     use HasFactory;
 
+    /** The document types this app lays out and sends itself — the only ones with a template. */
     public const TYPES = [
         'quote' => 'הצעת מחיר',
         'order_form' => 'טופס הזמנה',
         'contract' => 'חוזה',
-        'invoice' => 'חשבונית',
-        'credit_note' => 'חשבונית זיכוי',
-        // Build-plan 11 — Expense::attachInvoice()'s standalone document type.
-        'expense_invoice' => 'חשבונית הוצאה',
     ];
+
+    /**
+     * Created with no template: SUMIT lays out and emails an invoice/credit
+     * note from its lines, and an expense invoice is the supplier's own
+     * document (Expense::attachInvoice()) — a template had no effect on any
+     * of them (business owner's call, 2026-10-13).
+     */
+    public const SYSTEM_TYPES = ['invoice', 'credit_note', 'expense_invoice'];
 
     protected function casts(): array
     {

@@ -193,6 +193,31 @@ class DocumentsEngineTest extends TestCase
      * FR-4.15/FR-4.16/FR-8.9 — an invoice always requires an active business
      * entity chosen at generation time, never a fixed customer default.
      */
+    /** Invoices are laid out by SUMIT from their lines — no template involved (DocumentTemplate::SYSTEM_TYPES). */
+    public function test_an_invoice_is_generated_from_the_deal_screen_with_no_template(): void
+    {
+        $deal = $this->signedContractDeal();
+        DocumentTemplate::where('document_type', 'invoice')->delete();
+        $entity = $this->createBusinessEntity();
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->set('invoiceBusinessEntityId', (string) $entity->id)
+            ->call('generateDocument', 'invoice')
+            ->assertSet('documentError', null);
+
+        $invoice = $deal->documents()->where('document_type', 'invoice')->sole();
+        $this->assertNull($invoice->document_template_id);
+        $this->assertSame(1, $invoice->lines()->count());
+        $this->get(route('document-view', $invoice))->assertOk();
+    }
+
+    public function test_the_templates_page_offers_only_the_types_the_app_lays_out_itself(): void
+    {
+        $types = Livewire::actingAs($this->owner)->test('document-templates')->instance()->documentTypes();
+
+        $this->assertSame(['quote', 'order_form', 'contract'], array_keys($types));
+    }
+
     public function test_invoice_generation_requires_a_business_entity(): void
     {
         $deal = $this->signedContractDeal();

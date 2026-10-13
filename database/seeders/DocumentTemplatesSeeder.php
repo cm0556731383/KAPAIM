@@ -6,11 +6,10 @@ use App\Models\DocumentTemplate;
 use Illuminate\Database\Seeder;
 
 /**
- * Build-plan 07 seed data: one active template per document type
- * (quote/order_form/contract/invoice), Hebrew business tone matching
- * docs/storyboard/document-templates.html, plus one inactive "old" quote
- * template to demonstrate FR-4.14/FR-7.11 (an inactive template's already
- * generated documents are unaffected — see DocumentsEngineTest).
+ * Build-plan 07 seed data: one active template per document type this app
+ * lays out itself (quote/order_form/contract), Hebrew business tone matching
+ * docs/storyboard/document-templates.html. Invoices, credit notes and
+ * expense invoices have none (DocumentTemplate::SYSTEM_TYPES).
  */
 class DocumentTemplatesSeeder extends Seeder
 {
@@ -55,45 +54,7 @@ class DocumentTemplatesSeeder extends Seeder
             ['name' => 'סכום עסקה', 'field_type' => 'linked', 'linked_field' => 'deal.agreed_amount', 'is_required' => true, 'sort_order' => 4],
         ]);
 
-        $invoice = DocumentTemplate::create([
-            'document_type' => 'invoice',
-            'name' => 'חשבונית — עוסק פטור',
-            'content' => "חשבונית מס — עוסק פטור\n\nלכבוד: {{שם_לחשבונית}}\n\nהפירוט המלא מופיע בטבלת השורות המצורפת למסמך זה. סך כל השורות הוא הסכום לתשלום.\n\nתודה על רכישתכם!",
-            'is_active' => true,
-        ]);
-        $invoice->fields()->createMany([
-            ['name' => 'שם לחשבונית', 'field_type' => 'linked', 'linked_field' => 'customer.school_invoice_name', 'is_required' => true, 'sort_order' => 1],
-        ]);
-
-        // ----- חשבונית זיכוי (build-plan 09) — מופקת רק בעת ביטול מנוי -----
-        $creditNote = DocumentTemplate::create([
-            'document_type' => 'credit_note',
-            'name' => 'חשבונית זיכוי — ביטול מנוי',
-            'content' => "חשבונית זיכוי — עוסק פטור\n\nלכבוד: {{שם_בית_הספר}}\n\nהזיכוי ניתן בהתאם לביטול המנוי, לפי מספר התוכניות שטרם סופקו ולפי המחיר שסוכם עם הלקוחה (FR-8.24). הפירוט המלא מופיע בטבלת השורות המצורפת למסמך זה.\n\nתודה על שיתוף הפעולה!",
-            'is_active' => true,
-        ]);
-        $creditNote->fields()->createMany([
-            ['name' => 'שם בית הספר', 'field_type' => 'linked', 'linked_field' => 'customer.school_name', 'is_required' => true, 'sort_order' => 1],
-        ]);
-
-        // ----- חשבונית הוצאה (build-plan 11) — placeholder תבנית מינימלית:
-        // חשבונית הוצאה היא מסמך שהספק כבר הפיק בעצמו (Expense::attachInvoice()
-        // רק מתעד את זה), ולכן אין כאן שדות digital-form-fill אמיתיים כמו
-        // בשרשרת המכירה. -----
-        DocumentTemplate::create([
-            'document_type' => 'expense_invoice',
-            'name' => 'חשבונית הוצאה — כללי',
-            'content' => 'חשבונית הוצאה שהתקבלה מספק — תיעוד בלבד, ללא שדות דינמיים.',
-            'is_active' => true,
-        ]);
-
-        // Inactive "old" template — demonstrates FR-4.14/FR-7.11: deactivating
-        // a template never touches documents already generated from it.
-        DocumentTemplate::create([
-            'document_type' => 'quote',
-            'name' => 'הצעת מחיר — מנוי שנתי (ישן)',
-            'content' => "נוסח הצעת מחיר ישן, הוחלף בתבנית הסטנדרטית.",
-            'is_active' => false,
-        ]);
+        // Invoices, credit notes and expense invoices have no template
+        // (DocumentTemplate::SYSTEM_TYPES) — SUMIT lays them out from their lines.
     }
 }

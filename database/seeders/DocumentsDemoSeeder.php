@@ -34,9 +34,8 @@ class DocumentsDemoSeeder extends Seeder
         $quoteTemplate = DocumentTemplate::where('document_type', 'quote')->where('is_active', true)->first();
         $orderFormTemplate = DocumentTemplate::where('document_type', 'order_form')->where('is_active', true)->first();
         $contractTemplate = DocumentTemplate::where('document_type', 'contract')->where('is_active', true)->first();
-        $invoiceTemplate = DocumentTemplate::where('document_type', 'invoice')->where('is_active', true)->first();
 
-        if (! $deal || ! $businessEntity || ! $quoteTemplate || ! $orderFormTemplate || ! $contractTemplate || ! $invoiceTemplate) {
+        if (! $deal || ! $businessEntity || ! $quoteTemplate || ! $orderFormTemplate || ! $contractTemplate) {
             return;
         }
 
@@ -61,7 +60,7 @@ class DocumentsDemoSeeder extends Seeder
         $contract->markSigned();
 
         // ----- חשבונית: עוסק פטור + שורת פירוט, נשלחה כ-PDF -----
-        $invoice = Document::generateFor($deal, $invoiceTemplate, 'pdf', $businessEntity->id);
+        $invoice = Document::generateFor($deal, 'invoice', 'pdf', $businessEntity->id);
         $invoice->addLine('מנוי שנתי — 10 תוכניות (' . $deal->program_name_snapshot . ')', (float) $deal->agreed_amount);
         $invoice->sendTo($this->recipientsFor($deal), 'pdf', $activityLogger, $runner, $summit, $smove);
 

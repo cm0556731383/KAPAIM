@@ -54,7 +54,7 @@ class extends Component
 
         $this->fieldValues = $this->document->currentFieldValues();
 
-        foreach ($this->document->documentTemplate->fieldsInContent() as $field) {
+        foreach ($this->document->templateFields() as $field) {
             $this->readonlyFields[$field->id] = $field->field_type === 'linked'
                 && $field->linked_field
                 && ! DocumentLinkedFields::isWritable($field->linked_field)
@@ -70,6 +70,10 @@ class extends Component
      */
     public function formContent(): string
     {
+        if (! $this->document->documentTemplate) {
+            return (string) $this->document->rendered_content;
+        }
+
         return $this->document->documentTemplate->renderFormContent(function ($field) {
             $value = (string) ($this->fieldValues[$field->id] ?? '');
 

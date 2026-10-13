@@ -302,7 +302,9 @@ class extends Component
     {
         $this->documentError = null;
 
-        $template = DocumentTemplate::where('document_type', $documentType)->where('is_active', true)->orderBy('id')->first();
+        $template = in_array($documentType, DocumentTemplate::SYSTEM_TYPES, true)
+            ? $documentType
+            : DocumentTemplate::where('document_type', $documentType)->where('is_active', true)->orderBy('id')->first();
 
         if (! $template) {
             $this->documentError = 'לא נמצאה תבנית פעילה עבור סוג מסמך זה — יש להגדיר תבנית תחילה במסך תבניות מסמכים.';

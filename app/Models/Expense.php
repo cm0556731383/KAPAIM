@@ -130,13 +130,7 @@ class Expense extends Model
             throw new RuntimeException('להוצאה זו כבר מצורפת חשבונית.');
         }
 
-        $template = DocumentTemplate::where('document_type', 'expense_invoice')->where('is_active', true)->orderBy('id')->first();
-
-        if (! $template) {
-            throw new RuntimeException('לא נמצאה תבנית פעילה עבור חשבונית הוצאה — יש להגדיר תבנית תחילה במסך תבניות מסמכים.');
-        }
-
-        $document = Document::generateFor($this, $template);
+        $document = Document::generateFor($this, 'expense_invoice');
 
         $hasInvoiceStatus = StatusDefinition::firstOrCreate(
             ['scope' => 'expense', 'name' => self::HAS_INVOICE_STATUS_NAME],

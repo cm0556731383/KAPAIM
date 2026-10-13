@@ -219,13 +219,16 @@ class SuppliersExpensesTest extends TestCase
         $expense->fresh()->attachInvoice();
     }
 
-    public function test_attaching_an_invoice_without_an_active_template_is_blocked(): void
+    /** An expense invoice is the supplier's own document — attaching one needs no template (DocumentTemplate::SYSTEM_TYPES). */
+    public function test_attaching_an_invoice_needs_no_template(): void
     {
-        DocumentTemplate::where('document_type', 'expense_invoice')->update(['is_active' => false]);
+        DocumentTemplate::where('document_type', 'expense_invoice')->delete();
         $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
 
-        $this->expectException(RuntimeException::class);
-        $expense->attachInvoice();
+        $document = $expense->attachInvoice();
+
+        $this->assertNull($document->document_template_id);
+        $this->assertSame('expense_invoice', $document->document_type);
     }
 
     /**

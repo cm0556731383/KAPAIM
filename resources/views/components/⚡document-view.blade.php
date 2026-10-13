@@ -247,22 +247,26 @@ class extends Component
 
     <div class="cols2">
         <div>
-            {{-- ===== תוכן המסמך (Snapshot) ===== --}}
-            <div class="card" style="margin-bottom:var(--sp-lg)">
-                <h3>תוכן המסמך</h3>
-                <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{!! $document->rendered_content !!}</div>
+            {{-- ===== תוכן המסמך (Snapshot) — a system document (invoice, credit note, expense invoice) has none: SUMIT lays it out from its lines. ===== --}}
+            @if (filled(strip_tags((string) $document->rendered_content)))
+                <div class="card" style="margin-bottom:var(--sp-lg)">
+                    <h3>תוכן המסמך</h3>
+                    <div style="white-space:pre-wrap; font-size:var(--fs-small); line-height:1.8">{!! $document->rendered_content !!}</div>
+                </div>
+            @endif
 
-                @if ($document->document_type === 'invoice' && $document->businessEntity)
-                    <div class="field" style="margin-top:var(--sp-md)"><div class="k">עוסק</div><div class="v">{{ $document->businessEntity->name }} — {{ $document->businessEntity->classification }}</div></div>
-                @endif
-            </div>
+            @if ($document->document_type === 'invoice' && $document->businessEntity)
+                <div class="card" style="margin-bottom:var(--sp-lg)">
+                    <div class="field"><div class="k">עוסק</div><div class="v">{{ $document->businessEntity->name }} — {{ $document->businessEntity->classification }}</div></div>
+                </div>
+            @endif
 
             {{-- ===== שדות הטופס הדיגיטלי ===== --}}
-            @if ($document->documentTemplate->fieldsInContent()->isNotEmpty())
+            @if ($document->templateFields()->isNotEmpty())
                 <div class="card" style="margin-bottom:var(--sp-lg)">
                     <h3>שדות הטופס</h3>
                     <div class="form-grid">
-                        @foreach ($document->documentTemplate->fieldsInContent() as $field)
+                        @foreach ($document->templateFields() as $field)
                             <div class="full">
                                 <label>{{ $field->name }} @if ($field->is_required)<span style="color:var(--color-error)">*</span>@endif @if ($field->field_type === 'linked')<span class="scope-pill" style="margin-inline-start:6px">מקושר</span>@endif</label>
                                 <input type="text" wire:model="fieldValues.{{ $field->id }}" @disabled($document->confirmed_at)>
