@@ -430,7 +430,7 @@ class Deal extends Model
      * @throws RuntimeException on a version conflict, or when no payment
      *                          method is given and the deal has none.
      */
-    public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null, ?int $paymentMethodId = null): Payment
+    public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null, ?int $paymentMethodId = null, ?string $checkNumber = null, ?string $checkDueDate = null): Payment
     {
         // The payment's own method; the deal's planned one when none is given.
         $method = PaymentMethod::find($paymentMethodId ?? $this->payment_method_id);
@@ -443,7 +443,7 @@ class Deal extends Model
             throw new RuntimeException('סכום התשלום חייב להיות גדול מאפס.');
         }
 
-        return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate, $method) {
+        return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate, $method, $checkNumber, $checkDueDate) {
             $prospectiveTotal = $this->totalPaid() + $amount;
             $becomesFullyPaid = $prospectiveTotal >= $this->amountDue();
 
@@ -478,6 +478,8 @@ class Deal extends Model
                 'status_id' => $paymentStatus->id,
                 'amount' => $amount,
                 'check_status' => $isCheck ? Payment::CHECK_RECEIVED : null,
+                'check_number' => $isCheck ? ($checkNumber ?: null) : null,
+                'check_due_date' => $isCheck ? ($checkDueDate ?: null) : null,
                 'payment_date' => $paymentDate ?? now(),
                 'cleared_date' => null,
             ]);
@@ -485,6 +487,41 @@ class Deal extends Model
             $this->refresh();
 
             return $payment;
+        });
+    }
+
+    /**
+     * Several checks received together (often post-dated, one per month) —
+     * each a check payment of its own with its number and due date; its
+     * receipt is issued when it clears. All or none: a failure records none.
+     *
+     * @param  array<int, array{number: string, due_date: string, amount: float|string}>  $checks
+     * @return array<int, Payment>
+     *
+     * @throws RuntimeException on a version conflict or when there's no check.
+     */
+    public function recordChecks(int $expectedVersion, array $checks, ?int $paymentMethodId = null): array
+    {
+        $method = PaymentMethod::find($paymentMethodId) ?? PaymentMethod::forType('check');
+
+        if ($method->type !== 'check') {
+            throw new RuntimeException("אמצעי התשלום שנבחר אינו צ'קים.");
+        }
+
+        if ($checks === []) {
+            throw new RuntimeException("יש להזין לפחות צ'ק אחד.");
+        }
+
+        return DB::transaction(function () use ($expectedVersion, $checks, $method) {
+            $version = $expectedVersion;
+            $payments = [];
+
+            foreach ($checks as $check) {
+                $payments[] = $this->recordPayment($version, (float) $check['amount'], null, $method->id, (string) $check['number'], (string) $check['due_date']);
+                $version = $this->version;
+            }
+
+            return $payments;
         });
     }
 

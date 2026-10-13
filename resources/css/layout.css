@@ -362,3 +362,10 @@ td.mono { display: table-cell; }
 .pay-note, .pay-panel .note, .pay-secondary .note { font-size: var(--fs-caption); color: var(--color-text-secondary); margin: 0; }
 .pay-panel .actions { display: flex; gap: var(--sp-sm); flex-wrap: wrap; align-items: center; }
 .pay-secondary { display: flex; gap: var(--sp-sm); flex-wrap: wrap; align-items: center; margin-top: var(--sp-md); padding-top: var(--sp-md); border-top: 1px dashed var(--color-border); }
+.check-rows td { vertical-align: top; }
+.check-rows input { width: 100%; min-width: 110px; }
+.field-error { color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px; }
+
+/* ===== Dashboard: checks due reminder ===== */
+.check-reminder { border: 1.5px solid var(--color-warning); background: var(--color-warning-bg); margin-bottom: var(--sp-lg); }
+.check-reminder-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-md); flex-wrap: wrap; padding: var(--sp-sm) 0; border-top: 1px solid rgb(0 0 0 / 0.08); }

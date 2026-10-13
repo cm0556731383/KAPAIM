@@ -41,6 +41,8 @@ class extends Component
         return Payment::whereHas('paymentMethod', fn ($q) => $q->where('type', 'check'))
             ->whereNull('cleared_date')
             ->with(['deal.customer.school'])
+            ->orderByRaw('check_due_date IS NULL')
+            ->orderBy('check_due_date')
             ->orderBy('payment_date')
             ->get();
     }
@@ -108,15 +110,17 @@ class extends Component
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>לקוחה</th><th>עסקה</th><th>סכום</th><th>תאריך קבלה</th><th>סטטוס</th></tr></thead>
+                <thead><tr><th>לקוחה</th><th>עסקה</th><th>מס' צ'ק</th><th>סכום</th><th>תאריך פירעון</th><th>התקבל</th><th>סטטוס</th></tr></thead>
                 <tbody>
                     @foreach ($this->pendingChecks as $payment)
                         <tr>
                             <td>{{ $payment->deal->customer->school?->name ?? '—' }}</td>
                             <td><a href="{{ route('deal-detail', $payment->deal) }}">{{ $payment->deal->program_name_snapshot ?? $payment->deal->bundle_name_snapshot }}</a></td>
+                            <td class="ltr-num">{{ $payment->check_number ?? '—' }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
+                            <td class="ltr-num">{{ $payment->check_due_date?->format('d/m/Y') ?? '—' }}</td>
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
-                            <td><span class="badge badge-warning">ממתין לפירעון</span></td>
+                            <td><span class="badge {{ $payment->isCheckDue() ? 'badge-error' : 'badge-warning' }}">{{ $payment->isCheckDue() ? 'הגיע מועד הפירעון' : 'ממתין לפירעון' }}</span></td>
                         </tr>
                     @endforeach
                 </tbody>

@@ -8,6 +8,7 @@ use App\Models\Deal;
 use App\Models\Document;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\ExternalOperation;
+use App\Models\Payment;
 use App\Models\PaymentLink;
 use App\Models\PaymentMethod;
 use App\Models\Receipt;
@@ -170,7 +171,7 @@ class SummitClient
 
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, $email),
-            'Payments' => [$this->payment($amount, $method)],
+            'Payments' => [$this->payment($amount, $method, $receipt->payment)],
             'OriginalDocumentID' => $this->sumitDocumentId($invoice),
         ], fn ($v) => $v !== null)));
         $invoice->deal->lockToBusinessEntity($entity);
@@ -352,15 +353,21 @@ class SummitClient
      * (settings screen); one SUMIT has no type for goes as "Other", named —
      * SUMIT rejects a "General" payment without a payer ("יש להזין מוטב/מחויב").
      */
-    private function payment(float $amount, ?PaymentMethod $method): array
+    private function payment(float $amount, ?PaymentMethod $method, ?Payment $payment = null): array
     {
         [$type, $detailsKey] = self::PAYMENT_TYPES[$method?->type] ?? [8, 'Details_Other'];
 
-        return [
-            'Amount' => $amount,
-            'Type' => $type,
-            $detailsKey => $detailsKey === 'Details_Other' ? ['Type' => $method?->name ?? 'אחר'] : (object) [],
-        ];
+        $details = match ($detailsKey) {
+            'Details_Other' => ['Type' => $method?->name ?? 'אחר'],
+            // A check's own number and due date go on its receipt.
+            'Details_Cheque' => array_filter([
+                'ChequeNumber' => $payment?->check_number,
+                'DueDate' => $payment?->check_due_date?->toDateString(),
+            ]) ?: (object) [],
+            default => (object) [],
+        };
+
+        return ['Amount' => $amount, 'Type' => $type, $detailsKey => $details];
     }
 
     private function documentDetails(int $type, Deal $deal, ?string $email): array

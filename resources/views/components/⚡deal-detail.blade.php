@@ -79,6 +79,9 @@ class extends Component
     /** The payments box's chosen type for this payment — independent of the deal's planned method. */
     public string $payMethodId = '';
 
+    /** Checks being recorded together: each {number, due_date, amount}. */
+    public array $checkRows = [];
+
     // ===== קישור לתשלום (PaymentLink) =====
     public string $linkAmount = '';
 
@@ -96,6 +99,7 @@ class extends Component
         $this->documentError = session('documentError');
         $this->payMethodId = (string) ($this->deal->payment_method_id ?? '');
         $this->resetLinkForm();
+        $this->addCheckRow();
     }
 
     /** The type ('card', 'recurring', 'check', ...) chosen in the payments box. */
@@ -352,6 +356,66 @@ class extends Component
         }
 
         $this->notifyPaymentWithReceipt($payment, "התשלום נרשם (₪{$data['paymentAmount']})", $runner, $summit);
+    }
+
+    // ----- צ'קים -----
+
+    public function addCheckRow(): void
+    {
+        // A new row continues the last one: next number, a month later, same amount.
+        $last = end($this->checkRows) ?: null;
+        $this->checkRows[] = [
+            'number' => $last && ctype_digit((string) $last['number']) ? (string) ((int) $last['number'] + 1) : '',
+            'due_date' => $last && $last['due_date'] ? \Illuminate\Support\Carbon::parse($last['due_date'])->addMonthNoOverflow()->toDateString() : now()->toDateString(),
+            'amount' => $last['amount'] ?? '',
+        ];
+    }
+
+    public function removeCheckRow(int $index): void
+    {
+        unset($this->checkRows[$index]);
+        $this->checkRows = array_values($this->checkRows);
+
+        if ($this->checkRows === []) {
+            $this->addCheckRow();
+        }
+    }
+
+    /** Records every check row as a check payment of its own; each one's receipt follows when it clears. */
+    public function recordChecks(ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+
+        $this->validate([
+            'checkRows' => ['required', 'array', 'min:1'],
+            'checkRows.*.number' => ['required', 'string', 'max:50'],
+            'checkRows.*.due_date' => ['required', 'date'],
+            'checkRows.*.amount' => ['required', 'numeric', 'gt:0'],
+        ], [], ['checkRows.*.number' => "מס' צ'ק", 'checkRows.*.due_date' => 'תאריך פירעון', 'checkRows.*.amount' => 'סכום']);
+
+        try {
+            $payments = $this->deal->recordChecks($this->loadedVersion, $this->checkRows, (int) $this->payMethodId ?: null);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $total = array_sum(array_map(fn (Payment $p) => (float) $p->amount, $payments));
+
+        $activityLogger->log('payment.recorded', 'נרשמו '.count($payments)." צ'קים בסך ₪".number_format($total, 2)." עבור עסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id,
+            'customer_id' => $this->deal->customer_id,
+            'metadata' => ['amount' => $total, 'payment_ids' => array_map(fn (Payment $p) => $p->id, $payments)],
+        ]);
+
+        $this->checkRows = [];
+        $this->addCheckRow();
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments);
+
+        $this->notifySuccess(count($payments)." צ'קים נרשמו (₪".number_format($total, 0).'). ביום הפירעון של כל צ\'ק תופיע תזכורת להפקת קבלה.');
     }
 
     /**
@@ -849,6 +913,10 @@ class extends Component
                 <div class="cell"><div class="k">זוכה</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
             @endif
             <div class="cell"><div class="k">שולם</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
+            @php $unclearedChecks = $this->payments->filter(fn ($p) => $p->check_status && ! $p->cleared_date); @endphp
+            @if ($unclearedChecks->isNotEmpty())
+                <div class="cell"><div class="k">מתוכם בצ'קים שטרם נפרעו ({{ $unclearedChecks->count() }})</div><div class="v ltr-num">₪{{ number_format($unclearedChecks->sum('amount'), 0) }}</div></div>
+            @endif
             <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>
 
@@ -933,6 +1001,48 @@ class extends Component
                                 </form>
                             @endif
                         </details>
+                    @elseif ($type === 'check')
+                        {{-- One row per check received; each becomes a check payment of its own. --}}
+                        <form wire:submit="recordChecks">
+                            <div class="table-scroll">
+                            <table class="check-rows">
+                                <thead><tr><th>מס' צ'ק</th><th>תאריך פירעון</th><th>סכום</th><th></th></tr></thead>
+                                <tbody>
+                                    @foreach ($checkRows as $i => $row)
+                                        <tr wire:key="check-row-{{ $i }}">
+                                            <td>
+                                                <input type="text" wire:model="checkRows.{{ $i }}.number" class="ltr-num" dir="ltr" inputmode="numeric" aria-label="מס' צ'ק">
+                                                @error("checkRows.$i.number") <div class="field-error">{{ $message }}</div> @enderror
+                                            </td>
+                                            <td>
+                                                <input type="date" wire:model="checkRows.{{ $i }}.due_date" aria-label="תאריך פירעון">
+                                                @error("checkRows.$i.due_date") <div class="field-error">{{ $message }}</div> @enderror
+                                            </td>
+                                            <td>
+                                                <input type="text" wire:model="checkRows.{{ $i }}.amount" class="ltr-num" dir="ltr" placeholder="₪" aria-label="סכום">
+                                                @error("checkRows.$i.amount") <div class="field-error">{{ $message }}</div> @enderror
+                                            </td>
+                                            <td>
+                                                @if (count($checkRows) > 1)
+                                                    <button type="button" wire:click="removeCheckRow({{ $i }})" class="btn btn-ghost btn-sm" aria-label="הסרת השורה">×</button>
+                                                @endif
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                            </div>
+                            <div class="actions" style="margin-top:var(--sp-sm)">
+                                <button type="button" wire:click="addCheckRow" class="btn btn-ghost btn-sm">+ צ'ק נוסף</button>
+                                <span class="note">השורה החדשה ממשיכה את הקודמת: המספר הבא, חודש אחרי, אותו סכום.</span>
+                            </div>
+                            <p class="note" style="margin-top:var(--sp-sm)">כל צ'ק נרשם כ"טרם נפרע". ביום הפירעון שלו תופיע במסך הראשי תזכורת עם כפתור להפקת הקבלה.</p>
+                            <div class="actions" style="margin-top:var(--sp-md)">
+                                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="recordChecks">
+                                    רישום {{ count($checkRows) > 1 ? count($checkRows)." הצ'קים" : "הצ'ק" }}
+                                </button>
+                            </div>
+                        </form>
                     @else
                         <form wire:submit="recordPayment" class="form-grid">
                             <div>
@@ -945,9 +1055,7 @@ class extends Component
                                 <input type="date" id="paymentDate" wire:model="paymentDate">
                             </div>
                             <p class="full note">
-                                @if ($type === 'check')
-                                    הצ'ק נרשם כ"טרם נפרע". כשיסומן כנפרע בטבלה למטה, הקבלה תופק ותישלח ללקוחה.
-                                @elseif ($hasInvoice)
+                                @if ($hasInvoice)
                                     הקבלה תופק ותישלח ללקוחה מיד עם הרישום.
                                 @else
                                     לעסקה טרם הופקה חשבונית — התשלום יירשם, והקבלה תופק אחרי הפקת החשבונית.
@@ -955,7 +1063,7 @@ class extends Component
                             </p>
                             <div class="full actions">
                                 <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="recordPayment">
-                                    {{ $type === 'check' ? "רישום הצ'ק" : ($hasInvoice ? 'רישום תשלום והפקת קבלה' : 'רישום תשלום') }}
+                                    {{ $hasInvoice ? 'רישום תשלום והפקת קבלה' : 'רישום תשלום' }}
                                 </button>
                             </div>
                         </form>
@@ -1008,11 +1116,17 @@ class extends Component
                             <td>{{ $payment->paymentMethod?->name }}</td>
                             <td>
                                 @if ($payment->check_status)
+                                    @if ($payment->check_number || $payment->check_due_date)
+                                        <div class="ltr-num" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-bottom:4px">
+                                            @if ($payment->check_number)מס' {{ $payment->check_number }}@endif
+                                            @if ($payment->check_due_date) · פירעון {{ $payment->check_due_date->format('d/m/Y') }}@endif
+                                        </div>
+                                    @endif
                                     @if ($payment->cleared_date)
                                         <span class="badge badge-success">נפרע <span class="ltr-num">{{ $payment->cleared_date->format('d/m/Y') }}</span></span>
                                     @else
-                                        <span class="badge badge-warning">טרם נפרע</span>
-                                        <button type="button" wire:click="markCheckCleared({{ $payment->id }})" wire:confirm="לסמן את הצ'ק כנפרע ולהפיק קבלה?" class="btn btn-ghost btn-sm">סימון כנפרע</button>
+                                        <span class="badge {{ $payment->isCheckDue() ? 'badge-error' : 'badge-warning' }}">{{ $payment->isCheckDue() ? 'הגיע מועד הפירעון' : 'טרם נפרע' }}</span>
+                                        <button type="button" wire:click="markCheckCleared({{ $payment->id }})" wire:confirm="לסמן את הצ'ק כנפרע ולהפיק קבלה?" class="btn btn-ghost btn-sm">נפרע — הפקת קבלה</button>
                                     @endif
                                 @else
                                     —

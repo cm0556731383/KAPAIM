@@ -22,7 +22,7 @@ use RuntimeException;
  */
 #[Fillable([
     'deal_id', 'payment_method_id', 'status_id', 'amount',
-    'check_status', 'payment_date', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
+    'check_status', 'check_number', 'check_due_date', 'payment_date', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
 ])]
 class Payment extends Model
 {
@@ -38,6 +38,7 @@ class Payment extends Model
             'amount' => 'decimal:2',
             'payment_date' => 'datetime',
             'cleared_date' => 'datetime',
+            'check_due_date' => 'date',
         ];
     }
 
@@ -65,6 +66,23 @@ class Payment extends Model
     public function isCheck(): bool
     {
         return $this->paymentMethod?->type === 'check';
+    }
+
+    /** An uncleared check whose due date has come — the dashboard asks whether to issue its receipt. */
+    public function isCheckDue(): bool
+    {
+        return $this->check_status === self::CHECK_RECEIVED && ! $this->cleared_date
+            && $this->check_due_date && ! $this->check_due_date->isFuture();
+    }
+
+    /** Uncleared checks due by today, soonest first. */
+    public function scopeChecksDue($query)
+    {
+        return $query->where('check_status', self::CHECK_RECEIVED)
+            ->whereNull('cleared_date')
+            ->whereNotNull('check_due_date')
+            ->whereDate('check_due_date', '<=', today())
+            ->orderBy('check_due_date');
     }
 
     /**

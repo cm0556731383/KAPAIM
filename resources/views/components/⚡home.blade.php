@@ -1,6 +1,12 @@
 <?php
 
+use App\Concerns\Notifies;
+use App\Models\Payment;
+use App\Models\Receipt;
+use App\Services\ActivityLogger;
 use App\Services\DashboardSummary;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -17,6 +23,8 @@ new
 #[Layout('layouts.app', ['title' => 'מסך הבית — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     #[Computed]
     public function canSeeLeadItems(): bool
     {
@@ -29,6 +37,72 @@ class extends Component
     public function canSeeFinancials(): bool
     {
         return auth()->user()->can('payments.manage');
+    }
+
+    /** Checks whose due date has come and that aren't marked cleared yet — the "issue its receipt?" reminder. */
+    #[Computed]
+    public function dueChecks()
+    {
+        if (! $this->canSeeFinancials) {
+            return collect();
+        }
+
+        return Payment::checksDue()->with(['deal.customer.school', 'deal.documents'])->get();
+    }
+
+    /**
+     * The reminder's answer: the check cleared — marked so (FR-4.28) and its
+     * receipt issued, SUMIT emailing it to the customer.
+     */
+    public function clearCheck(int $paymentId, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
+    {
+        abort_unless($this->canSeeFinancials, 403);
+
+        $payment = Payment::checksDue()->findOrFail($paymentId);
+        $deal = $payment->deal;
+
+        try {
+            $payment->markCleared();
+        } catch (\RuntimeException $e) {
+            $this->notifyWarning($e->getMessage());
+
+            return;
+        }
+
+        $activityLogger->log('payment.check_cleared', "צ'ק בסך ₪{$payment->amount} נפרע עבור עסקה #{$deal->id}", [
+            'deal_id' => $deal->id, 'customer_id' => $deal->customer_id, 'metadata' => ['payment_id' => $payment->id],
+        ]);
+        unset($this->dueChecks);
+
+        if (! $deal->issuedInvoice()) {
+            $this->notifyInfo("הצ'ק סומן כנפרע. לעסקה טרם הופקה חשבונית — הקבלה תופק מכרטיס העסקה אחרי הפקתה.");
+
+            return;
+        }
+
+        try {
+            Receipt::issueFor($deal, $payment->fresh(), $runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->notifyWarning("הצ'ק סומן כנפרע, אך הקבלה לא הופקה: {$e->getMessage()}");
+
+            return;
+        }
+
+        $this->notifySuccess("הצ'ק סומן כנפרע והקבלה נשלחה ללקוחה.");
+    }
+
+    /** "Not yet" — the check stays uncleared; the reminder comes back tomorrow. */
+    public function snoozeCheck(int $paymentId): void
+    {
+        $snoozed = session('snoozed_checks', []);
+        $snoozed[$paymentId] = today()->toDateString();
+        session(['snoozed_checks' => $snoozed]);
+        unset($this->dueChecks);
+    }
+
+    public function isSnoozed(int $paymentId): bool
+    {
+        return (session('snoozed_checks', [])[$paymentId] ?? null) === today()->toDateString();
     }
 
     #[Computed]
@@ -85,6 +159,31 @@ class extends Component
             <a href="{{ route('leads') }}" class="btn btn-primary">+ ליד חדש</a>
         @endif
     </div>
+
+    @php $dueChecks = $this->dueChecks->reject(fn ($p) => $this->isSnoozed($p->id)); @endphp
+    @if ($dueChecks->isNotEmpty())
+        {{-- Reminder: a check's due date has come — has it cleared? Then issue its receipt. --}}
+        <div class="card check-reminder" role="alert">
+            <h3>צ'קים לפירעון — להפיק קבלה?</h3>
+            <p class="pay-note" style="margin:-8px 0 var(--sp-md)">הגיע מועד הפירעון של {{ $dueChecks->count() === 1 ? "הצ'ק הבא" : "הצ'קים הבאים" }}. אם הכסף נכנס לחשבון — סמני כנפרע, והקבלה תופק ותישלח ללקוחה.</p>
+            @foreach ($dueChecks as $check)
+                <div class="check-reminder-row" wire:key="due-check-{{ $check->id }}">
+                    <div>
+                        <a href="{{ route('deal-detail', $check->deal) }}" style="font-weight:600">{{ $check->deal->customer->school?->name ?? '—' }}</a>
+                        <div class="pay-note ltr-num">
+                            צ'ק{{ $check->check_number ? " מס' {$check->check_number}" : '' }} ·
+                            ₪{{ number_format((float) $check->amount, 0) }} ·
+                            פירעון {{ $check->check_due_date->format('d/m/Y') }}{{ $check->check_due_date->isToday() ? ' (היום)' : '' }}
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap">
+                        <button type="button" wire:click="clearCheck({{ $check->id }})" wire:loading.attr="disabled" class="btn btn-primary btn-sm">נפרע — הפקת קבלה</button>
+                        <button type="button" wire:click="snoozeCheck({{ $check->id }})" class="btn btn-ghost btn-sm">עדיין לא — להזכיר מחר</button>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+    @endif
 
     <div class="kpis">
         @if ($this->canSeeLeadItems)

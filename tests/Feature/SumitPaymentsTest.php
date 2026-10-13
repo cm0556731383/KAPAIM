@@ -391,6 +391,89 @@ class SumitPaymentsTest extends TestCase
         $this->assertNotSame($check->id, $deal->fresh()->payment_method_id); // the box never touches the deal's planned method
     }
 
+    // ----- checks -----
+
+    public function test_several_checks_are_recorded_with_numbers_and_due_dates_and_no_receipt_yet(): void
+    {
+        $this->fakeSumit();
+        $deal = $this->cardDealWithInvoice(900);
+        $this->actingAsOwner();
+        $checks = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+
+        $component = Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $checks->id)
+            ->set('checkRows.0', ['number' => '1001', 'due_date' => '2026-11-01', 'amount' => '300'])
+            ->call('addCheckRow')
+            ->call('addCheckRow');
+
+        // A new row continues the last one.
+        $this->assertSame(['number' => '1002', 'due_date' => '2026-12-01', 'amount' => '300'], $component->get('checkRows.1'));
+
+        $component->call('recordChecks')->assertSet('paymentError', null)->assertHasNoErrors();
+
+        $this->assertSame(['1001', '1002', '1003'], $deal->payments()->orderBy('id')->pluck('check_number')->all());
+        $this->assertSame(['2026-11-01', '2026-12-01', '2027-01-01'], $deal->payments()->orderBy('id')->get()->map(fn ($p) => $p->check_due_date->toDateString())->all());
+        $this->assertSame(0, Receipt::count());
+        $this->assertEquals(900, $deal->fresh()->totalPaid());
+    }
+
+    public function test_a_check_row_needs_a_number_due_date_and_amount(): void
+    {
+        $deal = $this->cardDealWithInvoice();
+        $this->actingAsOwner();
+        $checks = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+
+        Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $checks->id)
+            ->set('checkRows.0', ['number' => '', 'due_date' => '', 'amount' => '0'])
+            ->call('recordChecks')
+            ->assertHasErrors(['checkRows.0.number', 'checkRows.0.due_date', 'checkRows.0.amount']);
+
+        $this->assertSame(0, $deal->payments()->count());
+    }
+
+    public function test_on_its_due_date_a_check_asks_for_its_receipt_on_the_dashboard(): void
+    {
+        $this->fakeSumit();
+        $deal = $this->cardDealWithInvoice(900);
+        $this->actingAsOwner();
+        $method = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        [$due, $later] = $deal->recordChecks($deal->version, [
+            ['number' => '501', 'due_date' => today()->toDateString(), 'amount' => 300],
+            ['number' => '502', 'due_date' => today()->addMonth()->toDateString(), 'amount' => 300],
+        ], $method->id);
+
+        $home = Livewire::test('home')->assertSee('לפירעון — להפיק קבלה')->assertSee("מס' 501")->assertDontSee("מס' 502");
+
+        $home->call('clearCheck', $due->id);
+
+        $this->assertNotNull($due->fresh()->cleared_date);
+        $this->assertSame(1, Receipt::where('payment_id', $due->id)->count());
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/accounting/documents/create/')
+            && ($request['Payments'][0]['Type'] ?? null) === 4
+            && $request['Payments'][0]['Details_Cheque'] == ['ChequeNumber' => '501', 'DueDate' => today()->toDateString()]);
+        $home->assertDontSee("מס' 501");
+
+        // A check not due yet can't be cleared from the reminder.
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        Livewire::test('home')->call('clearCheck', $later->id);
+    }
+
+    public function test_a_check_reminder_can_wait_until_tomorrow(): void
+    {
+        $deal = $this->cardDealWithInvoice();
+        $this->actingAsOwner();
+        $method = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        $deal->recordChecks($deal->version, [['number' => '77', 'due_date' => today()->subDay()->toDateString(), 'amount' => 100]], $method->id);
+
+        Livewire::test('home')->assertSee("מס' 77")
+            ->call('snoozeCheck', $deal->payments()->first()->id)
+            ->assertDontSee("מס' 77");
+
+        $this->travel(1)->days();
+        Livewire::test('home')->assertSee("מס' 77");
+    }
+
     // ----- fixtures -----
 
     private function standingOrderDeal(): Deal
