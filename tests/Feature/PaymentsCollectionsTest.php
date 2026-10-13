@@ -121,17 +121,21 @@ class PaymentsCollectionsTest extends TestCase
 
     // ----- FR-4.30/FR-4.31: payment method locked once a payment exists -----
 
-    public function test_payment_method_cannot_change_once_a_payment_exists(): void
+    /** Owner's call, 2026-10-13: the deal's method is only its plan — a deal can be paid in several ways. */
+    public function test_a_deal_can_be_paid_in_several_ways_and_its_planned_method_stays_editable(): void
     {
-        $deal = $this->createDeal();
+        $deal = $this->createDeal(agreedAmount: 1000);
         $methodA = $this->createPaymentMethod('אמצעי א');
         $methodB = $this->createPaymentMethod('אמצעי ב');
 
         $deal->updatePaymentMethod($methodA->id);
-        $deal->recordPayment($deal->version, 100);
+        $first = $deal->recordPayment($deal->version, 100);
+        $second = $deal->fresh()->recordPayment($deal->fresh()->version, 200, null, $methodB->id);
+        $deal->fresh()->updatePaymentMethod($methodB->id);
 
-        $this->expectException(RuntimeException::class);
-        $deal->updatePaymentMethod($methodB->id);
+        $this->assertSame($methodA->id, $first->payment_method_id);
+        $this->assertSame($methodB->id, $second->payment_method_id);
+        $this->assertSame($methodB->id, $deal->fresh()->payment_method_id);
     }
 
     public function test_payment_method_can_still_change_freely_before_any_payment(): void
@@ -146,7 +150,7 @@ class PaymentsCollectionsTest extends TestCase
         $this->assertSame($methodB->id, $deal->fresh()->payment_method_id);
     }
 
-    public function test_the_deal_detail_screen_blocks_a_payment_method_change_once_a_payment_exists(): void
+    public function test_the_deal_detail_screen_changes_the_planned_method_after_a_payment(): void
     {
         $deal = $this->createDeal();
         $methodA = $this->createPaymentMethod('אמצעי א');
@@ -158,9 +162,10 @@ class PaymentsCollectionsTest extends TestCase
             ->set('agreedAmount', (string) $deal->agreed_amount)
             ->set('paymentMethodId', (string) $methodB->id)
             ->call('saveDetails')
-            ->assertSet('detailsError', fn ($message) => ! empty($message));
+            ->assertSet('detailsError', null);
 
-        $this->assertSame($methodA->id, $deal->fresh()->payment_method_id);
+        $this->assertSame($methodB->id, $deal->fresh()->payment_method_id);
+        $this->assertSame($methodA->id, $deal->payments()->first()->payment_method_id);
     }
 
     // ----- FR-8.19: optimistic locking on payment recording -----

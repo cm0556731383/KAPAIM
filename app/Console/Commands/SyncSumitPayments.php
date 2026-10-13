@@ -83,7 +83,7 @@ class SyncSumitPayments extends Command
             return;
         }
 
-        $payment = $deal->recordSumitPayment($sumitPayment, $runner);
+        $payment = $deal->recordSumitPayment($sumitPayment, $runner, 'recurring');
 
         if ($payment?->wasRecentlyCreated) {
             $logger->log('payment.recorded', "נגבה תשלום חודשי בהוראת קבע ב-SUMIT בסך ₪{$payment->amount} עבור עסקה #{$deal->id}", [

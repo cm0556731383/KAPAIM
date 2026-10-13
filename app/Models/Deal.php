@@ -398,24 +398,16 @@ class Deal extends Model
     }
 
     /**
-     * FR-4.30/FR-4.31: a deal's payment method may be changed freely only
-     * until an actual payment has been recorded against it — once any
-     * Payment row exists, further changes are blocked (the value itself is
-     * unaffected — passing the current value back is always a no-op).
-     *
-     * @throws RuntimeException when payments already exist and a real change is attempted.
+     * The deal's planned payment method — information for the business owner
+     * only (owner's call, 2026-10-13, replacing FR-4.30/FR-4.31's "one method,
+     * locked after a payment"). Each payment carries its own method, chosen
+     * when it's recorded, so a deal can be paid in several ways.
      */
     public function updatePaymentMethod(?int $paymentMethodId): void
     {
-        if ($paymentMethodId === $this->payment_method_id) {
-            return;
+        if ($paymentMethodId !== $this->payment_method_id) {
+            $this->update(['payment_method_id' => $paymentMethodId]);
         }
-
-        if ($this->payments()->exists()) {
-            throw new RuntimeException('לא ניתן לשנות את אמצעי התשלום לאחר שהתקבל תשלום בפועל עבור העסקה.');
-        }
-
-        $this->update(['payment_method_id' => $paymentMethodId]);
     }
 
     /**
@@ -435,20 +427,23 @@ class Deal extends Model
      * agreed_amount (e.g. a network-institution branch paying a
      * network-negotiated amount) — never blocked here, only tracked.
      *
-     * @throws RuntimeException on a version conflict, or when the deal has
-     *                          no payment method set yet (FR-4.30).
+     * @throws RuntimeException on a version conflict, or when no payment
+     *                          method is given and the deal has none.
      */
-    public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null): Payment
+    public function recordPayment(int $expectedVersion, float $amount, ?string $paymentDate = null, ?int $paymentMethodId = null): Payment
     {
-        if (! $this->payment_method_id) {
-            throw new RuntimeException('יש לבחור אמצעי תשלום לעסקה לפני רישום תשלום.');
+        // The payment's own method; the deal's planned one when none is given.
+        $method = PaymentMethod::find($paymentMethodId ?? $this->payment_method_id);
+
+        if (! $method) {
+            throw new RuntimeException('יש לבחור אמצעי תשלום לפני רישום תשלום.');
         }
 
         if ($amount <= 0) {
             throw new RuntimeException('סכום התשלום חייב להיות גדול מאפס.');
         }
 
-        return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate) {
+        return DB::transaction(function () use ($expectedVersion, $amount, $paymentDate, $method) {
             $prospectiveTotal = $this->totalPaid() + $amount;
             $becomesFullyPaid = $prospectiveTotal >= $this->amountDue();
 
@@ -476,10 +471,10 @@ class Deal extends Model
                 ['is_active' => true, 'sort_order' => $becomesFullyPaid ? 2 : 3],
             );
 
-            $isCheck = $this->paymentMethod?->type === 'check';
+            $isCheck = $method->type === 'check';
 
             $payment = $this->payments()->create([
-                'payment_method_id' => $this->payment_method_id,
+                'payment_method_id' => $method->id,
                 'status_id' => $paymentStatus->id,
                 'amount' => $amount,
                 'check_status' => $isCheck ? Payment::CHECK_RECEIVED : null,
@@ -510,7 +505,7 @@ class Deal extends Model
      *
      * Returns null for a payment SUMIT reports as not valid.
      */
-    public function recordSumitPayment(array $sumitPayment, ExternalOperationRunner $runner): ?Payment
+    public function recordSumitPayment(array $sumitPayment, ExternalOperationRunner $runner, string $methodType = 'card'): ?Payment
     {
         $sumitId = (string) ($sumitPayment['ID'] ?? '');
 
@@ -530,7 +525,7 @@ class Deal extends Model
             $documentId = (string) ($sumitPayment['DocumentID'] ?? '');
             $documentId = $documentId !== '' && $documentId !== '0' ? $documentId : null;
 
-            $payment = $this->recordPayment($this->version, (float) $sumitPayment['Amount'], $sumitPayment['Date'] ?? null);
+            $payment = $this->recordPayment($this->version, (float) $sumitPayment['Amount'], $sumitPayment['Date'] ?? null, PaymentMethod::forType($methodType)->id);
             $payment->update(['sumit_payment_id' => $sumitId, 'sumit_document_id' => $documentId]);
 
             if ($documentId) {
@@ -558,10 +553,6 @@ class Deal extends Model
      */
     public function chargeCardViaSummit(int $expectedVersion, float $amount, ExternalOperationRunner $runner, SummitClient $summit): Payment
     {
-        if ($this->paymentMethod?->type !== 'card') {
-            throw new RuntimeException('סליקת אשראי מול Summit זמינה רק כאשר אמצעי התשלום של העסקה הוא אשראי.');
-        }
-
         // The version check must come before the card is charged: once SUMIT
         // took the money, the payment is recorded no matter what (below).
         if ((int) self::whereKey($this->id)->value('version') !== $expectedVersion) {
@@ -585,7 +576,7 @@ class Deal extends Model
 
         // The card was charged — record it against the current version even if
         // the deal changed meanwhile, so a charge is never left unrecorded.
-        return $this->recordPayment((int) self::whereKey($this->id)->value('version'), $amount);
+        return $this->recordPayment((int) self::whereKey($this->id)->value('version'), $amount, null, PaymentMethod::forType('card')->id);
     }
 
     /**
@@ -598,16 +589,12 @@ class Deal extends Model
      * (standingOrderItemIds()). SUMIT issues and emails each month's receipt
      * (FR-4.27 — automatic, no staff action).
      *
-     * @throws RuntimeException when the deal's payment method isn't a
-     *                          standing order, one is already registered, or
-     *                          SUMIT fails the request.
+     * @throws RuntimeException when one is already registered, the deal is
+     *                          paid or its subscription cancelled, or SUMIT
+     *                          fails the request.
      */
     public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit, ?float $monthly = null): ?Payment
     {
-        if ($this->paymentMethod?->type !== 'recurring') {
-            throw new RuntimeException('רישום הוראת קבע מול Summit זמין רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
-        }
-
         if ($this->standingOrderItemIds() !== []) {
             throw new RuntimeException('לעסקה זו כבר נרשמה הוראת קבע ב-SUMIT — רישום נוסף יחייב את הלקוחה פעמיים.');
         }
@@ -645,7 +632,7 @@ class Deal extends Model
         $firstCharge = (array) ($result['Payment'] ?? []);
 
         return $firstCharge
-            ? $this->recordSumitPayment($firstCharge + ['DocumentID' => $result['DocumentID'] ?? null, 'Amount' => $plan['monthly']], $runner)
+            ? $this->recordSumitPayment($firstCharge + ['DocumentID' => $result['DocumentID'] ?? null, 'Amount' => $plan['monthly']], $runner, 'recurring')
             : null;
     }
 

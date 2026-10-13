@@ -76,6 +76,9 @@ class extends Component
     /** Business-rule error from Deal::recordPayment()/Payment::markCleared()/Receipt::issueFor(). */
     public ?string $paymentError = null;
 
+    /** The payments box's chosen type for this payment — independent of the deal's planned method. */
+    public string $payMethodId = '';
+
     // ===== קישור לתשלום (PaymentLink) =====
     public string $linkAmount = '';
 
@@ -91,7 +94,14 @@ class extends Component
         $this->invoiceBusinessEntityId = (string) ($this->deal->business_entity_id ?? '');
         // Set by ⚡document-view when a failed Summit issuance deleted the invoice draft.
         $this->documentError = session('documentError');
+        $this->payMethodId = (string) ($this->deal->payment_method_id ?? '');
         $this->resetLinkForm();
+    }
+
+    /** The type ('card', 'recurring', 'check', ...) chosen in the payments box. */
+    public function payType(): ?string
+    {
+        return $this->activePaymentMethods->firstWhere('id', (int) $this->payMethodId)?->type;
     }
 
     /** Defaults: the outstanding balance, to the billing contact (else the primary one). */
@@ -99,7 +109,7 @@ class extends Component
     {
         $balance = $this->deal->outstandingBalance();
         // A standing-order deal pays its first month by link; a card deal its balance.
-        $amount = $this->deal->paymentMethod?->type === 'recurring' ? $this->deal->standingOrderPlan()['monthly'] : $balance;
+        $amount = $this->payType() === 'recurring' ? $this->deal->standingOrderPlan()['monthly'] : $balance;
         $this->linkAmount = $balance > 0 ? (string) round($amount, 2) : '';
         $contacts = $this->linkRecipients;
         $this->linkEmail = (string) ($contacts->firstWhere('is_accounting_contact', true)?->email ?? $contacts->firstWhere('is_primary', true)?->email ?? $contacts->first()?->email ?? '');
@@ -315,6 +325,7 @@ class extends Component
                 $this->loadedVersion,
                 (float) $data['paymentAmount'],
                 $data['paymentDate'] ?: null,
+                (int) $this->payMethodId ?: null,
             );
         } catch (\RuntimeException $e) {
             $this->paymentError = $e->getMessage();
@@ -375,24 +386,11 @@ class extends Component
         $this->notifySuccess($summit->isActive() ? "{$done} והקבלה נשלחה ללקוחה." : "{$done} והקבלה נרשמה במערכת (SUMIT מושבת).");
     }
 
-    /**
-     * The payments box's type choice — the deal's payment method (FR-4.30),
-     * changeable only until a payment exists (FR-4.31, Deal::updatePaymentMethod()).
-     */
+    /** The payments box's type choice — only for the payment being taken; the deal's planned method is untouched. */
     public function selectPaymentMethod(int $methodId): void
     {
         $this->paymentError = null;
-
-        try {
-            $this->deal->updatePaymentMethod(PaymentMethod::where('is_active', true)->findOrFail($methodId)->id);
-        } catch (\RuntimeException $e) {
-            $this->paymentError = $e->getMessage();
-
-            return;
-        }
-
-        $this->deal->refresh()->load('paymentMethod');
-        $this->syncFields();
+        $this->payMethodId = (string) $this->activePaymentMethods->firstWhere('id', $methodId)?->id;
         $this->resetLinkForm();
         $this->resetErrorBag();
     }
@@ -457,7 +455,7 @@ class extends Component
             'linkEmail' => ['required', 'email'],
         ], [], ['linkAmount' => 'סכום לתשלום', 'linkEmail' => 'דוא"ל הנמענת']);
 
-        $purpose = $this->deal->paymentMethod?->type === 'recurring' ? PaymentLink::PURPOSE_STANDING_ORDER : PaymentLink::PURPOSE_PAYMENT;
+        $purpose = $this->payType() === 'recurring' ? PaymentLink::PURPOSE_STANDING_ORDER : PaymentLink::PURPOSE_PAYMENT;
 
         try {
             $link = PaymentLink::createFor($this->deal, (float) $data['linkAmount'], $runner, $summit, $purpose);
@@ -523,7 +521,6 @@ class extends Component
     public function activePaymentMethods()
     {
         return PaymentMethod::where('is_active', true)
-            ->orWhere('id', $this->deal->payment_method_id)
             ->orderByRaw("CASE type WHEN 'card' THEN 1 WHEN 'recurring' THEN 2 WHEN 'bank_transfer' THEN 3 WHEN 'check' THEN 4 ELSE 5 END")
             ->orderBy('name')
             ->get();
@@ -699,6 +696,15 @@ class extends Component
                         @error('agreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
+                        <label for="paymentMethodId">אמצעי תשלום מתוכנן</label>
+                        <select id="paymentMethodId" wire:model="paymentMethodId">
+                            <option value="">— ללא —</option>
+                            @foreach ($this->paymentMethods as $option)
+                                <option value="{{ $option->id }}">{{ $option->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
                         <label for="studentsCount">מספר תלמידות</label>
                         <input type="text" id="studentsCount" wire:model="studentsCount" class="ltr-num" dir="ltr" inputmode="numeric">
                         @error('studentsCount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
@@ -825,12 +831,11 @@ class extends Component
          type takes: a SUMIT payment link (card), a link that sets up a
          standing order (recurring), or recording it here with its receipt. --}}
     @php
-        $method = $deal->paymentMethod;
+        $method = $this->activePaymentMethods->firstWhere('id', (int) $payMethodId);
         $type = $method?->type;
-        $locked = $this->payments->isNotEmpty();
         $hasInvoice = $deal->issuedInvoice() !== null;
         $credited = $deal->totalCredited();
-        $standingOrderRegistered = $type === 'recurring' && $deal->standingOrderItemIds() !== [];
+        $standingOrderRegistered = $deal->standingOrderItemIds() !== [];
         $typeHints = ['card' => 'קישור לתשלום ללקוחה', 'recurring' => 'חיוב חודשי אוטומטי', 'bank_transfer' => 'רישום ידני + קבלה', 'check' => 'קבלה בעת פירעון'];
     @endphp
     <div class="card" style="margin-top:var(--sp-lg)">
@@ -849,15 +854,12 @@ class extends Component
 
         @if ($this->outstandingBalance > 0)
             {{-- 1. סוג תשלום --}}
-            <p class="pay-step"><span class="n">1</span> אמצעי תשלום
-                @if ($locked)<span class="scope-pill" title="אמצעי התשלום ננעל לאחר שהתקבל תשלום בפועל">נעול — כבר התקבל תשלום</span>@endif
-            </p>
+            <p class="pay-step"><span class="n">1</span> איך משלמים הפעם?</p>
             <div class="pay-types" role="radiogroup" aria-label="אמצעי תשלום">
                 @foreach ($this->activePaymentMethods as $option)
-                    <button type="button" role="radio" aria-checked="{{ $option->id === $deal->payment_method_id ? 'true' : 'false' }}"
-                        class="pay-type {{ $option->id === $deal->payment_method_id ? 'selected' : '' }}"
-                        wire:click="selectPaymentMethod({{ $option->id }})"
-                        @disabled($locked)>
+                    <button type="button" role="radio" aria-checked="{{ $option->id === $method?->id ? 'true' : 'false' }}"
+                        class="pay-type {{ $option->id === $method?->id ? 'selected' : '' }}"
+                        wire:click="selectPaymentMethod({{ $option->id }})">
                         <span class="label">{{ $option->name }}</span>
                         <span class="hint">{{ $typeHints[$option->type] ?? 'רישום ידני + קבלה' }}</span>
                     </button>
@@ -885,16 +887,13 @@ class extends Component
                                 @error('linkAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                             </div>
                             <div>
-                                <label for="linkEmail">שליחה אל</label>
-                                @if ($this->linkRecipients->isNotEmpty())
-                                    <select id="linkEmail" wire:model="linkEmail">
-                                        @foreach ($this->linkRecipients as $contact)
-                                            <option value="{{ $contact->email }}">{{ $contact->name }} — {{ $contact->email }}</option>
-                                        @endforeach
-                                    </select>
-                                @else
-                                    <input type="text" id="linkEmail" wire:model="linkEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל">
-                                @endif
+                                <label for="linkEmail">שליחה אל (דוא"ל)</label>
+                                <input type="email" id="linkEmail" wire:model="linkEmail" list="linkEmailContacts" class="ltr-num" dir="ltr" placeholder="name@example.com" autocomplete="off">
+                                <datalist id="linkEmailContacts">
+                                    @foreach ($this->linkRecipients as $contact)
+                                        <option value="{{ $contact->email }}">{{ $contact->name }}</option>
+                                    @endforeach
+                                </datalist>
                                 @error('linkEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                             </div>
                             @if ($type === 'recurring')

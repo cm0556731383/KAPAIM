@@ -13,7 +13,7 @@ use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
- * A SUMIT payment page sent to the customer for a card deal — the customer
+ * A SUMIT payment page sent to the customer for a deal — the customer
  * pays by herself, instead of the secretary charging a card SUMIT already
  * holds (Deal::chargeCardViaSummit()).
  *
@@ -112,13 +112,7 @@ class PaymentLink extends Model
      */
     public static function createFor(Deal $deal, float $amount, ExternalOperationRunner $runner, SummitClient $summit, string $purpose = self::PURPOSE_PAYMENT): self
     {
-        $deal->loadMissing('paymentMethod');
-
         if ($purpose === self::PURPOSE_STANDING_ORDER) {
-            if ($deal->paymentMethod?->type !== 'recurring') {
-                throw new RuntimeException('קישור להקמת הוראת קבע נשלח רק לעסקה שאמצעי התשלום שלה הוא הוראת קבע.');
-            }
-
             if ($deal->standingOrderItemIds() !== []) {
                 throw new RuntimeException('לעסקה זו כבר רשומה הוראת קבע ב-SUMIT.');
             }
@@ -126,8 +120,6 @@ class PaymentLink extends Model
             if ($deal->subscription && ! $deal->subscription->isActive()) {
                 throw new RuntimeException('המנוי של העסקה אינו פעיל — לא ניתן להקים עבורו הוראת קבע.');
             }
-        } elseif ($deal->paymentMethod?->type !== 'card') {
-            throw new RuntimeException('קישור לתשלום נשלח רק לעסקה שאמצעי התשלום שלה הוא אשראי.');
         }
 
         if (! $deal->issuedInvoice()) {
@@ -230,7 +222,7 @@ class PaymentLink extends Model
             return $this->isPaid();
         }
 
-        $payment = $this->deal->recordSumitPayment($sumitPayment, $runner);
+        $payment = $this->deal->recordSumitPayment($sumitPayment, $runner, $this->isStandingOrder() ? 'recurring' : 'card');
 
         if (! $payment) {
             return false;

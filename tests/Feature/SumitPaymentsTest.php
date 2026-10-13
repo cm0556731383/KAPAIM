@@ -111,7 +111,7 @@ class SumitPaymentsTest extends TestCase
             && $request['Credentials']['CompanyID'] === 12345678);
     }
 
-    public function test_a_payment_link_needs_a_card_deal_an_invoice_and_a_balance(): void
+    public function test_a_payment_link_needs_an_invoice_and_a_balance(): void
     {
         $this->fakeSumit();
 
@@ -121,10 +121,11 @@ class SumitPaymentsTest extends TestCase
         $deal = $this->cardDealWithInvoice();
         $this->assertRefused(fn () => $this->newLink($deal, 401)); // more than the balance
 
-        $deal->update(['payment_method_id' => PaymentMethod::create(['name' => 'העברה', 'type' => 'bank_transfer', 'is_active' => true])->id]);
-        $this->assertRefused(fn () => $this->newLink($deal->fresh()));
-
         $this->assertSame(0, PaymentLink::count());
+
+        // The deal's planned method doesn't matter — any deal can be paid by link.
+        $deal->update(['payment_method_id' => PaymentMethod::create(['name' => 'העברה', 'type' => 'bank_transfer', 'is_active' => true])->id]);
+        $this->assertSame(PaymentLink::STATUS_PENDING, $this->newLink($deal->fresh(), 100)->status);
     }
 
     public function test_returning_from_a_paid_page_records_the_payment_and_sumits_receipt_once(): void
@@ -360,7 +361,7 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(1, Receipt::where('payment_id', $payment->id)->count());
     }
 
-    public function test_a_checks_receipt_is_issued_when_it_clears_and_the_type_locks_after_a_payment(): void
+    public function test_a_checks_receipt_is_issued_when_it_clears_and_the_deal_can_also_be_paid_another_way(): void
     {
         $this->fakeSumit();
         $deal = $this->cardDealWithInvoice();
@@ -377,9 +378,13 @@ class SumitPaymentsTest extends TestCase
         $component->call('markCheckCleared', $payment->id);
         $this->assertSame(1, Receipt::where('payment_id', $payment->id)->count());
 
-        $card = PaymentMethod::where('type', 'card')->firstOrFail();
-        $component->call('selectPaymentMethod', $card->id)->assertSet('paymentError', fn ($e) => filled($e));
-        $this->assertSame($check->id, $deal->fresh()->payment_method_id);
+        // A second payment of the same deal, another way.
+        $transfer = PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+        $component->call('selectPaymentMethod', $transfer->id)->set('paymentAmount', '100')->call('recordPayment')->assertSet('paymentError', null);
+
+        $this->assertEqualsCanonicalizing([$check->id, $transfer->id], $deal->payments()->pluck('payment_method_id')->all());
+        $this->assertSame(2, Receipt::count());
+        $this->assertNotSame($check->id, $deal->fresh()->payment_method_id); // the box never touches the deal's planned method
     }
 
     // ----- fixtures -----
