@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\ActivityLogger;
@@ -12,6 +13,8 @@ new
 #[Layout('layouts.app', ['title' => 'משתמשות והרשאות — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     public string $name = '';
     public string $email = '';
     public string $personalEmail = '';
@@ -190,7 +193,6 @@ class extends Component
         </div>
     @endif
 
-    <x-business-error-banner :message="$userError" />
 
     <section>
         <div class="section-head">

@@ -869,8 +869,6 @@ class extends Component
         </div>
     @endif
 
-    <x-business-error-banner :message="$conversionError" />
-    <x-business-error-banner :message="$duplicateWarning" type="warning" />
 
     <div class="cols2">
         <div>

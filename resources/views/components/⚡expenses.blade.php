@@ -244,7 +244,6 @@ class extends Component
         <a href="{{ route('cashflow-report') }}">דוח הכנסות ורווח</a>
     </div>
 
-    <x-business-error-banner :message="$expenseError" />
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">
         <div class="table-scroll">

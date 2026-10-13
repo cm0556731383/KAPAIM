@@ -260,7 +260,6 @@ class extends Component
             @if ($document->documentTemplate->fieldsInContent()->isNotEmpty())
                 <div class="card" style="margin-bottom:var(--sp-lg)">
                     <h3>שדות הטופס</h3>
-                    <x-business-error-banner :message="$fieldsError" />
                     <div class="form-grid">
                         @foreach ($document->documentTemplate->fieldsInContent() as $field)
                             <div class="full">
@@ -281,7 +280,6 @@ class extends Component
             @if ($document->document_type === 'invoice')
                 <div class="card" style="margin-bottom:var(--sp-lg); padding:0; overflow:hidden">
                     <div style="padding: var(--sp-lg) var(--sp-lg) 0"><h3>פירוט</h3></div>
-                    <x-business-error-banner :message="$lineError" style="margin:0 var(--sp-lg)" />
                     <div class="table-scroll">
                     <table>
                         <thead><tr><th>תיאור</th><th>כמות</th><th>מחיר יחידה</th><th>סכום</th><th></th></tr></thead>
@@ -329,7 +327,6 @@ class extends Component
             @if (in_array($document->document_type, ['invoice', 'credit_note'], true))
                 <div class="card">
                     <h3>הפקה מול Summit</h3>
-                    <x-business-error-banner :message="$sendError" />
                     @if ($document->sent_at)
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">
                             הופק מול Summit בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span>.
@@ -349,7 +346,6 @@ class extends Component
                 {{-- ===== נמענים ושליחה ===== --}}
                 <div class="card">
                     <h3>נמענים</h3>
-                    <x-business-error-banner :message="$sendError" />
 
                     @if ($document->sent_at)
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->format === 'pdf' ? 'קובץ PDF' : 'טופס דיגיטלי' }}.</p>

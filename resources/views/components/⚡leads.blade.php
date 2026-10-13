@@ -276,8 +276,6 @@ class extends Component
         </x-modal>
     </div>
 
-    <x-business-error-banner :message="$leadError" />
-    <x-business-error-banner :message="$duplicateWarning" type="warning" />
 
     {{-- ===== סינון ===== --}}
     <div class="filter-row">

@@ -866,8 +866,6 @@ class extends Component
         </div>
     </div>
 
-    <x-business-error-banner :message="$statusError" />
-    <x-business-error-banner :message="$detailsError" />
 
     <div class="cols2">
         <div>
@@ -948,7 +946,6 @@ class extends Component
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>מסמכים</h3>
 
-        <x-business-error-banner :message="$documentError" />
 
         <div class="doc-stepper">
             @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
@@ -1041,7 +1038,6 @@ class extends Component
     <div class="card" style="margin-top:var(--sp-lg)">
         <h3>תשלומים</h3>
 
-        <x-business-error-banner :message="$paymentError" />
 
         <div class="pay-summary">
             <div class="cell"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>

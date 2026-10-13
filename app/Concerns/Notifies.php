@@ -16,6 +16,36 @@ namespace App\Concerns;
  */
 trait Notifies
 {
+    /** error/warning property => the message already popped up, so an unrelated re-render doesn't pop it again. */
+    public array $shownErrors = [];
+
+    /**
+     * Every component's business errors (`?string $xxxError`) and rule
+     * warnings (`?string $xxxWarning`, e.g. a possible duplicate) pop up
+     * right after the action that set them — sticky until closed (FR-7.25)
+     * — instead of a standing banner. Livewire calls this trait hook after
+     * each render, early enough for the dispatch to reach the browser.
+     */
+    public function renderedNotifies(): void
+    {
+        foreach ((new \ReflectionObject($this))->getProperties(\ReflectionProperty::IS_PUBLIC) as $property) {
+            $name = $property->getName();
+
+            if (! preg_match('/(Error|Warning)$/', $name) || $property->isStatic()) {
+                continue;
+            }
+
+            $message = $this->{$name};
+
+            if (! is_string($message) || $message === '') {
+                unset($this->shownErrors[$name]);
+            } elseif (($this->shownErrors[$name] ?? null) !== $message) {
+                $this->shownErrors[$name] = $message;
+                str_ends_with($name, 'Warning') ? $this->notifyWarning($message, sticky: true) : $this->notifyError($message);
+            }
+        }
+    }
+
     protected function notifySuccess(string $message): void
     {
         $this->dispatch('notify', type: 'success', message: $message);

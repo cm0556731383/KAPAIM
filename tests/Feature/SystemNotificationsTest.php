@@ -25,10 +25,10 @@ use Tests\TestCase;
  * This is a cross-cutting stage: no new DB entities, so these tests check
  * the shared toast listener, the App\Concerns\Notifies wiring into a few
  * representative flows, the wire:confirm coverage for irreversible actions,
- * and that the shared <x-business-error-banner> partial still renders the
- * same blocking messages the per-component ?string $xxxError properties
- * always produced (FR-7.25) — a pure markup extraction, not a behavior
- * change (FR-7.26: none of this replaces ActivityLog).
+ * and that the blocking messages the per-component ?string $xxxError
+ * properties always produced (FR-7.25) now pop up as a sticky error toast
+ * (Notifies::renderedNotifies()) instead of a standing banner (FR-7.26:
+ * none of this replaces ActivityLog).
  */
 class SystemNotificationsTest extends TestCase
 {
@@ -215,14 +215,10 @@ class SystemNotificationsTest extends TestCase
             ->assertSeeHtml('wire:confirm="להמיר ליד זה ללקוחה? הליד יכול להיות מומר פעם אחת בלבד."');
     }
 
-    // ----- shared business-error banner (FR-7.25) regression -----
+    // ----- business errors pop up (FR-7.25) -----
 
-    /**
-     * Regression-proofs the markup extraction against ProgramsCatalogTest's
-     * gate (only one active subscription-type bundle) — same business rule
-     * as before, now rendered through <x-business-error-banner>.
-     */
-    public function test_business_error_banner_still_blocks_and_explains_a_duplicate_subscription_bundle(): void
+    /** ProgramsCatalogTest's gate (only one active subscription-type bundle) — same rule, now a sticky popup. */
+    public function test_a_business_error_pops_up_and_blocks_a_duplicate_subscription_bundle(): void
     {
         Bundle::create(['name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
 
@@ -231,13 +227,13 @@ class SystemNotificationsTest extends TestCase
             ->set('bundlePrice', '4500')
             ->set('bundleIsSubscriptionType', true)
             ->call('addBundle')
-            ->assertSee('קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני יצירת מארז מנוי חדש.');
+            ->assertDispatched('notify', type: 'error', message: 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני יצירת מארז מנוי חדש.', sticky: true);
 
         $this->assertDatabaseMissing('bundles', ['name' => 'מנוי שני']);
     }
 
-    /** Same regression, second gate: the deal-status optimistic-lock conflict banner (DealsManagementTest). */
-    public function test_business_error_banner_still_shows_a_concurrent_status_update_conflict(): void
+    /** Second gate: the deal-status optimistic-lock conflict (DealsManagementTest) pops up too. */
+    public function test_a_concurrent_status_update_conflict_pops_up(): void
     {
         $deal = $this->createDeal();
         $invoiceSent = StatusDefinition::create(['scope' => 'deal', 'name' => 'נשלחה חשבונית', 'is_active' => true, 'sort_order' => 2]);
@@ -254,7 +250,7 @@ class SystemNotificationsTest extends TestCase
             ->call('updateStatus')
             ->assertSet('statusError', fn ($message) => ! empty($message));
 
-        $component->assertSeeHtml($component->get('statusError'));
+        $component->assertDispatched('notify', type: 'error', message: $component->get('statusError'), sticky: true);
     }
 
     // ----- helpers -----

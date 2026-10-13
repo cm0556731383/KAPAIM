@@ -596,7 +596,7 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertNull($invoice->fresh());
         session()->put('documentError', 'טיוטת החשבונית נמחקה');
         Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
-            ->assertSee('טיוטת החשבונית נמחקה');
+            ->assertDispatched('notify', type: 'error', message: 'טיוטת החשבונית נמחקה', sticky: true);
     }
 
     public function test_a_credit_note_whose_summit_issuance_fails_stays_an_unsent_draft(): void

@@ -1,5 +1,6 @@
 <?php
 
+use App\Concerns\Notifies;
 use App\Models\Bundle;
 use App\Models\Program;
 use App\Services\ActivityLogger;
@@ -11,6 +12,8 @@ new
 #[Layout('layouts.app', ['title' => 'קטלוג תוכניות ומארזים — כפיים'])]
 class extends Component
 {
+    use Notifies;
+
     // ===== תוכניות (PROGRAM) =====
     public string $programName = '';
     public string $programDescription = '';
@@ -308,7 +311,6 @@ class extends Component
         </div>
     </div>
 
-    <x-business-error-banner :message="$catalogError" />
 
     {{-- ===== תוכניות ===== --}}
     <section class="settings-section">

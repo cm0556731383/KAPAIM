@@ -63,8 +63,6 @@ class extends Component
 
     public string $activeTab = 'info';
 
-    /** error property => the message already popped up, so a re-render doesn't pop it again. */
-    public array $shownErrors = [];
 
     // ===== פרטי בית ספר (עריכה) =====
     public bool $editingSchool = false;
@@ -163,25 +161,6 @@ class extends Component
      */
     /** 95MB — Cloudflare (in front of the site) refuses an upload over 100MB; bigger videos go as a link instead. */
     private const MATERIALS_FILE_RULES = ['file', 'max:97280', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mov,mp3'];
-
-    /**
-     * Business errors on this card pop up (notifyError(), stays until closed —
-     * FR-7.25) right after the action that raised them, instead of a
-     * standing banner. Each action still sets its own $xxxError, as before.
-     */
-    public function rendered(): void
-    {
-        foreach (['contactError', 'subscriptionError', 'dealError', 'materialsError'] as $property) {
-            $message = $this->{$property};
-
-            if ($message === null) {
-                unset($this->shownErrors[$property]);
-            } elseif (($this->shownErrors[$property] ?? null) !== $message) {
-                $this->shownErrors[$property] = $message;
-                $this->notifyError($message);
-            }
-        }
-    }
 
     public function mount(Customer $customer): void
     {
