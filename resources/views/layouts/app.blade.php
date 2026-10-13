@@ -203,6 +203,23 @@
     </main>
 </div>
 
+{{-- Back to top: appears once the page is scrolled down, on every screen using this layout. --}}
+<button
+    type="button"
+    class="back-to-top"
+    x-data="{ shown: false }"
+    x-on:scroll.window.throttle.100ms="shown = window.scrollY > 400"
+    x-show="shown"
+    x-transition.opacity
+    x-cloak
+    @click="window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })"
+    aria-label="חזרה לראש הדף"
+    title="חזרה לראש הדף"
+    style="display:none"
+>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+</button>
+
 @livewireScripts
 </body>
 </html>
