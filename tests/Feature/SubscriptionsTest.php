@@ -325,6 +325,24 @@ class SubscriptionsTest extends TestCase
         $subscription->fresh()->generateCreditNote();
     }
 
+    public function test_the_customers_program_filter_includes_customers_who_bought_it_inside_a_bundle(): void
+    {
+        $program = $this->createProgram('תשרי לבדיקת סינון');
+        $active = $this->openSubscription();
+        $active->deal->bundle->programs()->attach($program->id);
+        $cancelled = $this->openSubscription();
+        $cancelled->deal->bundle->programs()->attach($program->id);
+        $cancelled->cancel(1, 0, 'בדיקה');
+        $other = $this->openSubscription();
+
+        $row = fn (Subscription $s) => route('customer-detail', $s->customer_id);
+        Livewire::actingAs($this->owner)->test('customers')
+            ->set('filterProgramId', (string) $program->id)
+            ->assertSeeHtml($row($active))
+            ->assertDontSeeHtml($row($cancelled))
+            ->assertDontSeeHtml($row($other));
+    }
+
     public function test_customers_list_frames_only_subscribed_customers(): void
     {
         $subscription = $this->openSubscription();

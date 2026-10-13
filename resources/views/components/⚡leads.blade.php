@@ -161,8 +161,10 @@ class extends Component
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
             ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
             ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
-            ->when(str_starts_with($this->filterItem, 'program:'), fn ($q) => $q->whereHas(
-                'interestedPrograms', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8))
+            // A program also matches a lead interested in a bundle (e.g. the annual subscription) that includes it.
+            ->when(str_starts_with($this->filterItem, 'program:'), fn ($q) => $q->where(fn ($outer) => $outer
+                ->whereHas('interestedPrograms', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8)))
+                ->orWhereHas('interestedBundles.programs', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8)))
             ))
             ->when(str_starts_with($this->filterItem, 'bundle:'), fn ($q) => $q->whereHas(
                 'interestedBundles', fn ($bq) => $bq->where('bundles.id', (int) substr($this->filterItem, 7))

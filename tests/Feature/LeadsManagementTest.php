@@ -506,6 +506,25 @@ class LeadsManagementTest extends TestCase
             ->assertSeeHtml($row($otherLead));
     }
 
+    public function test_filtering_leads_by_a_program_includes_leads_interested_in_a_bundle_that_holds_it(): void
+    {
+        $subscriberLead = $this->createLead(schoolName: 'מתעניין במנוי');
+        $otherLead = $this->createLead(schoolName: 'מתעניין במארז אחר');
+        $program = Program::create(['name' => 'תשרי בתוך מנוי', 'price' => 500, 'is_premium' => false, 'is_active' => true]);
+        $subscription = \App\Models\Bundle::create(['name' => 'מנוי שנתי', 'price' => 4500, 'is_subscription_type' => true, 'is_active' => true]);
+        $subscription->programs()->attach($program->id);
+        $otherBundle = \App\Models\Bundle::create(['name' => 'מארז אחר', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $subscriberLead->interestedBundles()->attach($subscription->id);
+        $otherLead->interestedBundles()->attach($otherBundle->id);
+
+        $row = fn (Lead $lead) => "window.location='".route('lead-detail', $lead)."'";
+
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('filterItem', "program:{$program->id}")
+            ->assertSeeHtml($row($subscriberLead))
+            ->assertDontSeeHtml($row($otherLead));
+    }
+
     public function test_attaching_an_invalid_item_is_rejected(): void
     {
         $lead = $this->createLead();

@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Customer;
+use App\Models\Deal;
 use App\Models\Program;
 use App\Models\School;
 use App\Models\StatusDefinition;
@@ -40,15 +41,14 @@ class extends Component
             ->when($this->filterProgramId !== '', function ($q) {
                 $programId = $this->filterProgramId;
 
-                // A program filter also catches an active subscriber whose
-                // subscription bundle includes that program — not only a
-                // customer who bought it as its own standalone deal.
+                // A program filter also catches a customer who bought it inside
+                // a bundle — an annual subscription or any other bundle — on a
+                // deal that wasn't cancelled, not only as its own standalone deal.
                 $q->where(function ($outer) use ($programId) {
                     $outer->whereHas('deals', fn ($dq) => $dq->where('program_id', $programId))
-                        ->orWhereHas('subscriptions', function ($sq) use ($programId) {
-                            $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
-                                ->whereHas('deal.bundle.programs', fn ($pq) => $pq->where('programs.id', $programId));
-                        });
+                        ->orWhereHas('deals', fn ($dq) => $dq
+                            ->whereHas('bundle.programs', fn ($pq) => $pq->where('programs.id', $programId))
+                            ->whereDoesntHave('status', fn ($stq) => $stq->where('name', Deal::CANCELLED_STATUS_NAME)));
                 });
             })
             ->when($this->filterSubscription === 'yes', fn ($q) => $q->whereHas(
