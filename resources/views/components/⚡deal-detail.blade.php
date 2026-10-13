@@ -1459,7 +1459,7 @@ class extends Component
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th><th></th></tr></thead>
+                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס</th><th>קבלה</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->payments as $payment)
                         @if ($editingPaymentId === $payment->id)
@@ -1495,24 +1495,24 @@ class extends Component
                         <tr wire:key="payment-{{ $payment->id }}">
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
-                            <td>{{ $payment->paymentMethod?->name }}</td>
-                            <td>
-                                @if ($payment->check_status)
-                                    @if ($payment->check_number || $payment->check_due_date)
-                                        <div class="ltr-num" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-bottom:4px">
-                                            @if ($payment->check_number)מס' {{ $payment->check_number }}@endif
-                                            @if ($payment->check_due_date) · פירעון {{ $payment->check_due_date->format('d/m/Y') }}@endif
-                                            @if ($payment->checkBankLabel())<br>{{ $payment->checkBankLabel() }}@endif
-                                        </div>
-                                    @endif
-                                    @if ($payment->cleared_date)
-                                        <span class="badge badge-success">נפרע <span class="ltr-num">{{ $payment->cleared_date->format('d/m/Y') }}</span></span>
-                                    @else
-                                        <span class="badge {{ $payment->isCheckDue() ? 'badge-error' : 'badge-warning' }}">{{ $payment->isCheckDue() ? 'הגיע מועד הפירעון' : 'טרם נפרע' }}</span>
-                                        <button type="button" wire:click="markCheckCleared({{ $payment->id }})" wire:confirm="לסמן את הצ'ק כנפרע ולהפיק קבלה?" class="btn btn-ghost btn-sm">נפרע — הפקת קבלה</button>
-                                    @endif
-                                @else
+                            {{-- A check's number sits under its method; bank details are in the edit form (and the tooltip). --}}
+                            <td @if ($payment->checkBankLabel()) title="{{ $payment->checkBankLabel() }}" @endif>
+                                {{ $payment->paymentMethod?->name }}
+                                @if ($payment->check_number)
+                                    <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">מס' <span class="ltr-num">{{ $payment->check_number }}</span></div>
+                                @endif
+                            </td>
+                            <td style="white-space:nowrap">
+                                @if (! $payment->check_status)
                                     —
+                                @elseif ($payment->cleared_date)
+                                    <span class="badge badge-success">נפרע <span class="ltr-num">{{ $payment->cleared_date->format('d/m/Y') }}</span></span>
+                                @else
+                                    <span class="badge {{ $payment->isCheckDue() ? 'badge-error' : 'badge-warning' }}">
+                                        {{ $payment->isCheckDue() ? 'הגיע מועד הפירעון' : 'לפירעון' }}
+                                        @if ($payment->check_due_date)<span class="ltr-num">{{ $payment->check_due_date->format('d/m/Y') }}</span>@endif
+                                    </span>
+                                    <button type="button" wire:click="markCheckCleared({{ $payment->id }})" wire:confirm="לסמן את הצ'ק כנפרע ולהפיק קבלה?" class="btn btn-ghost btn-sm">סימון כנפרע</button>
                                 @endif
                             </td>
                             <td>
