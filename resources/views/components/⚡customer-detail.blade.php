@@ -1490,10 +1490,19 @@ class extends Component
                         </select>
                     </div>
 
-                    <div class="full">
+                    {{-- Livewire uploads the files as soon as they're chosen: show it, and say so if it fails
+                         (a failed upload used to surface only on send, as "no file attached"). --}}
+                    <div class="full" x-data="{ uploading: false, progress: 0, failed: false }"
+                        x-on:livewire-upload-start="uploading = true; failed = false; progress = 0"
+                        x-on:livewire-upload-progress="progress = $event.detail.progress"
+                        x-on:livewire-upload-finish="uploading = false"
+                        x-on:livewire-upload-error="uploading = false; failed = true"
+                        x-on:livewire-upload-cancel="uploading = false">
                         <label for="materialsFiles">קובץ מצורף</label>
                         <input type="file" id="materialsFiles" wire:model="materialsFiles" multiple>
                         <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint או קובץ מדיה — עד 25MB לקובץ</div>
+                        <div x-show="uploading" x-cloak class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">מעלה את הקבצים… <span class="ltr-num" x-text="progress + '%'"></span></div>
+                        <div x-show="failed" x-cloak style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">העלאת הקובץ נכשלה — ייתכן שהוא גדול מ-25MB או שהחיבור נקטע. נסו לבחור אותו שוב.</div>
                         @error('materialsFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         @if (! empty($materialsFiles))
                             <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-top:var(--sp-sm)">
@@ -1523,9 +1532,11 @@ class extends Component
                         </div>
                     </div>
 
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
+                    @if (empty($materialsFiles) || empty($materialsRecipients))
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
+                    @endif
 
-                    <div class="full"><button type="submit" class="btn btn-primary">שליחה באמצעות Smove</button></div>
+                    <div class="full"><button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="materialsFiles, sendMaterials">שליחה באמצעות Smove</button></div>
                 </form>
             </div>
 

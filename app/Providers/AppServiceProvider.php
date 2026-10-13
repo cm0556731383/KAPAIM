@@ -21,6 +21,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Livewire's temporary upload accepts 12MB by default; materials
+        // attachments go up to 25MB (⚡customer-detail's MATERIALS_FILE_RULES),
+        // and PHP is raised to match (docker/php/uploads.ini).
+        config(['livewire.temporary_file_upload.rules' => ['required', 'file', 'max:25600']]);
+
         // Generic resource+action permission check (3.12 — עקרון הרשאות): any ability
         // named "resource.action" (e.g. @can('users.delete')) is answered from
         // User::hasPermission(), which is backed by real role_permissions rows.
