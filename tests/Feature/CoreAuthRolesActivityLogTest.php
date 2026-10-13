@@ -37,6 +37,34 @@ class CoreAuthRolesActivityLogTest extends TestCase
         ]);
     }
 
+    public function test_a_user_can_be_edited_deactivated_and_have_the_password_reset(): void
+    {
+        Livewire::actingAs($this->owner)->test('users-roles')
+            ->call('editUser', $this->secretary->id)
+            ->set('editName', 'נועה כהן')
+            ->set('editIsActive', false)
+            ->call('updateUser')
+            ->assertHasNoErrors()
+            ->call('resetPassword', $this->secretary->id)
+            ->assertSet('generatedPasswordForName', 'נועה כהן');
+
+        $secretary = $this->secretary->fresh();
+        $this->assertSame('נועה כהן', $secretary->name);
+        $this->assertFalse($secretary->is_active);
+        $this->assertFalse(\Illuminate\Support\Facades\Hash::check('password', $secretary->password));
+    }
+
+    public function test_a_user_cannot_deactivate_herself(): void
+    {
+        Livewire::actingAs($this->owner)->test('users-roles')
+            ->call('editUser', $this->owner->id)
+            ->set('editIsActive', false)
+            ->call('updateUser')
+            ->assertSet('userError', 'לא ניתן להשבית את המשתמשת שלך או להסיר ממנה את ההרשאה לניהול משתמשות.');
+
+        $this->assertTrue($this->owner->fresh()->is_active);
+    }
+
     public function test_home_redirects_guests_to_login(): void
     {
         $this->get('/')->assertRedirect('/login');

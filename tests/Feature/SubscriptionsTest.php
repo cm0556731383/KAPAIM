@@ -497,6 +497,27 @@ class SubscriptionsTest extends TestCase
             ->assertHasErrors('subscriptionStartMonth');
     }
 
+    public function test_a_supplied_delivery_can_be_unmarked_and_an_auto_ended_subscription_reopens(): void
+    {
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+
+        foreach ($subscription->deliveries as $delivery) {
+            $subscription->fresh()->markDeliverySupplied($subscription->fresh()->version, $delivery->id, $program->id, $this->owner);
+        }
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $subscription->fresh()->status?->name);
+
+        $last = $subscription->deliveries()->where('sequence_number', 10)->first();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->call('unmarkDeliverySupplied', $subscription->id, $last->id)
+            ->assertSet('subscriptionError', null);
+
+        $this->assertFalse($last->fresh()->is_supplied);
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $subscription->fresh()->status?->name);
+        $this->assertNull($subscription->fresh()->end_date);
+    }
+
     // ----- FR-8.23: standalone-program price-exceeded alert -----
 
     public function test_price_exceeded_alert_appears_when_standalone_purchases_exceed_the_subscription_price(): void

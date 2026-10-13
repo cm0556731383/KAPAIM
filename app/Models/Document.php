@@ -78,6 +78,30 @@ class Document extends Model
         return $this->belongsTo(Deal::class);
     }
 
+    /**
+     * A document can be deleted only while it's a plain draft: never sent
+     * (so never issued in SUMIT), received, signed or confirmed, with no
+     * receipt and no later document in the chain built from it. Anything
+     * past that is part of the deal's record (FR-3.5).
+     */
+    public function isDeletableDraft(): bool
+    {
+        return ! $this->sent_at && ! $this->received_at && ! $this->signed_at && ! $this->confirmed_at
+            && $this->document_type !== 'expense_invoice'
+            && ! $this->receipts()->exists()
+            && ! self::where('preceding_document_id', $this->id)->exists();
+    }
+
+    /** @throws RuntimeException when this isn't a deletable draft (isDeletableDraft()). */
+    public function deleteDraft(): void
+    {
+        if (! $this->isDeletableDraft()) {
+            throw new RuntimeException('ניתן למחוק רק טיוטה שטרם נשלחה, נחתמה או שימשה בסיס למסמך הבא.');
+        }
+
+        $this->delete();
+    }
+
     /** Build-plan 11 — set only for an 'expense_invoice' document (never alongside deal_id). */
     public function expense(): BelongsTo
     {

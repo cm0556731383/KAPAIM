@@ -29,6 +29,40 @@ class ProgramsCatalogTest extends TestCase
         ]);
     }
 
+    public function test_a_program_and_a_bundle_can_be_edited(): void
+    {
+        $program = Program::create(['name' => 'ישן', 'price' => 100, 'is_premium' => false, 'is_active' => true]);
+        $bundle = Bundle::create(['name' => 'מארז ישן', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('editItem', 'program', $program->id)
+            ->set('editName', 'חדש')->set('editPrice', '150')->set('editFlag', true)
+            ->call('saveItem')->assertHasNoErrors()
+            ->call('editItem', 'bundle', $bundle->id)
+            ->set('editName', 'מארז חדש')->set('editDescription', 'תיאור')
+            ->call('saveItem')->assertHasNoErrors();
+
+        $this->assertSame('חדש', $program->fresh()->name);
+        $this->assertEquals(150, (float) $program->fresh()->price);
+        $this->assertTrue($program->fresh()->is_premium);
+        $this->assertSame('מארז חדש', $bundle->fresh()->name);
+        $this->assertSame('תיאור', $bundle->fresh()->description);
+    }
+
+    public function test_editing_cannot_make_a_second_active_subscription_bundle(): void
+    {
+        Bundle::create(['name' => 'מנוי', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        $other = Bundle::create(['name' => 'מארז', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('editItem', 'bundle', $other->id)
+            ->set('editFlag', true)
+            ->call('saveItem')
+            ->assertSet('catalogError', 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני שמארז זה יוגדר כמארז מנוי.');
+
+        $this->assertFalse($other->fresh()->is_subscription_type);
+    }
+
     public function test_catalog_page_requires_auth(): void
     {
         $this->get('/programs-catalog')->assertRedirect('/login');

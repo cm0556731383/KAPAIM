@@ -19,6 +19,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
@@ -54,6 +55,42 @@ class SuppliersExpensesTest extends TestCase
     }
 
     // ----- auth / permissions -----
+
+    public function test_an_expense_can_be_edited_and_deleted_only_while_it_has_no_invoice(): void
+    {
+        $supplier = $this->createSupplier();
+        $expense = Expense::createForSupplier($supplier, 100, '2026-09-01');
+        $documented = Expense::createForSupplier($supplier, 200, '2026-09-02');
+        $documented->attachInvoice();
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->call('editExpense', $expense->id)
+            ->set('editAmount', '120')
+            ->set('editNotes', 'תוקן')
+            ->call('updateExpense')
+            ->assertHasNoErrors()
+            ->call('deleteExpense', $documented->id)
+            ->assertSet('expenseError', 'לא ניתן למחוק הוצאה שכבר צורפה לה חשבונית.')
+            ->call('deleteExpense', $expense->id);
+
+        $this->assertEquals(120, (float) Expense::withTrashed()->find($expense->id)->amount);
+        $this->assertSoftDeleted('expenses', ['id' => $expense->id]);
+        $this->assertNotSoftDeleted('expenses', ['id' => $documented->id]);
+    }
+
+    public function test_a_supplier_without_expenses_can_be_deleted_but_one_with_expenses_cannot(): void
+    {
+        $unused = $this->createSupplier();
+        $used = $this->createSupplier();
+        Expense::createForSupplier($used, 100, '2026-09-01')->delete(); // even a deleted expense keeps its supplier
+
+        Livewire::actingAs($this->owner)->test('suppliers')
+            ->call('deleteSupplier', $used->id)
+            ->call('deleteSupplier', $unused->id);
+
+        $this->assertDatabaseHas('suppliers', ['id' => $used->id]);
+        $this->assertDatabaseMissing('suppliers', ['id' => $unused->id]);
+    }
 
     public function test_suppliers_page_requires_auth(): void
     {

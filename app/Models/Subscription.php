@@ -268,6 +268,46 @@ class Subscription extends Model
     }
 
     /**
+     * Undoes a delivery row marked supplied by mistake — same optimistic lock
+     * as markDeliverySupplied(). A subscription that auto-ended on its 10th
+     * delivery goes back to active.
+     *
+     * @throws RuntimeException on a version conflict, or when the row isn't supplied.
+     */
+    public function unmarkDeliverySupplied(int $expectedVersion, int $deliveryId): SubscriptionDelivery
+    {
+        $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
+
+        if (! $delivery->is_supplied) {
+            throw new RuntimeException('שורת אספקה זו אינה מסומנת כסופקה.');
+        }
+
+        return DB::transaction(function () use ($expectedVersion, $delivery) {
+            $affected = self::where('id', $this->id)
+                ->where('version', $expectedVersion)
+                ->update(['version' => DB::raw('version + 1')]);
+
+            if ($affected === 0) {
+                throw new RuntimeException('המנוי עודכן על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+            }
+
+            $delivery->update(['program_id' => null, 'is_supplied' => false, 'supplied_at' => null, 'supplied_by' => null]);
+
+            if ($this->status?->name === self::ENDED_STATUS_NAME) {
+                $active = StatusDefinition::firstOrCreate(
+                    ['scope' => 'subscription', 'name' => self::ACTIVE_STATUS_NAME],
+                    ['is_active' => true, 'sort_order' => 1],
+                );
+                $this->update(['status_id' => $active->id, 'end_date' => null]);
+            }
+
+            $this->refresh();
+
+            return $delivery->refresh();
+        });
+    }
+
+    /**
      * US-010/FR-8.24: cancels the subscription from subscription month
      * $fromMonth (default: the first month not yet supplied). The credit is
      * computed from this subscription's OWN agreed_price only —

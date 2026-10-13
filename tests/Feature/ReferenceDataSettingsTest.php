@@ -30,6 +30,52 @@ class ReferenceDataSettingsTest extends TestCase
         ]);
     }
 
+    public function test_a_custom_status_can_be_renamed_but_a_system_status_keeps_its_name(): void
+    {
+        $custom = StatusDefinition::create(['scope' => 'lead', 'name' => 'ממתין', 'is_active' => true, 'sort_order' => 5]);
+        $system = StatusDefinition::create(['scope' => 'deal', 'name' => 'מבוטלת', 'is_active' => true, 'sort_order' => 4]);
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->call('editRecord', 'status', $custom->id)
+            ->set('editForm.name', 'בהמתנה')
+            ->call('saveRecord')
+            ->assertHasNoErrors()
+            ->call('editRecord', 'status', $system->id)
+            ->set('editForm.name', 'שם אחר')
+            ->set('editForm.sort_order', '9')
+            ->call('saveRecord');
+
+        $this->assertSame('בהמתנה', $custom->fresh()->name);
+        $this->assertSame('מבוטלת', $system->fresh()->name);
+        $this->assertSame(9, $system->fresh()->sort_order);
+    }
+
+    public function test_lead_source_payment_method_and_email_template_can_be_edited(): void
+    {
+        $source = \App\Models\LeadSource::create(['name' => 'פייסבוק', 'is_active' => true]);
+        $method = PaymentMethod::create(['name' => 'העברה', 'type' => 'bank_transfer', 'is_active' => true]);
+        $template = EmailTemplate::create(['name' => 'אישור', 'template_type' => 'lead_confirmation', 'subject' => 'ישן', 'content' => 'תוכן ישן', 'is_active' => true]);
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->call('editRecord', 'lead_source', $source->id)->set('editForm.name', 'אינסטגרם')->call('saveRecord')->assertHasNoErrors()
+            ->call('editRecord', 'payment_method', $method->id)->set('editForm.name', 'העברה בנקאית')->call('saveRecord')->assertHasNoErrors()
+            ->call('editRecord', 'email_template', $template->id)->set('editForm.subject', 'תודה על פנייתך')->set('editForm.content', 'שלום {{name}}')->call('saveRecord')->assertHasNoErrors();
+
+        $this->assertSame('אינסטגרם', $source->fresh()->name);
+        $this->assertSame('העברה בנקאית', $method->fresh()->name);
+        $this->assertSame('תודה על פנייתך', $template->fresh()->subject);
+        $this->assertSame('שלום {{name}}', $template->fresh()->content);
+    }
+
+    public function test_a_lead_source_can_be_deactivated(): void
+    {
+        $source = \App\Models\LeadSource::create(['name' => 'פייסבוק', 'is_active' => true]);
+
+        Livewire::actingAs($this->owner)->test('settings')->call('toggleLeadSource', $source->id);
+
+        $this->assertFalse($source->fresh()->is_active);
+    }
+
     public function test_settings_page_requires_auth(): void
     {
         $this->get('/settings')->assertRedirect('/login');

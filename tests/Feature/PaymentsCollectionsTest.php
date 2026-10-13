@@ -47,6 +47,75 @@ class PaymentsCollectionsTest extends TestCase
 
     // ----- auth / permissions -----
 
+    // ----- correcting / removing a mistaken payment -----
+
+    public function test_a_payment_without_a_receipt_can_be_edited_and_deleted_and_the_deal_status_follows(): void
+    {
+        $deal = $this->createDeal(400);
+        $method = $this->createPaymentMethod();
+        $payment = $deal->recordPayment($deal->version, 400, null, $method->id);
+        $this->assertSame(Deal::PAID_STATUS_NAME, $deal->fresh()->status->name);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->call('editPayment', $payment->id)
+            ->set('editPaymentAmount', '150')
+            ->call('updatePayment')
+            ->assertHasNoErrors()
+            ->assertSet('paymentError', null);
+
+        $this->assertEquals(150, (float) $payment->fresh()->amount);
+        $this->assertSame(Deal::DEFAULT_STATUS_NAME, $deal->fresh()->status->name);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->call('deletePayment', $payment->id)
+            ->assertSet('paymentError', null);
+
+        $this->assertSoftDeleted('payments', ['id' => $payment->id]);
+        $this->assertEquals(0, $deal->fresh()->totalPaid());
+    }
+
+    public function test_a_payment_with_a_receipt_or_from_sumit_cannot_be_edited_or_deleted(): void
+    {
+        $deal = $this->dealWithInvoice(400);
+        $method = $this->createPaymentMethod();
+        $withReceipt = $deal->recordPayment($deal->version, 100, null, $method->id);
+        Receipt::create(['document_id' => $deal->issuedInvoice()->id, 'payment_id' => $withReceipt->id, 'issued_at' => now(), 'status' => Receipt::STATUS_ISSUED]);
+        $fromSumit = $deal->fresh()->recordPayment($deal->fresh()->version, 100, null, $method->id);
+        $fromSumit->update(['sumit_payment_id' => 'S-1']);
+
+        foreach ([$withReceipt, $fromSumit] as $payment) {
+            $this->assertFalse($payment->fresh()->isEditable());
+
+            try {
+                $deal->fresh()->deletePayment($deal->fresh()->version, $payment->fresh());
+                $this->fail('A booked payment must not be deletable.');
+            } catch (RuntimeException) {
+            }
+
+            $this->assertNotSoftDeleted('payments', ['id' => $payment->id]);
+        }
+    }
+
+    public function test_only_an_unsent_draft_with_nothing_built_on_it_can_be_deleted(): void
+    {
+        $deal = $this->createDeal();
+        $orderForm = Document::generateFor($deal, $this->createTemplate('order_form'));
+        $orderForm->markReceived();
+        $contract = Document::generateFor($deal, $this->createTemplate('contract'));
+
+        $this->assertFalse($orderForm->fresh()->isDeletableDraft());
+        $this->assertTrue($contract->fresh()->isDeletableDraft());
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->call('deleteDocument', $orderForm->id)
+            ->assertSet('documentError', 'ניתן למחוק רק טיוטה שטרם נשלחה, נחתמה או שימשה בסיס למסמך הבא.')
+            ->call('deleteDocument', $contract->id)
+            ->assertSet('documentError', null);
+
+        $this->assertDatabaseHas('documents', ['id' => $orderForm->id]);
+        $this->assertDatabaseMissing('documents', ['id' => $contract->id]);
+    }
+
     public function test_collections_page_requires_auth(): void
     {
         $this->get('/collections')->assertRedirect('/login');

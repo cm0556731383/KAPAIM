@@ -80,6 +80,19 @@ class extends Component
     public string $followUpNextAt = '';
 
     // ===== תזכורות אישיות (TASK) =====
+    /** Timeline item being edited inline: "interaction:{id}" / "follow_up:{id}". */
+    public ?string $editingTimelineItem = null;
+
+    public string $editInteractionType = '';
+    public string $editSummary = '';
+    public string $editResult = '';
+    public string $editNextAt = '';
+
+    public ?int $editingTaskId = null;
+    public string $editTaskTitle = '';
+    public string $editTaskDescription = '';
+    public string $editTaskDueAt = '';
+
     public string $taskTitle = '';
     public string $taskDescription = '';
     public string $taskDueAt = '';
@@ -525,6 +538,86 @@ class extends Component
         $this->dispatch('close-modals');
     }
 
+    // ----- עריכה / מחיקה של אינטראקציה ו-Up Follow -----
+
+    public function editTimelineItem(string $kind, int $id): void
+    {
+        $this->resetErrorBag();
+
+        if ($kind === 'interaction') {
+            $interaction = $this->lead->interactions()->findOrFail($id);
+            $this->editInteractionType = $interaction->interaction_type;
+            $this->editSummary = (string) $interaction->summary;
+            $this->editResult = (string) $interaction->result;
+        } else {
+            $followUp = $this->lead->followUps()->findOrFail($id);
+            $this->editSummary = (string) $followUp->summary;
+            $this->editResult = (string) $followUp->result;
+            $this->editNextAt = (string) $followUp->next_at?->format('Y-m-d');
+        }
+
+        $this->editingTimelineItem = "{$kind}:{$id}";
+    }
+
+    public function cancelTimelineEdit(): void
+    {
+        $this->reset(['editingTimelineItem', 'editInteractionType', 'editSummary', 'editResult', 'editNextAt']);
+    }
+
+    public function updateTimelineItem(ActivityLogger $activityLogger): void
+    {
+        [$kind, $id] = explode(':', (string) $this->editingTimelineItem) + [null, null];
+
+        if ($kind === 'interaction') {
+            $data = $this->validate([
+                'editInteractionType' => ['required', 'string', 'max:255'],
+                'editSummary' => ['nullable', 'string'],
+                'editResult' => ['nullable', 'string'],
+            ], [], ['editInteractionType' => 'סוג אינטראקציה']);
+
+            $this->lead->interactions()->findOrFail((int) $id)->update([
+                'interaction_type' => $data['editInteractionType'],
+                'summary' => $data['editSummary'] ?: null,
+                'result' => $data['editResult'] ?: null,
+            ]);
+            $activityLogger->log('lead.interaction_updated', "עודכנה אינטראקציה עבור ליד #{$this->lead->id}: {$data['editInteractionType']}", ['lead_id' => $this->lead->id]);
+        } elseif ($kind === 'follow_up') {
+            $data = $this->validate([
+                'editSummary' => ['nullable', 'string'],
+                'editResult' => ['nullable', 'string'],
+                'editNextAt' => ['nullable', 'date'],
+            ]);
+
+            $this->lead->followUps()->findOrFail((int) $id)->update([
+                'summary' => $data['editSummary'] ?: null,
+                'result' => $data['editResult'] ?: null,
+                'next_at' => $data['editNextAt'] ?: null,
+            ]);
+            $activityLogger->log('lead.follow_up_updated', "עודכן Up Follow עבור ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+        } else {
+            return;
+        }
+
+        $this->cancelTimelineEdit();
+        unset($this->interactions, $this->followUps, $this->timeline);
+    }
+
+    /** A logical delete (deleted_at), logged — same convention as removeContact()/cancelTask(). */
+    public function deleteTimelineItem(string $kind, int $id, ActivityLogger $activityLogger): void
+    {
+        if ($kind === 'interaction') {
+            $interaction = $this->lead->interactions()->findOrFail($id);
+            $interaction->delete();
+            $activityLogger->log('lead.interaction_deleted', "נמחקה אינטראקציה עבור ליד #{$this->lead->id}: {$interaction->interaction_type} (מחיקה לוגית)", ['lead_id' => $this->lead->id]);
+        } else {
+            $this->lead->followUps()->findOrFail($id)->delete();
+            $activityLogger->log('lead.follow_up_deleted', "נמחק Up Follow עבור ליד #{$this->lead->id} (מחיקה לוגית)", ['lead_id' => $this->lead->id]);
+        }
+
+        $this->cancelTimelineEdit();
+        unset($this->interactions, $this->followUps, $this->timeline);
+    }
+
     // ----- תזכורות אישיות (TASK) -----
 
     public function addTask(ActivityLogger $activityLogger): void
@@ -551,6 +644,42 @@ class extends Component
         unset($this->tasks);
 
         $this->dispatch('close-modals');
+    }
+
+    public function editTask(int $id): void
+    {
+        $task = Task::where('lead_id', $this->lead->id)->findOrFail($id);
+        $this->editingTaskId = $task->id;
+        $this->editTaskTitle = $task->title;
+        $this->editTaskDescription = (string) $task->description;
+        $this->editTaskDueAt = (string) $task->due_at?->format('Y-m-d');
+        $this->resetErrorBag();
+    }
+
+    public function cancelTaskEdit(): void
+    {
+        $this->reset(['editingTaskId', 'editTaskTitle', 'editTaskDescription', 'editTaskDueAt']);
+    }
+
+    public function updateTask(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate([
+            'editTaskTitle' => ['required', 'string', 'max:255'],
+            'editTaskDescription' => ['nullable', 'string'],
+            'editTaskDueAt' => ['nullable', 'date'],
+        ], [], ['editTaskTitle' => 'כותרת']);
+
+        $task = Task::where('lead_id', $this->lead->id)->findOrFail($this->editingTaskId);
+        $task->update([
+            'title' => $data['editTaskTitle'],
+            'description' => $data['editTaskDescription'] ?: null,
+            'due_at' => $data['editTaskDueAt'] ?: null,
+        ]);
+
+        $activityLogger->log('task.updated', "עודכנה תזכורת \"{$task->title}\"", ['lead_id' => $this->lead->id, 'task_id' => $task->id]);
+
+        $this->cancelTaskEdit();
+        unset($this->tasks);
     }
 
     public function completeTask(int $id, ActivityLogger $activityLogger): void
@@ -694,6 +823,8 @@ class extends Component
 
         foreach ($this->interactions as $interaction) {
             $items->push([
+                'kind' => 'interaction',
+                'id' => $interaction->id,
                 'date' => $interaction->occurred_at,
                 'title' => $interaction->interaction_type,
                 'body' => trim(($interaction->summary ?? '').($interaction->result ? ' — '.$interaction->result : '')),
@@ -702,6 +833,8 @@ class extends Component
 
         foreach ($this->followUps as $followUp) {
             $items->push([
+                'kind' => 'follow_up',
+                'id' => $followUp->id,
                 'date' => $followUp->occurred_at,
                 'title' => 'Up Follow'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
                 'body' => trim(($followUp->summary ?? '').($followUp->result ? ' — '.$followUp->result : '')),
@@ -973,10 +1106,40 @@ class extends Component
                 <h3>היסטוריית פעילות ו-Up Follow</h3>
                 <div class="timeline">
                     @foreach ($this->timeline as $item)
+                        @php $itemKey = isset($item['kind']) ? "{$item['kind']}:{$item['id']}" : null; @endphp
                         <div class="t-item">
                             <div class="t-date ltr-num" style="direction:ltr">{{ $item['date']?->format('d/m/Y H:i') }}</div>
-                            <div class="t-title">{{ $item['title'] }}</div>
-                            @if ($item['body'])<div class="t-body">{{ $item['body'] }}</div>@endif
+                            @if ($itemKey && $editingTimelineItem === $itemKey)
+                                <form wire:submit="updateTimelineItem" class="form-grid" style="margin-top:4px">
+                                    @if ($item['kind'] === 'interaction')
+                                        <div class="full">
+                                            <label>סוג</label><input type="text" wire:model="editInteractionType">
+                                            @error('editInteractionType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                        </div>
+                                    @endif
+                                    <div class="full"><label>סיכום</label><textarea wire:model="editSummary" rows="2"></textarea></div>
+                                    <div class="full"><label>תוצאה</label><input type="text" wire:model="editResult"></div>
+                                    @if ($item['kind'] === 'follow_up')
+                                        <div class="full">
+                                            <label>מועד Up Follow הבא</label><input type="date" wire:model="editNextAt">
+                                            @error('editNextAt') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                        </div>
+                                    @endif
+                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                        <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelTimelineEdit">ביטול</button>
+                                    </div>
+                                </form>
+                            @else
+                                <div class="t-title" style="display:flex; align-items:center; gap:var(--sp-sm); flex-wrap:wrap">
+                                    {{ $item['title'] }}
+                                    @if ($itemKey)
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="editTimelineItem('{{ $item['kind'] }}', {{ $item['id'] }})">עריכה</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="deleteTimelineItem('{{ $item['kind'] }}', {{ $item['id'] }})" wire:confirm="למחוק את הרשומה? (מחיקה לוגית)">מחיקה</button>
+                                    @endif
+                                </div>
+                                @if ($item['body'])<div class="t-body">{{ $item['body'] }}</div>@endif
+                            @endif
                         </div>
                     @endforeach
                 </div>
@@ -1025,6 +1188,18 @@ class extends Component
                     </x-modal>
                 </div>
                 @forelse ($this->tasks as $task)
+                    @if ($editingTaskId === $task->id)
+                        <form wire:submit="updateTask" class="form-grid list-item" style="display:grid">
+                            <div class="full"><label>כותרת</label><input type="text" wire:model="editTaskTitle">@error('editTaskTitle') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                            <div class="full"><label>תיאור</label><textarea wire:model="editTaskDescription" rows="2"></textarea></div>
+                            <div><label>מועד יעד</label><input type="date" wire:model="editTaskDueAt"></div>
+                            <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelTaskEdit">ביטול</button>
+                            </div>
+                        </form>
+                        @continue
+                    @endif
                     <div class="list-item">
                         <div>
                             <div style="font-weight:600; {{ $task->status === 'done' ? 'text-decoration:line-through; color:var(--color-text-secondary)' : '' }}">{{ $task->title }}</div>
@@ -1033,6 +1208,7 @@ class extends Component
                         @if ($task->status !== 'done')
                             <div style="display:flex; gap:6px">
                                 <button type="button" class="btn btn-ghost btn-sm" wire:click="completeTask({{ $task->id }})">הושלם</button>
+                                <button type="button" class="btn btn-ghost btn-sm" wire:click="editTask({{ $task->id }})">עריכה</button>
                                 <button type="button" class="btn btn-ghost btn-sm" style="color:var(--color-error)" wire:click="cancelTask({{ $task->id }})" wire:confirm="ביטול התזכורת הוא מחיקה לוגית — האם להמשיך?">ביטול</button>
                             </div>
                         @else

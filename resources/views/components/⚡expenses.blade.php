@@ -15,7 +15,8 @@ use Livewire\Component;
  * 'expense_invoice' Document via Expense::attachInvoice() — the manual
  * "record the invoice the supplier already sent us" flow, not a
  * digital-form-fill flow like the sales document chain (build-plan 07).
- * No edit/delete route — matches this codebase's project-wide convention.
+ * Rows are editable inline; one is deletable (logically) only while no
+ * invoice is attached — Expense::deleteIfNoInvoice().
  */
 new
 #[Layout('layouts.app', ['title' => 'הוצאות ותזרים — כפיים'])]
@@ -28,6 +29,13 @@ class extends Component
     public string $amount = '';
     public string $expenseDate = '';
     public string $notes = '';
+
+    public ?int $editingExpenseId = null;
+    public string $editSupplierId = '';
+    public string $editProgramId = '';
+    public string $editAmount = '';
+    public string $editExpenseDate = '';
+    public string $editNotes = '';
 
     /** Business-rule error from Expense::createForSupplier()/attachInvoice(). */
     public ?string $expenseError = null;
@@ -96,6 +104,71 @@ class extends Component
         ]);
 
         unset($this->expenses);
+    }
+
+    public function editExpense(int $id): void
+    {
+        $expense = Expense::findOrFail($id);
+
+        $this->expenseError = null;
+        $this->resetErrorBag();
+        $this->editingExpenseId = $expense->id;
+        $this->editSupplierId = (string) $expense->supplier_id;
+        $this->editProgramId = (string) $expense->program_id;
+        $this->editAmount = (string) (float) $expense->amount;
+        $this->editExpenseDate = $expense->expense_date->format('Y-m-d');
+        $this->editNotes = (string) $expense->notes;
+    }
+
+    public function cancelExpenseEdit(): void
+    {
+        $this->reset(['editingExpenseId', 'editSupplierId', 'editProgramId', 'editAmount', 'editExpenseDate', 'editNotes']);
+    }
+
+    public function updateExpense(ActivityLogger $activityLogger): void
+    {
+        $data = $this->validate([
+            'editSupplierId' => ['required', 'exists:suppliers,id'],
+            'editProgramId' => ['nullable', 'exists:programs,id'],
+            'editAmount' => ['required', 'numeric', 'gt:0'],
+            'editExpenseDate' => ['required', 'date'],
+            'editNotes' => ['nullable', 'string'],
+        ], [], ['editSupplierId' => 'ספק', 'editAmount' => 'סכום', 'editExpenseDate' => 'תאריך']);
+
+        $expense = Expense::findOrFail($this->editingExpenseId);
+        $expense->update([
+            'supplier_id' => $data['editSupplierId'],
+            'program_id' => $data['editProgramId'] ?: null,
+            'amount' => $data['editAmount'],
+            'expense_date' => $data['editExpenseDate'],
+            'notes' => $data['editNotes'] ?: null,
+        ]);
+
+        $activityLogger->log('expense.updated', "עודכנה הוצאה #{$expense->id} (₪{$data['editAmount']})", ['expense_id' => $expense->id]);
+
+        $this->cancelExpenseEdit();
+        unset($this->expenses);
+        $this->notifySuccess('ההוצאה עודכנה.');
+    }
+
+    public function deleteExpense(int $id, ActivityLogger $activityLogger): void
+    {
+        $this->expenseError = null;
+        $expense = Expense::findOrFail($id);
+
+        try {
+            $expense->deleteIfNoInvoice();
+        } catch (\RuntimeException $e) {
+            $this->expenseError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('expense.deleted', "נמחקה הוצאה #{$expense->id} בסך ₪".number_format((float) $expense->amount, 0)." (מחיקה לוגית)", ['expense_id' => $expense->id]);
+
+        $this->cancelExpenseEdit();
+        unset($this->expenses);
+        $this->notifySuccess('ההוצאה נמחקה.');
     }
 
     #[Computed]
@@ -189,6 +262,43 @@ class extends Component
             </thead>
             <tbody>
                 @forelse ($this->expenses as $expense)
+                    @if ($editingExpenseId === $expense->id)
+                        <tr>
+                            <td colspan="7">
+                                <form wire:submit="updateExpense" class="form-grid">
+                                    <div><label>תאריך</label><input type="date" wire:model="editExpenseDate" class="ltr-num" dir="ltr">@error('editExpenseDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>סכום</label><input type="text" wire:model="editAmount" class="ltr-num" dir="ltr">@error('editAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div>
+                                        <label>ספק</label>
+                                        <select wire:model="editSupplierId">
+                                            @foreach ($this->suppliers as $supplier)
+                                                <option value="{{ $supplier->id }}">{{ $supplier->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('editSupplierId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label>תוכנית</label>
+                                        <select wire:model="editProgramId">
+                                            <option value="">ללא</option>
+                                            @foreach ($this->programs as $program)
+                                                <option value="{{ $program->id }}">{{ $program->name }}</option>
+                                            @endforeach
+                                            @if ($expense->program && ! $expense->program->is_active)
+                                                <option value="{{ $expense->program->id }}">{{ $expense->program->name }} (מושבתת)</option>
+                                            @endif
+                                        </select>
+                                    </div>
+                                    <div class="full"><label>הערות</label><textarea wire:model="editNotes" rows="2"></textarea></div>
+                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                        <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelExpenseEdit">ביטול</button>
+                                    </div>
+                                </form>
+                            </td>
+                        </tr>
+                        @continue
+                    @endif
                     <tr>
                         <td class="ltr-num">{{ $expense->expense_date->format('d/m/Y') }}</td>
                         <td>{{ $expense->supplier?->name }}</td>
@@ -203,11 +313,17 @@ class extends Component
                         </td>
                         <td style="color:var(--color-text-secondary)">{{ $expense->notes ?: '—' }}</td>
                         <td>
-                            @if ($expense->document_id)
-                                <a href="{{ route('document-view', $expense->document_id) }}" class="btn btn-ghost">צפייה</a>
-                            @else
-                                <button type="button" wire:click="attachInvoice({{ $expense->id }})" class="btn btn-secondary" style="padding:6px 12px; font-size:var(--fs-caption)">צירוף חשבונית</button>
-                            @endif
+                            <div style="display:flex; gap:4px; flex-wrap:wrap">
+                                @if ($expense->document_id)
+                                    <a href="{{ route('document-view', $expense->document_id) }}" class="btn btn-ghost">צפייה</a>
+                                @else
+                                    <button type="button" wire:click="attachInvoice({{ $expense->id }})" class="btn btn-secondary" style="padding:6px 12px; font-size:var(--fs-caption)">צירוף חשבונית</button>
+                                @endif
+                                <button type="button" wire:click="editExpense({{ $expense->id }})" class="btn btn-ghost">עריכה</button>
+                                @unless ($expense->document_id)
+                                    <button type="button" wire:click="deleteExpense({{ $expense->id }})" wire:confirm="למחוק את ההוצאה? (מחיקה לוגית)" class="btn btn-ghost" style="color:var(--color-error)">מחיקה</button>
+                                @endunless
+                            </div>
                         </td>
                     </tr>
                 @empty

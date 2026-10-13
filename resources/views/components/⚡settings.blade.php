@@ -94,6 +94,12 @@ class extends Component
 
     public string $landingPageWebhookSecret = '';
 
+    /** Reference-data row being edited inline: "status:{id}", "lead_source:{id}", … */
+    public ?string $editingRecord = null;
+
+    /** The edited row's fields, keyed like its columns. */
+    public array $editForm = [];
+
     /** Which settings tab is shown — kept in the URL (?tab=) so a reload stays on it. */
     #[Url(as: 'tab')]
     public string $activeTab = 'statuses';
@@ -241,6 +247,95 @@ class extends Component
 
         $activityLogger->log('external_integration_setting.updated', 'עודכן סוד ה-Webhook של דף הנחיתה');
         unset($this->integrations);
+    }
+
+    // ----- עריכת נתוני ייחוס (FR-7.11: never deleted — only renamed/edited or deactivated) -----
+
+    private const EDITABLE_RECORDS = [
+        'status' => [StatusDefinition::class, ['name', 'sort_order']],
+        'lead_source' => [LeadSource::class, ['name']],
+        'payment_method' => [PaymentMethod::class, ['name', 'type']],
+        'business_entity' => [BusinessEntity::class, ['name', 'classification', 'company_number', 'email', 'phone']],
+        'email_template' => [EmailTemplate::class, ['name', 'template_type', 'subject', 'content']],
+    ];
+
+    public function editRecord(string $type, int $id): void
+    {
+        [$modelClass, $fields] = self::EDITABLE_RECORDS[$type] ?? abort(404);
+        $record = $modelClass::findOrFail($id);
+
+        $this->resetErrorBag();
+        $this->editingRecord = "{$type}:{$id}";
+        $this->editForm = collect($fields)->mapWithKeys(fn ($f) => [$f => (string) $record->{$f}])->all();
+    }
+
+    public function cancelRecordEdit(): void
+    {
+        $this->reset(['editingRecord', 'editForm']);
+    }
+
+    public function saveRecord(ActivityLogger $activityLogger): void
+    {
+        [$type, $id] = explode(':', (string) $this->editingRecord) + [null, null];
+        [$modelClass] = self::EDITABLE_RECORDS[$type] ?? abort(404);
+        $record = $modelClass::findOrFail((int) $id);
+
+        $rules = match ($type) {
+            'status' => [
+                'editForm.name' => ['required', 'string', 'max:255'],
+                'editForm.sort_order' => ['required', 'integer', 'min:0'],
+            ],
+            'lead_source' => ['editForm.name' => ['required', 'string', 'max:255', "unique:lead_sources,name,{$record->id}"]],
+            'payment_method' => [
+                'editForm.name' => ['required', 'string', 'max:255', "unique:payment_methods,name,{$record->id}"],
+                'editForm.type' => ['required', 'string', 'max:255'],
+            ],
+            'business_entity' => [
+                'editForm.name' => ['required', 'string', 'max:255'],
+                'editForm.classification' => ['required', 'in:'.implode(',', $this->businessEntityClassifications)],
+                'editForm.company_number' => ['required', 'string', 'max:255'],
+                'editForm.email' => ['required', 'email'],
+                'editForm.phone' => ['required', 'string', 'max:255'],
+            ],
+            'email_template' => [
+                'editForm.name' => ['required', 'string', 'max:255'],
+                'editForm.template_type' => ['required', 'string', 'max:255'],
+                'editForm.subject' => ['required', 'string'],
+                'editForm.content' => ['required', 'string'],
+            ],
+        };
+
+        $data = $this->validate($rules, [], [
+            'editForm.name' => 'שם', 'editForm.sort_order' => 'סדר', 'editForm.type' => 'סוג',
+            'editForm.classification' => 'סיווג', 'editForm.company_number' => 'ח.פ / ע.מ', 'editForm.email' => 'אימייל',
+            'editForm.phone' => 'טלפון', 'editForm.template_type' => 'סוג', 'editForm.subject' => 'נושא', 'editForm.content' => 'תוכן',
+        ])['editForm'];
+
+        // A status the code looks up by name keeps its name (StatusDefinition::SYSTEM_NAMES).
+        if ($type === 'status' && $record->isSystem()) {
+            $data['name'] = $record->name;
+        }
+
+        // An entity that already issued documents keeps its classification —
+        // SUMIT document types (invoice vs. חשבון עסקה, credit invoice vs.
+        // קבלה זיכוי) depend on it.
+        if ($type === 'business_entity' && $record->classification !== $data['classification']
+            && \App\Models\Document::where('business_entity_id', $record->id)->exists()) {
+            $this->addError('editForm.classification', 'לא ניתן לשנות סיווג של עוסק שכבר הופקו עבורו מסמכים.');
+
+            return;
+        }
+
+        $record->update($data);
+
+        $activityLogger->log("{$type}.updated", 'עודכן: '.($record->name ?? "#{$record->id}"), ['metadata' => ['id' => $record->id]]);
+
+        $this->cancelRecordEdit();
+        unset($this->statuses, $this->leadSources, $this->paymentMethods, $this->businessEntities, $this->emailTemplates);
+        if ($type === 'business_entity') {
+            $this->loadSumitCompanies();
+        }
+        $this->notifySuccess('השינויים נשמרו.');
     }
 
     // ----- סטטוסים -----
@@ -548,6 +643,20 @@ class extends Component
                     <thead><tr><th>שם</th><th>סדר</th><th>סטטוס</th><th></th></tr></thead>
                     <tbody>
                         @foreach ($items as $status)
+                            @if ($editingRecord === "status:{$status->id}")
+                                <tr>
+                                    <td>
+                                        @if ($status->isSystem())
+                                            {{ $status->name }} <span class="text-text-secondary" style="font-size:var(--fs-caption)">(סטטוס מערכת — השם קבוע)</span>
+                                        @else
+                                            <input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                        @endif
+                                    </td>
+                                    <td><input type="number" min="0" wire:model="editForm.sort_order" style="max-width:90px"> @error('editForm.sort_order') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                    <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
+                                </tr>
+                                @continue
+                            @endif
                             <tr>
                                 <td>{{ $status->name }}</td>
                                 <td class="ltr-num">{{ $status->sort_order }}</td>
@@ -558,7 +667,7 @@ class extends Component
                                         <span class="badge badge-neutral">מושבת</span>
                                     @endif
                                 </td>
-                                <td><button type="button" wire:click="toggleStatus({{ $status->id }})" class="btn btn-ghost">{{ $status->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                                <td><button type="button" wire:click="editRecord('status', {{ $status->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleStatus({{ $status->id }})" class="btn btn-ghost">{{ $status->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -625,6 +734,13 @@ class extends Component
                 <thead><tr><th>שם</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->leadSources as $source)
+                        @if ($editingRecord === "lead_source:{$source->id}")
+                            <tr>
+                                <td><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
+                            </tr>
+                            @continue
+                        @endif
                         <tr>
                             <td>{{ $source->name }}</td>
                             <td>
@@ -634,7 +750,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="toggleLeadSource({{ $source->id }})" class="btn btn-ghost">{{ $source->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td><button type="button" wire:click="editRecord('lead_source', {{ $source->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleLeadSource({{ $source->id }})" class="btn btn-ghost">{{ $source->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -666,6 +782,14 @@ class extends Component
                 <thead><tr><th>שם</th><th>סוג</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->paymentMethods as $method)
+                        @if ($editingRecord === "payment_method:{$method->id}")
+                            <tr>
+                                <td><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td><input type="text" wire:model="editForm.type"> @error('editForm.type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
+                            </tr>
+                            @continue
+                        @endif
                         <tr>
                             <td>{{ $method->name }}</td>
                             <td>{{ $method->type }}</td>
@@ -676,7 +800,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="togglePaymentMethod({{ $method->id }})" class="btn btn-ghost">{{ $method->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td><button type="button" wire:click="editRecord('payment_method', {{ $method->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="togglePaymentMethod({{ $method->id }})" class="btn btn-ghost">{{ $method->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -714,6 +838,23 @@ class extends Component
                 <thead><tr><th>שם</th><th>סיווג</th><th>ח.פ / ע.מ</th><th>אימייל</th><th>חיבור SUMIT</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->businessEntities as $entity)
+                        @if ($editingRecord === "business_entity:{$entity->id}")
+                            <tr>
+                                <td><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td>
+                                    <select wire:model="editForm.classification">
+                                        @foreach ($businessEntityClassifications as $classification)
+                                            <option value="{{ $classification }}">{{ $classification }}</option>
+                                        @endforeach
+                                    </select> @error('editForm.classification') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                </td>
+                                <td><input type="text" wire:model="editForm.company_number" class="ltr-num" dir="ltr"> @error('editForm.company_number') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td><input type="text" wire:model="editForm.email" class="ltr-num" dir="ltr"> @error('editForm.email') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td><input type="text" wire:model="editForm.phone" class="ltr-num" dir="ltr" placeholder="טלפון"> @error('editForm.phone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
+                            </tr>
+                            @continue
+                        @endif
                         <tr>
                             <td>{{ $entity->name }}</td>
                             <td><span class="badge badge-info">{{ $entity->classification }}</span></td>
@@ -727,7 +868,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="toggleBusinessEntity({{ $entity->id }})" class="btn btn-ghost">{{ $entity->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td><button type="button" wire:click="editRecord('business_entity', {{ $entity->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleBusinessEntity({{ $entity->id }})" class="btn btn-ghost">{{ $entity->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -791,9 +932,20 @@ class extends Component
                         @else
                             <span class="badge badge-neutral">מושבת</span>
                         @endif
+                        <button type="button" wire:click="editRecord('email_template', {{ $template->id }})" class="btn btn-ghost">עריכה</button>
                         <button type="button" wire:click="toggleEmailTemplate({{ $template->id }})" class="btn btn-ghost">{{ $template->is_active ? 'השבתה' : 'הפעלה' }}</button>
                     </div>
                 </div>
+
+                @if ($editingRecord === "email_template:{$template->id}")
+                    <div class="form-grid" style="margin-top:var(--sp-md)">
+                        <div><label>שם התבנית</label><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div><label>סוג (מזהה טכני)</label><input type="text" wire:model="editForm.template_type" class="ltr-num" dir="ltr"> @error('editForm.template_type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div class="full"><label>נושא</label><input type="text" wire:model="editForm.subject"> @error('editForm.subject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div class="full"><label>תוכן</label><textarea wire:model="editForm.content" rows="6"></textarea> @error('editForm.content') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div class="full"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></div>
+                    </div>
+                @endif
 
                 <div class="table-scroll">
                 <table style="margin-top: var(--sp-md)">

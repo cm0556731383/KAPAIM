@@ -223,6 +223,19 @@ class MailingMembership extends Model
         return $membership;
     }
 
+    /** A deleted supplier leaves the "ספקים" list — same logical removal as removeCustomer() below. */
+    public static function removeSupplier(MailingList $list, Supplier $supplier): void
+    {
+        $affected = self::where('mailing_list_id', $list->id)
+            ->where('supplier_id', $supplier->id)
+            ->where('membership_status', self::STATUS_ACTIVE)
+            ->update(['membership_status' => self::STATUS_REMOVED, 'removed_at' => now()]);
+
+        if ($affected > 0) {
+            self::pushToSmove('remove', $list, ['email' => $supplier->email, 'name' => $supplier->name], []);
+        }
+    }
+
     /**
      * FR-5.24: a logical removal only — flips membership_status, never
      * deletes the row. A no-op if $customer has no active membership on

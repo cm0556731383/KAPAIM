@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use RuntimeException;
 
 /**
@@ -17,13 +18,13 @@ use RuntimeException;
  * violation" pattern as Deal::createForCustomer()/recordPayment() and
  * Receipt::issueFor().
  *
- * An expense is never deleted (matches every other business-record
- * convention in this codebase) — there is no soft-deletes column.
+ * An expense can be edited, and removed (a logical delete) only while no
+ * invoice is attached — see deleteIfNoInvoice().
  */
 #[Fillable(['supplier_id', 'program_id', 'document_id', 'status_id', 'amount', 'expense_date', 'notes'])]
 class Expense extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     /** STATUS_DEFINITION scope='expense' names — seeded by ReferenceDataSeeder. */
     public const MISSING_INVOICE_STATUS_NAME = 'ממתינה לחשבונית';
@@ -108,6 +109,21 @@ class Expense extends Model
      *                          attached, or no active 'expense_invoice'
      *                          template exists yet.
      */
+    /**
+     * Once an invoice document is attached the expense is documented
+     * bookkeeping, so it stays; before that it's just a mistaken entry.
+     *
+     * @throws RuntimeException when an invoice is already attached.
+     */
+    public function deleteIfNoInvoice(): void
+    {
+        if ($this->document_id) {
+            throw new RuntimeException('לא ניתן למחוק הוצאה שכבר צורפה לה חשבונית.');
+        }
+
+        $this->delete();
+    }
+
     public function attachInvoice(): Document
     {
         if ($this->document_id) {

@@ -23,6 +23,14 @@ class extends Component
     public string $bundlePrice = '';
     public bool $bundleIsSubscriptionType = false;
 
+    // ===== עריכה =====
+    /** "program:{id}" / "bundle:{id}" being edited inline. */
+    public ?string $editingItem = null;
+    public string $editName = '';
+    public string $editDescription = '';
+    public string $editPrice = '';
+    public bool $editFlag = false;
+
     // ===== שיוך תוכניות למארז =====
     public ?int $membershipBundleId = null;
     public ?int $membershipProgramId = null;
@@ -86,6 +94,78 @@ class extends Component
         ]);
 
         unset($this->programs);
+    }
+
+    /**
+     * Editing the catalog never touches past sales — every deal keeps its
+     * own program/bundle name and price snapshot (FR-8.25).
+     */
+    public function editItem(string $type, int $id): void
+    {
+        $item = $type === 'program' ? Program::findOrFail($id) : Bundle::findOrFail($id);
+
+        $this->catalogError = null;
+        $this->resetErrorBag();
+        $this->editingItem = "{$type}:{$id}";
+        $this->editName = $item->name;
+        $this->editDescription = (string) $item->description;
+        $this->editPrice = (string) (float) $item->price;
+        $this->editFlag = (bool) ($type === 'program' ? $item->is_premium : $item->is_subscription_type);
+    }
+
+    public function cancelItemEdit(): void
+    {
+        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editFlag']);
+    }
+
+    public function saveItem(ActivityLogger $activityLogger): void
+    {
+        $this->catalogError = null;
+        [$type, $id] = explode(':', (string) $this->editingItem) + [null, null];
+        $table = $type === 'program' ? 'programs' : 'bundles';
+
+        $data = $this->validate([
+            'editName' => ['required', 'string', 'max:255', "unique:{$table},name,".(int) $id],
+            'editDescription' => ['nullable', 'string'],
+            'editPrice' => ['required', 'numeric', 'gt:0'],
+            'editFlag' => ['boolean'],
+        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר']);
+
+        if ($type === 'program') {
+            $item = Program::findOrFail((int) $id);
+            $oldName = $item->name;
+            $item->update([
+                'name' => $data['editName'],
+                'description' => $data['editDescription'] ?: null,
+                'price' => $data['editPrice'],
+                'is_premium' => $data['editFlag'],
+            ]);
+
+            // The program's own mailing list is named after it.
+            \App\Models\MailingList::where('program_id', $item->id)->where('name', $oldName)->update(['name' => $item->name]);
+        } else {
+            $item = Bundle::findOrFail((int) $id);
+
+            if ($data['editFlag'] && ! $item->is_subscription_type && $item->is_active && $this->anotherActiveSubscriptionBundleExists($item->id)) {
+                $this->catalogError = 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני שמארז זה יוגדר כמארז מנוי.';
+
+                return;
+            }
+
+            $item->update([
+                'name' => $data['editName'],
+                'description' => $data['editDescription'] ?: null,
+                'price' => $data['editPrice'],
+                'is_subscription_type' => $data['editFlag'],
+            ]);
+        }
+
+        $activityLogger->log("{$type}.updated", ($type === 'program' ? 'עודכנה תוכנית: ' : 'עודכן מארז: ').$item->name, [
+            'metadata' => ['id' => $item->id],
+        ]);
+
+        $this->cancelItemEdit();
+        unset($this->programs, $this->bundles);
     }
 
     #[Computed]
@@ -269,6 +349,24 @@ class extends Component
                 <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->programs as $program)
+                        @if ($editingItem === "program:{$program->id}")
+                        <tr>
+                            <td colspan="5">
+                                <form wire:submit="saveItem" class="form-grid">
+                                    <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
+                                    <div class="full"><span class="check-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום (is_premium)</label></span></div>
+                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                        <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
+                                    </div>
+                                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">שינוי שם או מחיר חל רק על מכירות חדשות — עסקאות קיימות שומרות את השם והמחיר שבהם נמכרו.</p>
+                                </form>
+                            </td>
+                        </tr>
+                        @continue
+                        @endif
                         <tr>
                             <td>{{ $program->name }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $program->price, 0) }}</td>
@@ -280,7 +378,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="toggleProgram({{ $program->id }})" class="btn btn-ghost">{{ $program->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td><button type="button" wire:click="editItem('program', {{ $program->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleProgram({{ $program->id }})" class="btn btn-ghost">{{ $program->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -351,6 +449,24 @@ class extends Component
                 <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->bundles as $bundle)
+                        @if ($editingItem === "bundle:{$bundle->id}")
+                        <tr>
+                            <td colspan="6">
+                                <form wire:submit="saveItem" class="form-grid">
+                                    <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
+                                    <div class="full"><span class="check-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי (is_subscription_type)</label></span></div>
+                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                        <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
+                                    </div>
+                                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">שינוי שם או מחיר חל רק על מכירות חדשות — עסקאות קיימות שומרות את השם והמחיר שבהם נמכרו.</p>
+                                </form>
+                            </td>
+                        </tr>
+                        @continue
+                        @endif
                         <tr>
                             <td>{{ $bundle->name }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $bundle->price, 0) }}</td>
@@ -371,7 +487,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="toggleBundle({{ $bundle->id }})" class="btn btn-ghost">{{ $bundle->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td><button type="button" wire:click="editItem('bundle', {{ $bundle->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleBundle({{ $bundle->id }})" class="btn btn-ghost">{{ $bundle->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>

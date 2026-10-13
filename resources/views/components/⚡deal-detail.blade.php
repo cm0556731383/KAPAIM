@@ -76,6 +76,16 @@ class extends Component
     /** Business-rule error from Deal::recordPayment()/Payment::markCleared()/Receipt::issueFor(). */
     public ?string $paymentError = null;
 
+    /** Payment being corrected inline — only a Payment::isEditable() one. */
+    public ?int $editingPaymentId = null;
+    public string $editPaymentAmount = '';
+    public string $editPaymentDate = '';
+    public string $editCheckNumber = '';
+    public string $editCheckDueDate = '';
+    public string $editCheckBank = '';
+    public string $editCheckBranch = '';
+    public string $editCheckAccount = '';
+
     /** The payments box's chosen type for this payment — independent of the deal's planned method. */
     public string $payMethodId = '';
 
@@ -315,6 +325,119 @@ class extends Component
      * payment — Deal::recordPayment() enforces the version-guarded
      * optimistic lock and the paid/partial status rules server-side.
      */
+    public function editPayment(int $paymentId): void
+    {
+        $payment = $this->deal->payments()->findOrFail($paymentId);
+
+        $this->paymentError = null;
+        $this->resetErrorBag();
+        $this->editingPaymentId = $payment->id;
+        $this->editPaymentAmount = (string) (float) $payment->amount;
+        $this->editPaymentDate = (string) $payment->payment_date?->format('Y-m-d');
+        $this->editCheckNumber = (string) $payment->check_number;
+        $this->editCheckDueDate = (string) $payment->check_due_date?->format('Y-m-d');
+        $this->editCheckBank = (string) $payment->check_bank_number;
+        $this->editCheckBranch = (string) $payment->check_branch_number;
+        $this->editCheckAccount = (string) $payment->check_account_number;
+    }
+
+    public function cancelPaymentEdit(): void
+    {
+        $this->reset(['editingPaymentId', 'editPaymentAmount', 'editPaymentDate', 'editCheckNumber', 'editCheckDueDate', 'editCheckBank', 'editCheckBranch', 'editCheckAccount']);
+    }
+
+    public function updatePayment(ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+
+        $data = $this->validate([
+            'editPaymentAmount' => ['required', 'numeric', 'gt:0'],
+            'editPaymentDate' => ['required', 'date'],
+            'editCheckNumber' => ['nullable', 'string', 'max:255'],
+            'editCheckDueDate' => ['nullable', 'date'],
+            'editCheckBank' => ['nullable', 'string', 'max:10'],
+            'editCheckBranch' => ['nullable', 'string', 'max:10'],
+            'editCheckAccount' => ['nullable', 'string', 'max:30'],
+        ], [], ['editPaymentAmount' => 'סכום', 'editPaymentDate' => 'תאריך', 'editCheckDueDate' => 'תאריך פירעון']);
+
+        $payment = $this->deal->payments()->findOrFail($this->editingPaymentId);
+
+        try {
+            $this->deal->updatePayment($this->loadedVersion, $payment, [
+                'amount' => (float) $data['editPaymentAmount'],
+                'payment_date' => $data['editPaymentDate'],
+                'check_number' => $data['editCheckNumber'] ?: null,
+                'check_due_date' => $data['editCheckDueDate'] ?: null,
+                'check_bank_number' => $data['editCheckBank'] ?: null,
+                'check_branch_number' => $data['editCheckBranch'] ?: null,
+                'check_account_number' => $data['editCheckAccount'] ?: null,
+            ]);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('payment.updated', "עודכן תשלום #{$payment->id} בעסקה #{$this->deal->id} (₪{$data['editPaymentAmount']})", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            'metadata' => ['payment_id' => $payment->id, 'amount' => $data['editPaymentAmount']],
+        ]);
+
+        $this->cancelPaymentEdit();
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments);
+        $this->notifySuccess('התשלום עודכן.');
+    }
+
+    public function deletePayment(int $paymentId, ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+        $payment = $this->deal->payments()->findOrFail($paymentId);
+
+        try {
+            $this->deal->deletePayment($this->loadedVersion, $payment);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('payment.deleted', "נמחק תשלום #{$payment->id} בסך ₪".number_format((float) $payment->amount, 0)." בעסקה #{$this->deal->id} (מחיקה לוגית)", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            'metadata' => ['payment_id' => $payment->id, 'amount' => (float) $payment->amount],
+        ]);
+
+        $this->cancelPaymentEdit();
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments);
+        $this->notifySuccess('התשלום נמחק.');
+    }
+
+    public function deleteDocument(int $documentId, ActivityLogger $activityLogger): void
+    {
+        $this->documentError = null;
+        $document = $this->deal->documents()->findOrFail($documentId);
+        $label = \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type;
+
+        try {
+            $document->deleteDraft();
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('document.deleted', "נמחקה טיוטת {$label} בעסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            'metadata' => ['document_id' => $documentId, 'document_type' => $document->document_type],
+        ]);
+
+        unset($this->documents);
+        $this->notifySuccess("טיוטת ה{$label} נמחקה.");
+    }
+
     public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         $this->paymentError = null;
@@ -887,6 +1010,9 @@ class extends Component
                             <td class="ltr-num">{{ $document->signed_at?->format('d/m/Y') ?? '—' }}</td>
                             <td style="display:flex; gap:6px">
                                 <a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a>
+                                @if ($document->isDeletableDraft())
+                                    <button type="button" wire:click="deleteDocument({{ $document->id }})" wire:confirm="למחוק את הטיוטה?" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
+                                @endif
                                 @if ($document->format === 'pdf' && $document->sent_at && ! $document->confirmed_at && ! in_array($document->document_type, ['invoice', 'credit_note'], true))
                                     <button type="button" wire:click="markDocumentSigned({{ $document->id }})" wire:confirm="לסמן את המסמך כנחתם? פעולה זו מדמה חתימה מקוונת של הלקוחה." class="btn btn-secondary btn-sm">סמן כנחתם</button>
                                 @endif
@@ -1134,9 +1260,39 @@ class extends Component
         @else
             <div class="table-scroll">
             <table>
-                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th></tr></thead>
+                <thead><tr><th>תאריך</th><th>סכום</th><th>אמצעי תשלום</th><th>סטטוס צ'ק</th><th>קבלה</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->payments as $payment)
+                        @if ($editingPaymentId === $payment->id)
+                            <tr wire:key="payment-edit-{{ $payment->id }}">
+                                <td colspan="6">
+                                    <form wire:submit="updatePayment" class="form-grid">
+                                        <div><label>תאריך</label><input type="date" wire:model="editPaymentDate">@error('editPaymentDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                        <div><label>סכום</label><input type="text" wire:model="editPaymentAmount" class="ltr-num" dir="ltr">@error('editPaymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                        @if ($payment->isCheck())
+                                            <div><label>מספר צ'ק</label><input type="text" wire:model="editCheckNumber" class="ltr-num" dir="ltr"></div>
+                                            <div><label>תאריך פירעון</label><input type="date" wire:model="editCheckDueDate">@error('editCheckDueDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                            <div>
+                                                <label>בנק</label>
+                                                <select wire:model="editCheckBank">
+                                                    <option value="">—</option>
+                                                    @foreach (\App\Models\Payment::BANKS as $code => $bankName)
+                                                        <option value="{{ $code }}">{{ $bankName }} ({{ $code }})</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                            <div><label>סניף</label><input type="text" wire:model="editCheckBranch" class="ltr-num" dir="ltr"></div>
+                                            <div><label>חשבון</label><input type="text" wire:model="editCheckAccount" class="ltr-num" dir="ltr"></div>
+                                        @endif
+                                        <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                            <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                                            <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelPaymentEdit">ביטול</button>
+                                        </div>
+                                    </form>
+                                </td>
+                            </tr>
+                            @continue
+                        @endif
                         <tr wire:key="payment-{{ $payment->id }}">
                             <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
@@ -1169,6 +1325,12 @@ class extends Component
                                     <span class="text-text-secondary" style="font-size:var(--fs-caption)">אחרי פירעון</span>
                                 @else
                                     <button type="button" wire:click="issueReceipt({{ $payment->id }})" class="btn btn-ghost btn-sm" @disabled(! $hasInvoice)>הפקת קבלה</button>
+                                @endif
+                            </td>
+                            <td style="white-space:nowrap">
+                                @if ($payment->isEditable())
+                                    <button type="button" wire:click="editPayment({{ $payment->id }})" class="btn btn-ghost btn-sm">עריכה</button>
+                                    <button type="button" wire:click="deletePayment({{ $payment->id }})" wire:confirm="למחוק את התשלום? (מחיקה לוגית)" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                                 @endif
                             </td>
                         </tr>

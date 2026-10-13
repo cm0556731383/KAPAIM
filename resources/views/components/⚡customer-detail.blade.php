@@ -598,6 +598,29 @@ class extends Component
         unset($this->subscriptions, $this->hasActiveSubscription);
     }
 
+    public function unmarkDeliverySupplied(int $subscriptionId, int $deliveryId, ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $this->subscriptionError = null;
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
+
+        try {
+            $delivery = $subscription->unmarkDeliverySupplied($subscription->version, $deliveryId);
+        } catch (\RuntimeException $e) {
+            $this->subscriptionError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('subscription.delivery_unsupplied', "בוטל סימון האספקה של תוכנית מס' {$delivery->sequence_number} במנוי #{$subscription->id}", [
+            'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+        ]);
+
+        unset($this->subscriptions, $this->hasActiveSubscription);
+        $this->notifySuccess('סימון האספקה בוטל.');
+    }
+
     /**
      * US-010/FR-8.24: the only place this screen cancels a subscription —
      * from the month chosen on its card. Subscription::cancel() computes the
@@ -1359,6 +1382,7 @@ class extends Component
                                 <td>
                                     @if ($delivery->is_supplied)
                                         <span class="badge badge-success">סופקה</span>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="unmarkDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})" wire:confirm="לבטל את סימון האספקה של שורה זו?">ביטול סימון</button>
                                     @elseif ($deliveryCancelled)
                                         <span class="badge badge-error">בוטלה</span>
                                     @elseif ($deliverySuppliable)

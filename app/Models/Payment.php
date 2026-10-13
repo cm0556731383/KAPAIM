@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use RuntimeException;
 
 /**
@@ -26,7 +27,7 @@ use RuntimeException;
 ])]
 class Payment extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     public const CHECK_RECEIVED = 'received';
 
@@ -81,6 +82,18 @@ class Payment extends Model
     public function receipt(): HasOne
     {
         return $this->hasOne(Receipt::class);
+    }
+
+    /**
+     * A payment may be corrected or removed (Deal::updatePayment()/
+     * deletePayment()) only while it's purely local: no receipt issued for
+     * it, not reported by SUMIT (a payment link / card charge / standing
+     * order), and — for a check — not yet cleared. Anything past that is
+     * already in the books.
+     */
+    public function isEditable(): bool
+    {
+        return ! $this->receipt && ! $this->sumit_payment_id && ! $this->sumit_document_id && ! $this->cleared_date;
     }
 
     public function isCheck(): bool

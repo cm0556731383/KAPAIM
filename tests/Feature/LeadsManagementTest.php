@@ -536,6 +536,63 @@ class LeadsManagementTest extends TestCase
         $response->assertSee('בית ספר מוצג בכרטיס');
     }
 
+    // ----- edit / delete of interactions, Up Follows, reminders -----
+
+    public function test_an_interaction_can_be_edited_and_logically_deleted(): void
+    {
+        $lead = $this->createLead();
+        $interaction = $lead->interactions()->create(['user_id' => $this->owner->id, 'interaction_type' => 'שיחה', 'summary' => 'ישן', 'occurred_at' => now()]);
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('editTimelineItem', 'interaction', $interaction->id)
+            ->assertSet('editInteractionType', 'שיחה')
+            ->set('editInteractionType', 'פגישת היכרות בבית הספר')
+            ->set('editSummary', 'חדש')
+            ->call('updateTimelineItem')
+            ->assertHasNoErrors()
+            ->assertSee('פגישת היכרות בבית הספר')
+            ->call('deleteTimelineItem', 'interaction', $interaction->id)
+            ->assertDontSee('פגישת היכרות בבית הספר');
+
+        $this->assertSoftDeleted('lead_interactions', ['id' => $interaction->id, 'summary' => 'חדש']);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'lead.interaction_deleted', 'lead_id' => $lead->id]);
+    }
+
+    public function test_a_follow_up_can_be_edited_and_logically_deleted(): void
+    {
+        $lead = $this->createLead();
+        $followUp = $lead->followUps()->create(['user_id' => $this->owner->id, 'summary' => 'ישן', 'occurred_at' => now()]);
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('editTimelineItem', 'follow_up', $followUp->id)
+            ->set('editNextAt', '2030-01-15')
+            ->call('updateTimelineItem')
+            ->assertHasNoErrors();
+
+        $this->assertSame('2030-01-15', $followUp->fresh()->next_at->toDateString());
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('deleteTimelineItem', 'follow_up', $followUp->id);
+
+        $this->assertSoftDeleted('follow_ups', ['id' => $followUp->id]);
+    }
+
+    public function test_a_reminder_can_be_edited(): void
+    {
+        $lead = $this->createLead();
+        $task = Task::create(['user_id' => $this->owner->id, 'lead_id' => $lead->id, 'task_type' => 'reminder', 'status' => 'open', 'title' => 'ישן']);
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('editTask', $task->id)
+            ->set('editTaskTitle', 'להתקשר שוב')
+            ->set('editTaskDueAt', '2030-02-01')
+            ->call('updateTask')
+            ->assertHasNoErrors()
+            ->assertSee('להתקשר שוב');
+
+        $this->assertSame('2030-02-01', $task->fresh()->due_at->toDateString());
+    }
+
     private function createLead(?string $schoolName = null): Lead
     {
         $status = StatusDefinition::firstOrCreate(

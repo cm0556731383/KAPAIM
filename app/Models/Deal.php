@@ -508,6 +508,98 @@ class Deal extends Model
     }
 
     /**
+     * Corrects a mistaken payment (Payment::isEditable() only) — same
+     * optimistic lock as recordPayment(), and the deal's paid status follows
+     * the new total.
+     *
+     * @param  array{amount: float, payment_date: string, check_number?: ?string, check_due_date?: ?string, check_bank_number?: ?string, check_branch_number?: ?string, check_account_number?: ?string}  $attributes
+     *
+     * @throws RuntimeException on a version conflict, a non-editable payment, or a non-positive amount.
+     */
+    public function updatePayment(int $expectedVersion, Payment $payment, array $attributes): void
+    {
+        $this->assertPaymentEditable($payment);
+
+        if ((float) $attributes['amount'] <= 0) {
+            throw new RuntimeException('סכום התשלום חייב להיות גדול מאפס.');
+        }
+
+        if (! $payment->isCheck()) {
+            $attributes = array_intersect_key($attributes, array_flip(['amount', 'payment_date']));
+        }
+
+        DB::transaction(function () use ($expectedVersion, $payment, $attributes) {
+            $this->bumpVersion($expectedVersion);
+            $payment->update($attributes);
+            $this->syncPaidStatus();
+        });
+    }
+
+    /**
+     * Removes a mistaken payment (Payment::isEditable() only) — a logical
+     * delete; the deal's paid status follows the new total.
+     *
+     * @throws RuntimeException on a version conflict or a non-editable payment.
+     */
+    public function deletePayment(int $expectedVersion, Payment $payment): void
+    {
+        $this->assertPaymentEditable($payment);
+
+        DB::transaction(function () use ($expectedVersion, $payment) {
+            $this->bumpVersion($expectedVersion);
+            $payment->delete();
+            $this->syncPaidStatus();
+        });
+    }
+
+    private function assertPaymentEditable(Payment $payment): void
+    {
+        if ($payment->deal_id !== $this->id) {
+            throw new RuntimeException('התשלום אינו שייך לעסקה זו.');
+        }
+
+        if (! $payment->isEditable()) {
+            throw new RuntimeException('לא ניתן לערוך או למחוק תשלום שהופקה עבורו קבלה, שהתקבל דרך SUMIT או צ\'ק שכבר נפרע.');
+        }
+    }
+
+    private function bumpVersion(int $expectedVersion): void
+    {
+        $affected = self::where('id', $this->id)->where('version', $expectedVersion)->update(['version' => DB::raw('version + 1')]);
+
+        if ($affected === 0) {
+            throw new RuntimeException('העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+        }
+    }
+
+    /**
+     * After a payment is corrected/removed: fully paid → "שולמה" (as
+     * recordPayment() does); a "שולמה" deal no longer fully paid goes back to
+     * "נשלחה חשבונית" (or "פתוחה" with no issued invoice). A cancelled deal
+     * keeps its status.
+     */
+    private function syncPaidStatus(): void
+    {
+        $this->refresh();
+        $statusName = $this->status?->name;
+
+        if ($statusName === self::CANCELLED_STATUS_NAME) {
+            return;
+        }
+
+        $fullyPaid = $this->totalPaid() >= $this->amountDue();
+
+        if ($fullyPaid && $statusName !== self::PAID_STATUS_NAME) {
+            $status = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => self::PAID_STATUS_NAME], ['is_active' => true, 'sort_order' => 3]);
+            $this->update(['status_id' => $status->id, 'completed_at' => $this->completed_at ?? now()]);
+        } elseif (! $fullyPaid && $statusName === self::PAID_STATUS_NAME) {
+            $name = $this->issuedInvoice() ? 'נשלחה חשבונית' : self::DEFAULT_STATUS_NAME;
+            $status = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => $name], ['is_active' => true, 'sort_order' => $name === self::DEFAULT_STATUS_NAME ? 1 : 2]);
+            $this->update(['status_id' => $status->id, 'completed_at' => null]);
+        }
+    }
+
+    /**
      * Several checks received together (often post-dated, one per month) —
      * each a check payment of its own with its number and due date; its
      * receipt is issued when it clears. All or none: a failure records none.

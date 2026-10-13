@@ -9,9 +9,10 @@ use Livewire\Component;
 
 /**
  * Build-plan 11 — מסך ספקים (US-017, FR-6.14/FR-6.15). Mirrors
- * ⚡programs-catalog.blade.php's list+form CRUD shape. No delete/disable
- * route — see the suppliers-table migration's docblock — "עריכה" loads a
- * row back into the same form for an in-place update instead.
+ * ⚡programs-catalog.blade.php's list+form CRUD shape. "עריכה" loads a row
+ * back into the same form for an in-place update; a supplier with no
+ * expenses at all (deleted ones included — they still reference it) can be
+ * deleted, one with expenses stays as their history.
  */
 new
 #[Layout('layouts.app', ['title' => 'ספקים — כפיים'])]
@@ -105,10 +106,29 @@ class extends Component
         $this->dispatch('close-modals');
     }
 
+    public function deleteSupplier(int $id, ActivityLogger $activityLogger): void
+    {
+        $supplier = Supplier::findOrFail($id);
+
+        if (\App\Models\Expense::withTrashed()->where('supplier_id', $supplier->id)->exists()) {
+            $this->notifyWarning("לא ניתן למחוק את הספק \"{$supplier->name}\" — רשומות עבורו הוצאות.");
+
+            return;
+        }
+
+        \App\Models\MailingMembership::removeSupplier(\App\Models\MailingList::suppliersList(), $supplier);
+        $supplier->delete();
+
+        $activityLogger->log('supplier.deleted', "נמחק ספק: {$supplier->name}", ['metadata' => ['supplier_id' => $supplier->id]]);
+
+        unset($this->suppliers);
+        $this->notifySuccess("הספק \"{$supplier->name}\" נמחק.");
+    }
+
     #[Computed]
     public function suppliers()
     {
-        return Supplier::orderBy('name')->get();
+        return Supplier::withCount(['expenses' => fn ($q) => $q->withTrashed()])->orderBy('name')->get();
     }
 
     #[Computed]
@@ -197,7 +217,12 @@ class extends Component
                         <td class="ltr-num">{{ $supplier->phone ?? '—' }}</td>
                         <td>{{ $supplier->email ?? '—' }}</td>
                         <td style="color:var(--color-text-secondary)">{{ $supplier->notes ?: '—' }}</td>
-                        <td><button type="button" wire:click="editSupplier({{ $supplier->id }})" class="btn btn-ghost">עריכה</button></td>
+                        <td>
+                            <button type="button" wire:click="editSupplier({{ $supplier->id }})" class="btn btn-ghost">עריכה</button>
+                            @if ($supplier->expenses_count === 0)
+                                <button type="button" wire:click="deleteSupplier({{ $supplier->id }})" wire:confirm="למחוק את הספק?" class="btn btn-ghost" style="color:var(--color-error)">מחיקה</button>
+                            @endif
+                        </td>
                     </tr>
                 @empty
                     <tr><td colspan="7" class="empty-state">עדיין לא נוספו ספקים.</td></tr>
