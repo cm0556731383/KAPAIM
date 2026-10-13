@@ -361,6 +361,7 @@ class SubscriptionsTest extends TestCase
         $this->createTemplate('credit_note');
         $subscription = $this->openSubscription(agreedAmount: 2000);
         $this->giveDealAnInvoice($subscription->deal);
+        $subscription->deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
         $subscription->cancel();
 
         $document = $subscription->fresh()->generateCreditNote();
@@ -379,7 +380,20 @@ class SubscriptionsTest extends TestCase
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->fresh()->customer])
             ->set('activeTab', 'subscription')
-            ->assertSeeHtml('wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"');
+            ->assertSeeHtml('wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?"');
+    }
+
+    public function test_a_subscription_deals_credit_note_is_left_to_the_customer_card(): void
+    {
+        $this->createTemplate('credit_note');
+        $subscription = $this->openSubscription();
+        $this->giveDealAnInvoice($subscription->deal);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $subscription->deal->fresh()])
+            ->assertDontSee('+ הפקת חשבונית זיכוי')
+            ->set('creditAmount', '100')
+            ->call('generateDealCreditNote')
+            ->assertSet('documentError', 'זיכוי על מנוי מופק מכרטיס הלקוח, בלשונית מנוי — לפי החודשים שבוטלו.');
     }
 
     public function test_credit_note_cannot_be_generated_before_cancellation(): void
@@ -442,6 +456,7 @@ class SubscriptionsTest extends TestCase
         // Month 1 = תשרי תשפ״ז (a leap year: אדר א׳ and אדר ב׳ are months 6 and 7).
         $subscription->update(['first_month_date' => '2026-09-12']);
         $this->giveDealAnInvoice($subscription->deal);
+        $subscription->deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
         $subscription->fresh()->cancel(5);
 
         $document = $subscription->fresh()->generateCreditNote();

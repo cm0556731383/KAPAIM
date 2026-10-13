@@ -236,6 +236,7 @@ class SumitPaymentsTest extends TestCase
     {
         DocumentTemplate::create(['document_type' => 'credit_note', 'name' => 'זיכוי', 'content' => 'זיכוי', 'is_active' => true]);
         $deal = $this->cardDealWithInvoice(400);
+        $deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']); // a tax invoice, credited regardless of payment
         $deal->recordPayment($deal->version, 100);
         $creditNote = Document::generateCreditNoteFor($deal->fresh(), 250);
 

@@ -289,6 +289,11 @@ class Document extends Model
             return;
         }
 
+        // A supplier's invoice belongs to an expense (Expense::attachInvoice()), never to a sale.
+        if ($documentType === 'expense_invoice') {
+            throw new RuntimeException('חשבונית הוצאה מצורפת להוצאה במסך הוצאות — לא לעסקה.');
+        }
+
         $deal = $subject;
 
         if ($documentType === 'contract') {
@@ -353,12 +358,66 @@ class Document extends Model
         }
 
         $invoice = $deal->issuedInvoice();
+        self::assertExemptCreditCovered($deal, $invoice, $creditAmount);
 
         $document = self::generateFor($deal, $template, 'digital', $invoice?->business_entity_id);
 
         $document->addLine($description, $creditAmount);
 
         return $document;
+    }
+
+    /**
+     * An exempt dealer's "invoice" is a חשבון עסקה — not a tax document —
+     * and its credit is a קבלה זיכוי: money handed back. So it can credit at
+     * most what the customer actually paid; with nothing paid there's nothing
+     * to credit (cancelling the deal is enough). A licensed dealer's tax
+     * invoice is credited regardless of payment.
+     *
+     * @throws RuntimeException
+     */
+    private static function assertExemptCreditCovered(Deal $deal, ?self $invoice, float $creditAmount): void
+    {
+        if (! $invoice?->businessEntity?->isExempt()) {
+            return;
+        }
+
+        $paid = $deal->totalPaid();
+
+        if ($paid <= 0) {
+            throw new RuntimeException('לעסקה של עוסק פטור הופק רק חשבון עסקה ועדיין לא התקבל עליה תשלום — אין מה לזכות. די לבטל את העסקה; חשבון עסקה אינו מסמך מס.');
+        }
+
+        if ($creditAmount > $paid + 0.005) {
+            throw new RuntimeException('בעוסק פטור הזיכוי הוא קבלת זיכוי — החזר של כסף שהתקבל — ולכן הוא יכול להיות עד ₪'.number_format($paid, 2).', הסכום ששולם בעסקה.');
+        }
+    }
+
+    /**
+     * One click from the deal / customer card: create the credit note and
+     * issue it in SUMIT (which emails it), to the customer's primary
+     * contact(s). A SUMIT failure leaves an unsent draft to retry from its
+     * own screen, as with any credit note.
+     *
+     * @return array{document: self, operations: array}
+     *
+     * @throws RuntimeException before anything is created (no recipient, a
+     *                          rule) — never after.
+     */
+    public static function issueCreditNoteFor(Deal $deal, float $creditAmount, string $description, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): array
+    {
+        $recipients = Contact::where('customer_id', $deal->customer_id)->where('is_primary', true)->get()
+            ->filter(fn (Contact $c) => filled($c->email) && filter_var($c->email, FILTER_VALIDATE_EMAIL))
+            ->map(fn (Contact $c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])
+            ->values()->all();
+
+        if (empty($recipients)) {
+            throw new RuntimeException('ללקוחה אין איש קשר ראשי עם כתובת דוא"ל — יש להוסיף אחד בכרטיס הלקוח, ואז להפיק את הזיכוי.');
+        }
+
+        $document = self::generateCreditNoteFor($deal, $creditAmount, $description);
+
+        return ['document' => $document, 'operations' => $document->sendTo($recipients, 'digital', $logger, $runner, $summit, $smove)];
     }
 
     private static function precedingFor(Deal $deal, string $documentType): ?self
@@ -857,11 +916,10 @@ class Document extends Model
         $operations = ['smove' => null, 'summit' => null];
 
         // An invoice/credit note is delivered by Summit itself, so it only
-        // counts as sent once Summit accepted it. On a failure a credit note
-        // stays an unsent draft that can be sent again; an invoice draft is
-        // deleted outright (business owner's call, 2026-10-12), so the deal
-        // is free to generate a fresh invoice — $operations['deleted'] tells
-        // the caller the document is gone.
+        // counts as sent once Summit accepted it. On a failure the draft is
+        // deleted outright (business owner's call — invoice 2026-10-12,
+        // credit note 2026-10-14), so the deal is free to generate a fresh
+        // one — $operations['deleted'] tells the caller the document is gone.
         if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
             $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
             // SUMIT emails the issued document itself, to the first recipient with a valid address.
@@ -880,8 +938,8 @@ class Document extends Model
             );
 
             if ($operations['summit']->status === ExternalOperation::STATUS_FAILED) {
-                if ($this->document_type === 'invoice' && ! $this->receipts()->exists()) {
-                    $logger->log('document.deleted', "טיוטת החשבונית עבור עסקה #{$this->deal_id} נמחקה כי ההפקה מול Summit נכשלה", [
+                if (! $this->receipts()->exists()) {
+                    $logger->log('document.deleted', "טיוטת ה{$typeLabel} עבור עסקה #{$this->deal_id} נמחקה כי ההפקה מול Summit נכשלה", [
                         'deal_id' => $this->deal_id,
                         'metadata' => ['document_id' => $this->id, 'error' => $operations['summit']->error_message],
                     ]);

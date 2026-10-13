@@ -17,6 +17,7 @@ use App\Models\Task;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
+use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -672,7 +673,7 @@ class extends Component
      * re-checks the "deal already has an invoice" gate server-side via
      * Document::generateCreditNoteFor().
      */
-    public function generateSubscriptionCreditNote(int $subscriptionId, ActivityLogger $activityLogger): void
+    public function generateSubscriptionCreditNote(int $subscriptionId, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
     {
         abort_unless(auth()->user()->can('subscriptions.manage'), 403);
 
@@ -681,7 +682,7 @@ class extends Component
         $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
         try {
-            $document = $subscription->generateCreditNote();
+            ['document' => $document, 'operations' => $operations] = $subscription->issueCreditNote($activityLogger, $runner, $summit, $smove);
         } catch (\RuntimeException $e) {
             $this->subscriptionError = $e->getMessage();
 
@@ -693,7 +694,15 @@ class extends Component
             'metadata' => ['document_id' => $document->id],
         ]);
 
-        $this->redirect(route('document-view', $document), navigate: false);
+        unset($this->subscriptions);
+
+        if (($operations['summit'] ?? null)?->status === \App\Models\ExternalOperation::STATUS_FAILED) {
+            $this->subscriptionError = 'ההפקה ב-SUMIT נכשלה, ולכן טיוטת הזיכוי נמחקה ולא נשלח דבר ללקוחה. אפשר לנסות שוב. פירוט השגיאה: '.$operations['summit']->error_message;
+
+            return;
+        }
+
+        $this->notifySuccess('הזיכוי הופק ב-SUMIT ונשלח ללקוחה במייל.');
     }
 
     /** FR-3.20: loads the current override (if any) into the edit form. */
@@ -1453,7 +1462,7 @@ class extends Component
                                 class="btn btn-secondary"
                                 wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
                                 @if (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
-                                    wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
+                                    wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?"
                                 @endif
                             >הפקת חשבונית זיכוי</button>
                         @endif

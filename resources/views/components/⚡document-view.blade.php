@@ -190,7 +190,8 @@ class extends Component
         }
 
         if ($operations['deleted'] ?? false) {
-            session()->flash('documentError', 'ההפקה מול Summit נכשלה, ולכן טיוטת החשבונית נמחקה. ניתן להפיק חשבונית חדשה. פירוט השגיאה: '.$operations['summit']->error_message);
+            $label = \App\Models\Document::TYPE_LABELS[$this->document->document_type] ?? 'המסמך';
+            session()->flash('documentError', "ההפקה מול SUMIT נכשלה, ולכן טיוטת ה{$label} נמחקה. ניתן להפיק {$label} חדשה. פירוט השגיאה: ".$operations['summit']->error_message);
             $this->redirectRoute('deal-detail', $this->document->deal_id);
 
             return;

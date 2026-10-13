@@ -582,7 +582,7 @@ class ExternalIntegrationsTest extends TestCase
             ->assertDispatched('notify', type: 'error', message: 'טיוטת החשבונית נמחקה', sticky: true);
     }
 
-    public function test_a_credit_note_whose_summit_issuance_fails_stays_an_unsent_draft(): void
+    public function test_a_credit_note_whose_summit_issuance_fails_is_deleted(): void
     {
         $deal = $this->dealWithInvoice();
         $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
@@ -606,9 +606,8 @@ class ExternalIntegrationsTest extends TestCase
         );
 
         $this->assertSame(ExternalOperation::STATUS_FAILED, $operations['summit']->status);
-        $this->assertArrayNotHasKey('deleted', $operations);
-        $this->assertNotNull($creditNote->fresh());
-        $this->assertNull($creditNote->fresh()->sent_at);
+        $this->assertTrue($operations['deleted']);
+        $this->assertNull($creditNote->fresh());
     }
 
     /**
@@ -1013,6 +1012,7 @@ class ExternalIntegrationsTest extends TestCase
     {
         $this->createTemplate('credit_note');
         $deal = $this->dealWithInvoice();
+        $deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']); // a tax invoice, credited regardless of payment
         $entity = $deal->documents()->where('document_type', 'invoice')->firstOrFail()->businessEntity;
         $deal->lockToBusinessEntity($entity);
 
@@ -1133,6 +1133,7 @@ class ExternalIntegrationsTest extends TestCase
     {
         $this->createTemplate('credit_note');
         $deal = $this->dealWithInvoice();
+        $deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']); // a tax invoice, credited regardless of payment
 
         Document::generateCreditNoteFor($deal->fresh(), 50);
 

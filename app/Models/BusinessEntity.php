@@ -17,6 +17,14 @@ use Illuminate\Database\Eloquent\Model;
 #[Hidden(['sumit_api_key'])]
 class BusinessEntity extends Model
 {
+    /** An exempt dealer (עוסק פטור) — its invoice is a חשבון עסקה and its credit a קבלה זיכוי (see SummitClient). */
+    public const EXEMPT_CLASSIFICATION = 'עוסק פטור';
+
+    public function isExempt(): bool
+    {
+        return $this->classification === self::EXEMPT_CLASSIFICATION;
+    }
+
     use HasFactory;
 
     protected function casts(): array

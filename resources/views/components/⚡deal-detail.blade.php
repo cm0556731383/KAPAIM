@@ -245,6 +245,59 @@ class extends Component
      * Document row is ever created and re-checks every business rule
      * server-side regardless of what the UI already disabled.
      */
+    /** A deal's own document types — a supplier's expense invoice belongs to the expenses screen. */
+    public function dealDocumentTypes(): array
+    {
+        return array_diff_key(Document::TYPE_LABELS, ['expense_invoice' => true]);
+    }
+
+    /** Credit note for a cancelled non-subscription deal — the owner sets what it's for and how much. */
+    public string $creditDescription = 'זיכוי בגין ביטול עסקה';
+    public string $creditAmount = '';
+
+    public function generateDealCreditNote(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
+    {
+        $this->documentError = null;
+
+        if ($this->deal->subscription) {
+            $this->documentError = 'זיכוי על מנוי מופק מכרטיס הלקוח, בלשונית מנוי — לפי החודשים שבוטלו.';
+
+            return;
+        }
+
+        $invoiceTotal = (float) ($this->deal->issuedInvoice()?->totalAmount() ?? 0);
+
+        $data = $this->validate([
+            'creditDescription' => ['required', 'string', 'max:255'],
+            'creditAmount' => ['required', 'numeric', 'gt:0', 'lte:'.$invoiceTotal],
+        ], ['creditAmount.lte' => 'סכום הזיכוי לא יכול לעלות על סכום החשבונית (₪'.number_format($invoiceTotal, 2).').'],
+            ['creditDescription' => 'פירוט', 'creditAmount' => 'סכום']);
+
+        try {
+            ['document' => $document, 'operations' => $operations] = Document::issueCreditNoteFor($this->deal, (float) $data['creditAmount'], $data['creditDescription'], $activityLogger, $runner, $summit, $smove);
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('document.credit_note_generated', "הופקה חשבונית זיכוי בסך ₪{$data['creditAmount']} לעסקה #{$this->deal->id}: {$data['creditDescription']}", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            'metadata' => ['document_id' => $document->id, 'amount' => (float) $data['creditAmount']],
+        ]);
+
+        unset($this->documents);
+        $this->dispatch('close-modals');
+
+        if (($operations['summit'] ?? null)?->status === \App\Models\ExternalOperation::STATUS_FAILED) {
+            $this->documentError = 'ההפקה ב-SUMIT נכשלה, ולכן טיוטת הזיכוי נמחקה ולא נשלח דבר ללקוחה. אפשר לנסות שוב. פירוט השגיאה: '.$operations['summit']->error_message;
+
+            return;
+        }
+
+        $this->notifySuccess('הזיכוי הופק ב-SUMIT ונשלח ללקוחה במייל.');
+    }
+
     public function generateDocument(string $documentType): void
     {
         $this->documentError = null;
@@ -948,7 +1001,7 @@ class extends Component
 
 
         <div class="doc-stepper">
-            @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
+            @foreach ($this->dealDocumentTypes() as $type => $label)
                 @php $existing = $this->documents->where('document_type', $type); @endphp
                 <span class="doc-step {{ $existing->isNotEmpty() ? 'done' : '' }}">{{ $label }} ({{ $existing->count() }})</span>
                 @if (! $loop->last)<span class="doc-step-arrow">←</span>@endif
@@ -956,8 +1009,31 @@ class extends Component
         </div>
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg); align-items:flex-end">
-            @foreach (\App\Models\Document::TYPE_LABELS as $type => $label)
-                @if ($type === 'invoice')
+            @foreach ($this->dealDocumentTypes() as $type => $label)
+                @if ($type === 'credit_note')
+                    {{-- A subscription's credit is issued from the customer card (months cancelled); any other deal's here. --}}
+                    @unless ($deal->subscription)
+                        @if ($this->canGenerateDocument('credit_note'))
+                            <x-modal trigger-label="+ הפקת חשבונית זיכוי" trigger-class="btn btn-secondary" title="חשבונית זיכוי">
+                                <form wire:submit="generateDealCreditNote" class="form-grid">
+                                    <div class="full">
+                                        <label for="creditDescription">פירוט</label>
+                                        <input type="text" id="creditDescription" wire:model="creditDescription">
+                                        @error('creditDescription') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div>
+                                        <label for="creditAmount">סכום הזיכוי</label>
+                                        <input type="text" id="creditAmount" wire:model="creditAmount" class="ltr-num" dir="ltr" placeholder="₪{{ number_format((float) ($deal->issuedInvoice()?->totalAmount() ?? 0), 0) }}">
+                                        @error('creditAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div class="full"><button type="submit" class="btn btn-primary" wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?">הפקת חשבונית זיכוי</button></div>
+                                </form>
+                            </x-modal>
+                        @else
+                            <button type="button" class="btn btn-secondary" disabled>+ הפקת חשבונית זיכוי</button>
+                        @endif
+                    @endunless
+                @elseif ($type === 'invoice')
                     <div style="display:flex; gap:6px; align-items:flex-end">
                         <div>
                             <label for="invoiceBusinessEntityId" style="margin-bottom:4px">עוסק @if ($deal->business_entity_id)<span class="scope-pill" title="לעסקה כבר הופקו מסמכים ב-SUMIT מעוסק זה — כל מסמכי העסקה מופקים ממנו">נעול לעסקה</span>@endif</label>

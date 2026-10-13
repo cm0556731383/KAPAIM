@@ -400,11 +400,24 @@ class Subscription extends Model
      */
     public function generateCreditNote(): Document
     {
+        $this->assertCancelledForCredit();
+
+        return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription());
+    }
+
+    /** generateCreditNote(), issued in SUMIT and sent to the customer in the same step (Document::issueCreditNoteFor()). */
+    public function issueCreditNote(\App\Services\ActivityLogger $logger, \App\Services\Integrations\ExternalOperationRunner $runner, \App\Services\Integrations\SummitClient $summit, \App\Services\Integrations\SmoveClient $smove): array
+    {
+        $this->assertCancelledForCredit();
+
+        return Document::issueCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription(), $logger, $runner, $summit, $smove);
+    }
+
+    private function assertCancelledForCredit(): void
+    {
         if ($this->status?->name !== self::CANCELLED_STATUS_NAME) {
             throw new RuntimeException('ניתן להפיק חשבונית זיכוי רק עבור מנוי שבוטל.');
         }
-
-        return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription());
     }
 }
 

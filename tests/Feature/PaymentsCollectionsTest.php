@@ -116,6 +116,91 @@ class PaymentsCollectionsTest extends TestCase
         $this->assertDatabaseMissing('documents', ['id' => $contract->id]);
     }
 
+    // ----- deal documents: no expense invoice; a credit note with the owner's own figures -----
+
+    public function test_a_deal_never_offers_or_generates_an_expense_invoice(): void
+    {
+        $deal = $this->createDeal();
+        $this->createTemplate('expense_invoice');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertDontSee('חשבונית הוצאה')
+            ->call('generateDocument', 'expense_invoice')
+            ->assertSet('documentError', 'חשבונית הוצאה מצורפת להוצאה במסך הוצאות — לא לעסקה.');
+
+        $this->assertSame(0, Document::where('deal_id', $deal->id)->count());
+    }
+
+    public function test_a_cancelled_deals_credit_note_is_issued_and_sent_with_the_figures_entered(): void
+    {
+        $deal = $this->dealWithInvoice(400);
+        $deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
+        $this->summitConnectedFor($deal);
+        $this->giveCustomerAnEmailContact($deal);
+        $this->createTemplate('credit_note');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertSee('+ הפקת חשבונית זיכוי')
+            ->set('creditDescription', 'זיכוי בגין ביטול הסדנה')
+            ->set('creditAmount', (string) ($deal->issuedInvoice()->totalAmount() + 1))
+            ->call('generateDealCreditNote')
+            ->assertHasErrors(['creditAmount'])
+            ->set('creditAmount', '250')
+            ->call('generateDealCreditNote')
+            ->assertHasNoErrors()
+            ->assertSet('documentError', null);
+
+        $credit = Document::where('deal_id', $deal->id)->where('document_type', 'credit_note')->firstOrFail();
+        $this->assertSame('זיכוי בגין ביטול הסדנה', $credit->lines()->first()->description);
+        $this->assertEquals(250, $credit->totalAmount());
+        $this->assertNotNull($credit->sent_at); // sent in the same click
+        $this->assertSame(1, $credit->recipients()->count());
+    }
+
+    public function test_a_credit_note_sumit_rejects_is_deleted_with_a_message(): void
+    {
+        $deal = $this->dealWithInvoice(400);
+        $deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
+        // Registered before summitConnectedFor()'s success stub, so it's the one that answers.
+        \Illuminate\Support\Facades\Http::fake(['api.sumit.co.il/*' => \Illuminate\Support\Facades\Http::response(['Status' => 1, 'UserErrorMessage' => 'שגיאת בדיקה'], 200)]);
+        $this->summitConnectedFor($deal);
+        $this->giveCustomerAnEmailContact($deal);
+        $this->createTemplate('credit_note');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->set('creditAmount', '100')
+            ->call('generateDealCreditNote')
+            ->assertSet('documentError', fn ($message) => str_starts_with((string) $message, 'ההפקה ב-SUMIT נכשלה, ולכן טיוטת הזיכוי נמחקה'));
+
+        $this->assertSame(0, Document::where('deal_id', $deal->id)->where('document_type', 'credit_note')->count());
+    }
+
+    public function test_an_exempt_dealers_credit_is_capped_at_what_was_paid_and_blocked_when_nothing_was(): void
+    {
+        $deal = $this->dealWithInvoice(400); // the test entity is an עוסק פטור
+        $this->summitConnectedFor($deal);
+        $this->giveCustomerAnEmailContact($deal);
+        $this->createTemplate('credit_note');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->set('creditAmount', '100')
+            ->call('generateDealCreditNote')
+            ->assertSet('documentError', 'לעסקה של עוסק פטור הופק רק חשבון עסקה ועדיין לא התקבל עליה תשלום — אין מה לזכות. די לבטל את העסקה; חשבון עסקה אינו מסמך מס.');
+
+        $deal->update(['payment_method_id' => $this->createPaymentMethod()->id]);
+        $deal->fresh()->recordPayment($deal->fresh()->version, 150);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->set('creditAmount', '200')
+            ->call('generateDealCreditNote')
+            ->assertSet('documentError', 'בעוסק פטור הזיכוי הוא קבלת זיכוי — החזר של כסף שהתקבל — ולכן הוא יכול להיות עד ₪150.00, הסכום ששולם בעסקה.')
+            ->set('creditAmount', '150')
+            ->call('generateDealCreditNote')
+            ->assertSet('documentError', null);
+
+        $this->assertEquals(150, Document::where('deal_id', $deal->id)->where('document_type', 'credit_note')->firstOrFail()->totalAmount());
+    }
+
     public function test_collections_page_requires_auth(): void
     {
         $this->get('/collections')->assertRedirect('/login');
@@ -502,6 +587,22 @@ class PaymentsCollectionsTest extends TestCase
         $deal->updateStatusWithLock($deal->version, $invoiceSent->id);
 
         return $deal->fresh();
+    }
+
+    /** SUMIT on (faked), and the deal's invoice entity linked to it — so a credit note really gets issued. */
+    private function summitConnectedFor(Deal $deal): void
+    {
+        \App\Models\ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        \Illuminate\Support\Facades\Http::fake(['api.sumit.co.il/*' => \Illuminate\Support\Facades\Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200)]);
+        $deal->issuedInvoice()->businessEntity->update(['sumit_connection_name' => 'סאמיט לבדיקה', 'sumit_company_id' => '12345678', 'sumit_api_key' => 'x']);
+    }
+
+    private function giveCustomerAnEmailContact(Deal $deal): void
+    {
+        \App\Models\Contact::create([
+            'school_id' => $deal->customer->school_id, 'customer_id' => $deal->customer_id,
+            'name' => 'אחראית חשבונות', 'email' => 'billing'.random_int(1, 999999).'@example.com', 'is_primary' => true,
+        ]);
     }
 
     private function createPaymentMethod(string $name = 'אמצעי תשלום לבדיקה', string $type = 'bank_transfer'): PaymentMethod
