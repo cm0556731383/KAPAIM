@@ -265,10 +265,14 @@ class extends Component
                         @foreach ($document->documentTemplate->fieldsInContent() as $field)
                             <div class="full">
                                 <label>{{ $field->name }} @if ($field->is_required)<span style="color:var(--color-error)">*</span>@endif @if ($field->field_type === 'linked')<span class="scope-pill" style="margin-inline-start:6px">מקושר</span>@endif</label>
-                                <input type="text" wire:model="fieldValues.{{ $field->id }}">
+                                <input type="text" wire:model="fieldValues.{{ $field->id }}" @disabled($document->confirmed_at)>
                             </div>
                         @endforeach
-                        <div class="full"><button type="button" wire:click="saveFieldValues" class="btn btn-primary">שמירת שדות</button></div>
+                        @if ($document->confirmed_at)
+                            <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">הלקוחה אישרה את המסמך — שדותיו נעולים לעריכה.</p>
+                        @else
+                            <div class="full"><button type="button" wire:click="saveFieldValues" class="btn btn-primary">שמירת שדות</button></div>
+                        @endif
                     </div>
                 </div>
             @endif

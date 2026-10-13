@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\URL;
 use RuntimeException;
 
@@ -298,6 +299,13 @@ class Document extends Model
             if (! $deal->issuedInvoice()) {
                 throw new RuntimeException('לא ניתן להפיק חשבונית זיכוי לעסקה שלא הופקה עבורה חשבונית.');
             }
+
+            // One credit per deal (its subscription's cancellation credit) — a
+            // second would credit the same amount twice in SUMIT. A draft whose
+            // SUMIT issuance failed stays, to be sent again from its own screen.
+            if (self::where('deal_id', $deal->id)->where('document_type', 'credit_note')->exists()) {
+                throw new RuntimeException('לעסקה זו כבר הופקה חשבונית זיכוי — ניתן להפיק חשבונית זיכוי אחת בלבד לכל עסקה.');
+            }
         }
     }
 
@@ -391,6 +399,12 @@ class Document extends Model
      */
     public function submitFieldValues(array $valuesByFieldId): void
     {
+        // What the customer confirmed/signed is final — editing it afterwards
+        // would silently change the content of a signed document.
+        if ($this->confirmed_at) {
+            throw new RuntimeException('הלקוחה כבר אישרה את המסמך — לא ניתן לשנות את שדותיו.');
+        }
+
         $stored = [];
 
         foreach ($this->documentTemplate->fieldsInContent() as $field) {
@@ -792,6 +806,30 @@ class Document extends Model
             throw new RuntimeException('יש לבחור לפחות נמען אחד לפני השליחה.');
         }
 
+        // A document is sent once. A second tab still showing the unsent
+        // screen (or a double click) must not send it again — for an invoice
+        // or credit note that would issue a second tax document in SUMIT.
+        // The lock covers two sends racing each other; the fresh sent_at
+        // read covers one that already finished.
+        $lock = Cache::lock("document-send-{$this->id}", 120);
+
+        if (! $lock->get()) {
+            throw new RuntimeException('המסמך נמצא כרגע בתהליך שליחה — נא לרענן את הדף בעוד רגע.');
+        }
+
+        try {
+            if (self::whereKey($this->id)->whereNotNull('sent_at')->exists()) {
+                throw new RuntimeException('המסמך כבר נשלח — נא לרענן את הדף.');
+            }
+
+            return $this->sendToRecipients($recipients, $format, $logger, $runner, $summit, $smove);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function sendToRecipients(array $recipients, string $format, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): array
+    {
         $operations = ['smove' => null, 'summit' => null];
 
         // An invoice/credit note is delivered by Summit itself, so it only

@@ -5,7 +5,6 @@ use App\Models\BusinessEntity;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
-use App\Models\Payment;
 use App\Models\PaymentMethod;
 use App\Models\ExternalOperation;
 use App\Models\Receipt;
@@ -373,7 +372,7 @@ class extends Component
     {
         $this->paymentError = null;
 
-        $payment = Payment::findOrFail($paymentId);
+        $payment = $this->deal->payments()->findOrFail($paymentId);
 
         try {
             $payment->markCleared();
@@ -399,7 +398,7 @@ class extends Component
     {
         $this->paymentError = null;
 
-        $payment = $paymentId ? Payment::findOrFail($paymentId) : null;
+        $payment = $paymentId ? $this->deal->payments()->findOrFail($paymentId) : null;
 
         try {
             $receipt = Receipt::issueFor($this->deal, $payment, $runner, $summit);
@@ -415,7 +414,7 @@ class extends Component
             'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id, 'metadata' => ['receipt_id' => $receipt->id, 'payment_id' => $payment?->id],
         ]);
 
-        unset($this->payments);
+        unset($this->payments, $this->beforePaymentReceipt);
 
         if (! $summit->isActive()) {
             $this->notifyInfo('הקבלה נרשמה במערכת בלבד — החיבור ל-SUMIT מושבת.');
@@ -430,6 +429,15 @@ class extends Component
     public function payments()
     {
         return $this->deal->payments()->with(['paymentMethod', 'status', 'receipt'])->orderByDesc('id')->get();
+    }
+
+    /** FR-4.25: the deal's receipt before payment, if one was issued — it covers the whole invoice. */
+    #[Computed]
+    public function beforePaymentReceipt(): ?Receipt
+    {
+        return Receipt::whereHas('document', fn ($q) => $q->where('deal_id', $this->deal->id))
+            ->where('issued_before_payment', true)
+            ->first();
     }
 
     #[Computed]
@@ -670,7 +678,12 @@ class extends Component
         @endif
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg)">
-            <button type="button" wire:click="issueReceipt(null)" class="btn btn-secondary" @disabled($deal->issuedInvoice() === null)>הפקת קבלה לפני תשלום</button>
+            @if ($this->beforePaymentReceipt)
+                <span class="badge badge-info">הופקה קבלה לפני תשלום <span class="ltr-num">{{ $this->beforePaymentReceipt->issued_at?->format('d/m/Y') }}</span></span>
+                <span class="badge {{ $this->outstandingBalance > 0 ? 'badge-warning' : 'badge-success' }}">{{ $this->outstandingBalance > 0 ? 'ממתינה לתשלום' : 'התשלום התקבל' }}</span>
+            @else
+                <button type="button" wire:click="issueReceipt(null)" wire:confirm="קבלה לפני תשלום מופקת על מלוא סכום החשבונית ומכסה את כל תשלומי העסקה — להמשיך?" class="btn btn-secondary" @disabled($deal->issuedInvoice() === null || $this->payments->contains(fn ($p) => $p->receipt))>הפקת קבלה לפני תשלום</button>
+            @endif
         </div>
 
         @if ($this->payments->isEmpty())
@@ -700,6 +713,8 @@ class extends Component
                             <td>
                                 @if ($payment->receipt)
                                     <span class="badge badge-info">הופקה קבלה</span>
+                                @elseif ($this->beforePaymentReceipt)
+                                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">בקבלה לפני תשלום</span>
                                 @else
                                     <button type="button" wire:click="issueReceipt({{ $payment->id }})" class="btn btn-ghost btn-sm" @disabled($payment->check_status && ! $payment->cleared_date)>הפקת קבלה</button>
                                 @endif

@@ -65,6 +65,22 @@ class Receipt extends Model
             throw new RuntimeException('לא ניתן להפיק קבלה לעסקה שלא הופקה עבורה חשבונית (חשבונית שנשלחה בהצלחה ויש בה סכום).');
         }
 
+        // A receipt before payment is issued for the whole invoice total, so it
+        // covers every payment of the deal: it can't be issued twice, nor next
+        // to receipts already issued per payment — either way SUMIT would hold
+        // receipts for more than the deal's amount (FR-4.24/FR-4.25).
+        $dealReceipts = self::whereHas('document', fn ($q) => $q->where('deal_id', $deal->id));
+
+        if ((clone $dealReceipts)->where('issued_before_payment', true)->exists()) {
+            throw new RuntimeException($payment
+                ? 'לעסקה זו כבר הופקה קבלה לפני תשלום על מלוא סכום החשבונית — היא מכסה גם את התשלום הזה, ואין להפיק קבלה נוספת.'
+                : 'לעסקה זו כבר הופקה קבלה לפני תשלום — לא ניתן להפיק אותה פעם נוספת.');
+        }
+
+        if (! $payment && $dealReceipts->exists()) {
+            throw new RuntimeException('לעסקה זו כבר הופקו קבלות עבור תשלומים — קבלה לפני תשלום (על מלוא סכום החשבונית) תכפיל אותן.');
+        }
+
         if ($payment) {
             if ($payment->deal_id !== $deal->id) {
                 throw new RuntimeException('התשלום שנבחר אינו שייך לעסקה זו.');

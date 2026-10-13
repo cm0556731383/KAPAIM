@@ -560,7 +560,7 @@ class extends Component
             return;
         }
 
-        $subscription = Subscription::findOrFail($subscriptionId);
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
         try {
             $delivery = $subscription->markDeliverySupplied($subscription->version, $deliveryId, (int) $programId, auth()->user());
@@ -603,7 +603,7 @@ class extends Component
 
         $this->subscriptionError = null;
 
-        $subscription = Subscription::findOrFail($subscriptionId);
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
         try {
             $subscription->cancel();
@@ -635,7 +635,7 @@ class extends Component
 
         $this->subscriptionError = null;
 
-        $subscription = Subscription::findOrFail($subscriptionId);
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
         try {
             $document = $subscription->generateCreditNote();
@@ -658,7 +658,7 @@ class extends Component
     {
         abort_unless(auth()->user()->can('subscriptions.manage'), 403);
 
-        $subscription = Subscription::findOrFail($subscriptionId);
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
         $this->editingMonthlyPaymentForSubscriptionId = $subscriptionId;
         $this->monthlyPaymentOverrideInput = $subscription->monthly_payment_override !== null
             ? (string) $subscription->monthly_payment_override
@@ -672,7 +672,7 @@ class extends Component
 
         $data = $this->validate(['monthlyPaymentOverrideInput' => ['nullable', 'numeric', 'gt:0']]);
 
-        $subscription = Subscription::findOrFail($subscriptionId);
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
         $amount = $data['monthlyPaymentOverrideInput'] !== null && $data['monthlyPaymentOverrideInput'] !== ''
             ? (float) $data['monthlyPaymentOverrideInput']
             : null;
@@ -1340,17 +1340,22 @@ class extends Component
                             <div><span style="color:var(--color-text-secondary)">תאריך ביטול: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->cancelled_at?->format('d/m/Y') }}</span></div>
                             <div><span style="color:var(--color-text-secondary)">קיזוז מחושב: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->cancellation_credit, 0) }}</span></div>
                         </div>
-                        <button
-                            type="button"
-                            class="btn btn-secondary"
-                            wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
-                            wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
-                            @disabled(! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
-                        >הפקת חשבונית זיכוי</button>
+                        @php $creditNote = $subscription->deal->documents()->where('document_type', 'credit_note')->first(); @endphp
+                        @if ($creditNote)
+                            <a href="{{ route('document-view', $creditNote) }}" class="btn btn-secondary">{{ $creditNote->sent_at ? 'צפייה בחשבונית הזיכוי' : 'חשבונית הזיכוי (טרם הופקה מול SUMIT)' }}</a>
+                        @else
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
+                                wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
+                                @disabled(! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                            >הפקת חשבונית זיכוי</button>
+                        @endif
                     </div>
-                    @unless (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                    @if (! $creditNote && ! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">לא ניתן להפיק חשבונית זיכוי — לעסקה זו טרם הופקה חשבונית.</p>
-                    @endunless
+                    @endif
                 @endif
             </div>
         @empty

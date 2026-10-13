@@ -491,6 +491,12 @@ class Deal extends Model
             throw new RuntimeException('סליקת אשראי מול Summit זמינה רק כאשר אמצעי התשלום של העסקה הוא אשראי.');
         }
 
+        // The version check must come before the card is charged: once SUMIT
+        // took the money, the payment is recorded no matter what (below).
+        if ((int) self::whereKey($this->id)->value('version') !== $expectedVersion) {
+            throw new RuntimeException('העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+        }
+
         $operation = $runner->run(
             'summit',
             'card_charge',
@@ -506,7 +512,9 @@ class Deal extends Model
             throw new RuntimeException("הסליקה מול Summit נכשלה: {$operation->error_message}");
         }
 
-        return $this->recordPayment($expectedVersion, $amount);
+        // The card was charged — record it against the current version even if
+        // the deal changed meanwhile, so a charge is never left unrecorded.
+        return $this->recordPayment((int) self::whereKey($this->id)->value('version'), $amount);
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\Deal;
 use App\Models\Document;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\ExternalOperation;
+use App\Models\PaymentMethod;
 use App\Models\Receipt;
 use App\Models\Subscription;
 use Illuminate\Http\Client\PendingRequest;
@@ -60,14 +61,16 @@ class SummitClient
     // Accounting_Typed_CustomerSearchMode
     private const SEARCH_BY_EXTERNAL_IDENTIFIER = 2;
 
-    // Accounting_Typed_DocumentPaymentType => the Details_* object SUMIT expects with it
+    // Accounting_Typed_DocumentPaymentType => the Details_* object SUMIT expects with it.
+    // A standing order is SUMIT's recurring charge of the customer's saved card
+    // (registerStandingOrder()), so it's a credit-card payment.
     private const PAYMENT_TYPES = [
         'card' => [5, 'Details_CreditCard'],
+        'recurring' => [5, 'Details_CreditCard'],
         'bank_transfer' => [3, 'Details_BankTransfer'],
         'check' => [4, 'Details_Cheque'],
         'cash' => [2, 'Details_Cash'],
     ];
-    private const PAYMENT_GENERAL = [1, 'Details_General'];
 
     private ?ExternalIntegrationSetting $config = null;
 
@@ -131,12 +134,11 @@ class SummitClient
         // "Missing payments" otherwise (confirmed against SUMIT, 2026-10-13).
         $exempt = $entity->classification === self::EXEMPT_CLASSIFICATION;
         $document->deal->loadMissing('paymentMethod');
-        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$document->deal->paymentMethod?->type] ?? self::PAYMENT_GENERAL;
 
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails($exempt ? self::DOCUMENT_CREDIT_RECEIPT : self::DOCUMENT_CREDIT_INVOICE, $document->deal, $email),
             'Items' => $exempt ? null : $this->documentItems($document),
-            'Payments' => $exempt ? [['Amount' => $document->totalAmount(), 'Type' => $paymentType, $detailsKey => (object) []]] : null,
+            'Payments' => $exempt ? [$this->payment($document->totalAmount(), $document->deal->paymentMethod)] : null,
             'VATIncluded' => true,
             'OriginalDocumentID' => $exempt ? null : $this->sumitDocumentId($document->deal->issuedInvoice()),
         ], fn ($v) => $v !== null)));
@@ -160,8 +162,7 @@ class SummitClient
         // A receipt before payment has no payment of its own — it goes by the
         // deal's payment method (SUMIT rejects a "general" payment without a
         // payer: "יש להזין מוטב/מחויב").
-        $methodType = $receipt->payment?->paymentMethod?->type ?? $invoice->deal->paymentMethod?->type;
-        [$paymentType, $detailsKey] = self::PAYMENT_TYPES[$methodType] ?? self::PAYMENT_GENERAL;
+        $method = $receipt->payment?->paymentMethod ?? $invoice->deal->paymentMethod;
 
         // SUMIT emails the receipt to the customer's billing address — the same
         // one on the SUMIT customer card (accounting contact, else primary, else school).
@@ -169,11 +170,7 @@ class SummitClient
 
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, $email),
-            'Payments' => [[
-                'Amount' => $amount,
-                'Type' => $paymentType,
-                $detailsKey => (object) [],
-            ]],
+            'Payments' => [$this->payment($amount, $method)],
             'OriginalDocumentID' => $this->sumitDocumentId($invoice),
         ], fn ($v) => $v !== null)));
         $invoice->deal->lockToBusinessEntity($entity);
@@ -244,6 +241,22 @@ class SummitClient
         $deal->lockToBusinessEntity($entity);
 
         return implode(',', (array) ($data['RecurringCustomerItemIDs'] ?? []));
+    }
+
+    /**
+     * One entry of a receipt's Payments. Payment-method types are free text
+     * (settings screen); one SUMIT has no type for goes as "Other", named —
+     * SUMIT rejects a "General" payment without a payer ("יש להזין מוטב/מחויב").
+     */
+    private function payment(float $amount, ?PaymentMethod $method): array
+    {
+        [$type, $detailsKey] = self::PAYMENT_TYPES[$method?->type] ?? [8, 'Details_Other'];
+
+        return [
+            'Amount' => $amount,
+            'Type' => $type,
+            $detailsKey => $detailsKey === 'Details_Other' ? ['Type' => $method?->name ?? 'אחר'] : (object) [],
+        ];
     }
 
     private function documentDetails(int $type, Deal $deal, ?string $email): array
@@ -388,6 +401,10 @@ class SummitClient
 
         if ($status !== 0 && $status !== '0' && ! str_starts_with((string) $status, 'Success')) {
             $message = $response->json('UserErrorMessage') ?: $response->json('TechnicalErrorDetails') ?: 'שגיאה לא מפורטת';
+
+            if (str_contains($message, "doesn't have any PaymentMethod")) {
+                $message = 'ללקוחה אין אמצעי תשלום (כרטיס אשראי) שמור בכרטיס הלקוח ב-SUMIT — יש לשמור אותו ב-SUMIT ואז לנסות שוב.';
+            }
 
             throw new RuntimeException('SUMIT: '.$message);
         }

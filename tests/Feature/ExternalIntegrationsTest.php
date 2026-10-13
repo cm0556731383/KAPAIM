@@ -541,6 +541,7 @@ class ExternalIntegrationsTest extends TestCase
 
         $deal = $this->dealWithInvoice();
         $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
 
         $invoice->sendTo(
             [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
@@ -698,6 +699,7 @@ class ExternalIntegrationsTest extends TestCase
 
         $deal = $this->dealWithInvoice();
         $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
 
         $operations = $invoice->sendTo(
             [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']],
@@ -1090,6 +1092,7 @@ class ExternalIntegrationsTest extends TestCase
         // Generated from the deal screen, which passes no entity for a credit note.
         $creditNote = Document::generateFor($deal->fresh(), DocumentTemplate::where('document_type', 'credit_note')->firstOrFail());
         $this->assertSame($entity->id, $creditNote->business_entity_id);
+        $creditNote->delete();
         $this->assertSame($entity->id, Document::generateCreditNoteFor($deal->fresh(), 50)->business_entity_id);
     }
 
@@ -1121,6 +1124,146 @@ class ExternalIntegrationsTest extends TestCase
             && ! isset($request['OriginalDocumentID'])
             && ! isset($request['Items'])
             && $request['Payments'][0]['Amount'] == 100);
+    }
+
+    // ----- QA pass 2026-10-13: duplicate issuance, payment types, locks -----
+
+    private function summitConnected(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555, 'Payment' => ['ValidPayment' => true, 'ID' => 9]]], 200)]);
+    }
+
+    private function sendNow(Document $document): array
+    {
+        return $document->sendTo([['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']], 'digital',
+            app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+    }
+
+    public function test_a_sent_invoice_is_never_issued_in_summit_twice(): void
+    {
+        $this->summitConnected();
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+        $staleTab = Document::find($invoice->id); // loaded before the first send
+
+        $this->sendNow($invoice);
+
+        try {
+            $this->sendNow($staleTab);
+            $this->fail('A second send of the same document must be refused.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('כבר נשלח', $e->getMessage());
+        }
+
+        $this->assertSame(1, ExternalOperation::where('document_id', $invoice->id)->where('operation_type', 'issue_invoice')->count());
+        $this->assertSame(1, $invoice->recipients()->count());
+    }
+
+    public function test_a_receipt_before_payment_is_issued_once_and_covers_the_deals_payments(): void
+    {
+        $this->summitConnected();
+        $deal = $this->dealWithInvoice();
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+        $runner = app(ExternalOperationRunner::class);
+        $summit = app(SummitClient::class);
+
+        \App\Models\Receipt::issueFor($deal->fresh(), null, $runner, $summit);
+
+        try {
+            \App\Models\Receipt::issueFor($deal->fresh(), null, $runner, $summit);
+            $this->fail('A second receipt before payment must be refused.');
+        } catch (RuntimeException) {
+        }
+
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 400);
+
+        try {
+            \App\Models\Receipt::issueFor($deal->fresh(), $payment, $runner, $summit);
+            $this->fail('The receipt before payment already covers this payment.');
+        } catch (RuntimeException) {
+        }
+
+        $this->assertSame(1, \App\Models\Receipt::count());
+        $this->assertSame(1, ExternalOperation::where('operation_type', 'issue_receipt')->count());
+    }
+
+    public function test_a_receipt_before_payment_is_refused_once_payments_have_receipts(): void
+    {
+        $this->summitConnected();
+        $deal = $this->dealWithInvoice();
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 100);
+        \App\Models\Receipt::issueFor($deal->fresh(), $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        $this->expectException(RuntimeException::class);
+        \App\Models\Receipt::issueFor($deal->fresh(), null, app(ExternalOperationRunner::class), app(SummitClient::class));
+    }
+
+    public function test_a_deal_gets_one_credit_note_only(): void
+    {
+        $this->createTemplate('credit_note');
+        $deal = $this->dealWithInvoice();
+
+        Document::generateCreditNoteFor($deal->fresh(), 50);
+
+        $this->assertFalse(Document::canGenerate($deal->fresh(), 'credit_note'));
+        $this->expectException(RuntimeException::class);
+        Document::generateCreditNoteFor($deal->fresh(), 50);
+    }
+
+    public function test_standing_order_and_custom_payment_methods_go_to_summit_with_a_type_it_accepts(): void
+    {
+        $this->summitConnected();
+        $deal = $this->dealWithInvoice();
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 100);
+        \App\Models\Receipt::issueFor($deal->fresh(), $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 2
+            && $request['Payments'][0]['Type'] === 5 && array_key_exists('Details_CreditCard', $request['Payments'][0]));
+
+        $other = $this->dealWithInvoice();
+        $other->update(['payment_method_id' => $this->createPaymentMethod('ביט', 'bit')->id]);
+        \App\Models\Receipt::issueFor($other->fresh(), null, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        // SUMIT rejects a "General" (1) payment without a payer — an unknown type goes as "Other" (8), named.
+        Http::assertSent(fn ($request) => ($request['Payments'][0]['Type'] ?? null) === 8
+            && str_starts_with($request['Payments'][0]['Details_Other']['Type'], 'ביט'));
+        Http::assertNotSent(fn ($request) => ($request['Payments'][0]['Type'] ?? null) === 1);
+    }
+
+    public function test_a_confirmed_documents_fields_can_no_longer_be_changed(): void
+    {
+        $deal = $this->createDeal();
+        $template = $this->createTemplate('order_form');
+        $field = $template->fields()->create(['name' => 'הערה', 'field_type' => 'free_text', 'is_required' => false, 'sort_order' => 1]);
+        $template->update(['content' => 'הערה: '.$field->placeholderToken()]);
+        $orderForm = Document::generateFor($deal, $template->fresh());
+        $orderForm->confirm([$field->id => 'מה שהלקוחה אישרה'], app(ActivityLogger::class));
+
+        $this->expectException(RuntimeException::class);
+        $orderForm->fresh()->submitFieldValues([$field->id => 'שינוי אחרי חתימה']);
+    }
+
+    public function test_a_card_is_not_charged_against_a_stale_deal_version(): void
+    {
+        $this->summitConnected();
+        $deal = $this->dealWithInvoice();
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('אשראי', 'card')->id]);
+        $deal = $deal->fresh();
+        $staleVersion = $deal->version;
+        Deal::whereKey($deal->id)->increment('version'); // someone else changed the deal meanwhile
+
+        try {
+            $deal->chargeCardViaSummit($staleVersion, 100, app(ExternalOperationRunner::class), app(SummitClient::class));
+            $this->fail('A stale version must be refused before the card is charged.');
+        } catch (RuntimeException) {
+        }
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/billing/payments/charge/'));
+        $this->assertSame(0, $deal->payments()->count());
     }
 
     private function creditNoteFor(Deal $deal): Document
