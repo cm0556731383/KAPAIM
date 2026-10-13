@@ -339,6 +339,15 @@ td.mono { display: table-cell; }
 }
 
 /* ===== Deal screen: payments box ===== */
+/* Read-only key/value facts as tiles (deal: product snapshot, cancellation details) — same look as .pay-summary, lighter values. */
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-sm); }
+.info-grid .item { background: var(--color-background); border-radius: var(--radius-control); padding: 10px 14px; }
+.info-grid .item.wide { grid-column: 1 / -1; }
+.info-grid .k { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+.info-grid .v { font-size: var(--fs-body); font-weight: 600; margin-top: 2px; }
+.info-grid .item.wide .v { font-weight: 400; white-space: pre-wrap; }
+.info-grid .item.danger { background: var(--color-error-bg); }
+.info-grid .item.danger .v { color: var(--color-error); }
 .pay-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-sm); margin-bottom: var(--sp-lg); }
 .pay-summary .cell { background: var(--color-background); border-radius: var(--radius-control); padding: 10px 14px; }
 .pay-summary .k { font-size: var(--fs-caption); color: var(--color-text-secondary); }

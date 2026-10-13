@@ -1012,12 +1012,14 @@ class extends Component
     @if ($deal->status?->name === Deal::CANCELLED_STATUS_NAME && ($cancelled = $deal->subscription)?->cancelled_at)
         <div class="card" style="margin-bottom:var(--sp-lg); border-color:var(--color-error)">
             <h3>פרטי ביטול המנוי</h3>
-            <div class="field"><div class="k">תאריך ביטול</div><div class="v ltr-num">{{ $cancelled->cancelled_at->format('d/m/Y') }}</div></div>
-            @if ($cancelled->cancelled_from_month)
-                <div class="field"><div class="k">בוטל החל מחודש</div><div class="v">חודש {{ $cancelled->cancelled_from_month }} — {{ $cancelled->monthLabel($cancelled->cancelled_from_month) }}</div></div>
-            @endif
-            <div class="field"><div class="k">סכום הזיכוי</div><div class="v ltr-num">₪{{ number_format((float) $cancelled->cancellation_credit, 0) }}</div></div>
-            <div class="field"><div class="k">סיבת הביטול</div><div class="v" style="white-space:pre-wrap">{{ $cancelled->cancellation_reason ?: '—' }}</div></div>
+            <div class="info-grid">
+                <div class="item"><div class="k">תאריך ביטול</div><div class="v ltr-num">{{ $cancelled->cancelled_at->format('d/m/Y') }}</div></div>
+                @if ($cancelled->cancelled_from_month)
+                    <div class="item"><div class="k">בוטל החל מחודש</div><div class="v">חודש {{ $cancelled->cancelled_from_month }} · {{ $cancelled->monthLabel($cancelled->cancelled_from_month) }}</div></div>
+                @endif
+                <div class="item danger"><div class="k">סכום הזיכוי</div><div class="v ltr-num">₪{{ number_format((float) $cancelled->cancellation_credit, 0) }}</div></div>
+                <div class="item wide"><div class="k">סיבת הביטול</div><div class="v">{{ $cancelled->cancellation_reason ?: 'לא נרשמה סיבה' }}</div></div>
+            </div>
         </div>
     @endif
 
@@ -1026,13 +1028,15 @@ class extends Component
             {{-- ===== פרטי המוצר הנמכר (Snapshot) ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <h3>פרטי המוצר בעת המכירה</h3>
-                @if ($deal->program_id)
-                    <div class="field"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
-                    <div class="field"><div class="k">מחיר תוכנית (בעת המכירה)</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}</div></div>
-                @else
-                    <div class="field"><div class="k">מארז</div><div class="v">{{ $deal->bundle_name_snapshot }}</div></div>
-                    <div class="field"><div class="k">מחיר מארז (בעת המכירה)</div><div class="v ltr-num">₪{{ number_format((float) $deal->bundle_price_snapshot, 0) }}</div></div>
-                @endif
+                <div class="info-grid">
+                    @if ($deal->program_id)
+                        <div class="item"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
+                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}</div></div>
+                    @else
+                        <div class="item"><div class="k">מארז</div><div class="v">{{ $deal->bundle_name_snapshot }}</div></div>
+                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->bundle_price_snapshot, 0) }}</div></div>
+                    @endif
+                </div>
             </div>
 
             {{-- ===== פרטי עסקה: סכום, אמצעי תשלום, מספר תלמידות, בקשה מיוחדת ===== --}}
