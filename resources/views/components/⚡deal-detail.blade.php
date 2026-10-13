@@ -527,7 +527,6 @@ class extends Component
         // A check's receipt waits for it to clear (FR-4.28) — markCheckCleared().
         if ($payment->isCheck()) {
             $this->notifySuccess("הצ'ק נרשם (₪{$data['paymentAmount']}). העסקה תסומן כשולמה כשהצ'ק ייפרע ותופק קבלה.");
-            $this->warnIfPaymentLinkPending();
 
             return;
         }
@@ -603,81 +602,90 @@ class extends Component
         unset($this->payments);
 
         $this->notifySuccess(count($payments)." צ'קים נרשמו (₪".number_format($total, 0).'). ביום הפירעון של כל צ\'ק תופיע תזכורת להפקת קבלה.');
-        $this->warnIfPaymentLinkPending();
     }
 
     /**
-     * A check recorded while a payment link is still waiting: both stay open,
-     * and the deal isn't "שולמה" until one of them is actually paid — the
-     * user is warned so the customer isn't charged twice.
+     * Pops up (sticky, via Notifies) whenever the deal risks a double or an
+     * over-payment (Deal::paymentRisk()) — after recording any payment,
+     * sending a link, registering a standing order, or just opening the deal.
+     * A changed risk (other amounts) pops up again.
      */
-    private function warnIfPaymentLinkPending(): void
+    public ?string $paymentRiskWarning = null;
+
+    public function rendering(): void
     {
-        unset($this->doublePayment);
+        unset($this->paymentRisk);
+        $risk = $this->paymentRisk;
 
-        if ($this->doublePayment) {
-            $this->notifyWarning("לעסקה זו נשלח גם קישור לתשלום שעדיין לא שולם — יש סיכון לתשלום כפול. בתיבת התשלומים אפשר לבטל את הקישור או את הצ'ק.", sticky: true);
-        }
+        $this->paymentRiskWarning = $risk
+            ? 'חשש לתשלום כפול או ביתר: שולם ועוד צפוי להתקבל ₪'.number_format($risk['committed'], 0).' — יותר מסכום העסקה (₪'.number_format($risk['due'], 0).'). בתיבת התשלומים אפשר לבטל את מה שמיותר.'
+            : null;
     }
 
-    /**
-     * A check waiting to clear AND a payment link waiting to be paid on the
-     * same deal — the customer may pay twice. Shown with a choice of which
-     * to cancel for as long as both stand; the deal isn't "שולמה" until one
-     * of them is actually paid.
-     *
-     * @return ?array{links: \Illuminate\Support\Collection, checks: \Illuminate\Support\Collection}
-     */
+    /** @see Deal::paymentRisk() */
     #[Computed]
-    public function doublePayment(): ?array
+    public function paymentRisk(): ?array
     {
-        $links = $this->deal->paymentLinks()->where('status', PaymentLink::STATUS_PENDING)->get()->reject->isExpired();
-        $checks = $this->deal->pendingChecks()->filter->isEditable();
-
-        return $links->isNotEmpty() && $checks->isNotEmpty() ? ['links' => $links, 'checks' => $checks] : null;
+        return $this->deal->fresh()->paymentRisk();
     }
 
-    /** Double payment: the check replaces the link — the link is withdrawn. */
-    public function cancelPendingPaymentLinks(ActivityLogger $activityLogger): void
-    {
-        foreach ($this->doublePayment['links'] ?? [] as $link) {
-            $link->cancel();
-            $activityLogger->log('payment_link.cancelled', "בוטל קישור לתשלום בסך ₪".number_format((float) $link->amount, 0)." בעסקה #{$this->deal->id} (שולם בצ'ק)", [
-                'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id, 'metadata' => ['payment_link_id' => $link->id],
-            ]);
-        }
-
-        unset($this->paymentLinks, $this->doublePayment);
-        $this->notifySuccess("הקישור לתשלום בוטל — הלקוחה תשלם בצ'ק. אם היא כבר פתחה את דף התשלום, כדאי לעדכן אותה שאין לשלם בו.");
-    }
-
-    /** Double payment: the link replaces the check(s) — they're removed (logically, as any mistaken payment). */
-    public function cancelPendingChecks(ActivityLogger $activityLogger): void
+    /** Double payment: withdraws one pending payment link. */
+    public function cancelPaymentLink(int $linkId, ActivityLogger $activityLogger): void
     {
         $this->paymentError = null;
+        $link = $this->deal->paymentLinks()->findOrFail($linkId);
 
-        foreach ($this->doublePayment['checks'] ?? [] as $payment) {
-            try {
-                $this->deal->deletePayment($this->deal->fresh()->version, $payment);
-            } catch (\RuntimeException $e) {
-                $this->paymentError = $e->getMessage();
+        try {
+            $link->cancel();
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
 
-                break;
-            }
-
-            $activityLogger->log('payment.deleted', "בוטל צ'ק #{$payment->check_number} בסך ₪".number_format((float) $payment->amount, 0)." בעסקה #{$this->deal->id} (ישולם בקישור)", [
-                'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
-                'metadata' => ['payment_id' => $payment->id, 'amount' => (float) $payment->amount],
-            ]);
+            return;
         }
+
+        $activityLogger->log('payment_link.cancelled', 'בוטל קישור לתשלום בסך ₪'.number_format((float) $link->amount, 0)." בעסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id, 'metadata' => ['payment_link_id' => $link->id],
+        ]);
+
+        unset($this->paymentLinks);
+        $this->notifySuccess('הקישור לתשלום בוטל. אם הלקוחה כבר פתחה את דף התשלום, כדאי לעדכן אותה שאין לשלם בו.');
+    }
+
+    /** Double payment: removes one check not yet cleared (logically, as any mistaken payment). */
+    public function cancelCheck(int $paymentId, ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+        $payment = $this->deal->payments()->findOrFail($paymentId);
+
+        try {
+            $this->deal->deletePayment($this->deal->fresh()->version, $payment);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('payment.deleted', "בוטל צ'ק #{$payment->check_number} בסך ₪".number_format((float) $payment->amount, 0)." בעסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            'metadata' => ['payment_id' => $payment->id, 'amount' => (float) $payment->amount],
+        ]);
 
         $this->deal->refresh()->load('status');
         $this->syncFields();
-        unset($this->payments, $this->doublePayment);
+        unset($this->payments);
+        $this->notifySuccess("הצ'ק בוטל.");
+    }
 
-        if (! $this->paymentError) {
-            $this->notifySuccess("הצ'ק בוטל — הלקוחה תשלם בקישור.");
-        }
+    /** Double payment: the user stopped the standing order in SUMIT (no API for it) and records that here. */
+    public function markStandingOrderStopped(ActivityLogger $activityLogger): void
+    {
+        $this->deal->markStandingOrderStopped();
+
+        $activityLogger->log('deal.standing_order_stopped', "הוראת הקבע של עסקה #{$this->deal->id} סומנה כמופסקת ב-SUMIT", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+        ]);
+
+        $this->notifySuccess('הוראת הקבע סומנה כמופסקת.');
     }
 
     /**
@@ -1208,16 +1216,41 @@ class extends Component
             <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>
 
-        @if ($double = $this->doublePayment)
+        @if ($risk = $this->paymentRisk)
             <div class="card" style="border-color:var(--color-warning); background:var(--color-warning-bg); margin-bottom:var(--sp-lg)">
-                <strong>סיכון לתשלום כפול</strong>
+                <strong>חשש לתשלום כפול או ביתר</strong>
                 <p style="margin:var(--sp-xs) 0 var(--sp-sm)">
-                    לעסקה נרשמו צ'קים שטרם נפרעו (₪{{ number_format($double['checks']->sum('amount'), 0) }}) וגם נשלח קישור לתשלום שעדיין לא שולם (₪{{ number_format($double['links']->sum('amount'), 0) }}).
-                    העסקה תסומן כשולמה רק כשאחד מהם ישולם בפועל. בחרו מה לבטל:
+                    סכום העסקה ₪{{ number_format($risk['due'], 0) }}, אבל שולם ועוד צפוי להתקבל ₪{{ number_format($risk['committed'], 0) }}.
+                    @if ($risk['checks']->isEmpty() && $risk['links']->isEmpty() && $risk['standingOrder'] === null)
+                        נרשמו תשלומים מעבר לסכום העסקה — יש לבדוק בטבלת התשלומים, ולהחזיר ללקוחה או להפיק זיכוי במידת הצורך.
+                    @else
+                        בטלו את מה שמיותר:
+                    @endif
                 </p>
-                <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-                    <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelPendingPaymentLinks" wire:confirm="לבטל את הקישור לתשלום? הלקוחה תשלם בצ'ק.">ביטול הקישור לתשלום</button>
-                    <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelPendingChecks" wire:confirm="לבטל את הצ'קים שטרם נפרעו? הלקוחה תשלם בקישור.">ביטול הצ'ק</button>
+                <div style="display:flex; flex-direction:column; gap:var(--sp-xs)">
+                    @if ($risk['paid'] > 0)
+                        <div>שולם: <span class="ltr-num">₪{{ number_format($risk['paid'], 0) }}</span></div>
+                    @endif
+                    @foreach ($risk['checks'] as $check)
+                        <div style="display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap" wire:key="risk-check-{{ $check->id }}">
+                            <span>צ'ק {{ $check->check_number ? '#'.$check->check_number : '' }} שטרם נפרע: <span class="ltr-num">₪{{ number_format((float) $check->amount, 0) }}</span></span>
+                            @if ($check->isEditable())
+                                <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelCheck({{ $check->id }})" wire:confirm="לבטל את הצ'ק הזה?">ביטול הצ'ק</button>
+                            @endif
+                        </div>
+                    @endforeach
+                    @foreach ($risk['links'] as $link)
+                        <div style="display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap" wire:key="risk-link-{{ $link->id }}">
+                            <span>קישור לתשלום שטרם שולם: <span class="ltr-num">₪{{ number_format((float) $link->amount, 0) }}</span></span>
+                            <button type="button" class="btn btn-secondary btn-sm" wire:click="cancelPaymentLink({{ $link->id }})" wire:confirm="לבטל את הקישור לתשלום?">ביטול הקישור לתשלום</button>
+                        </div>
+                    @endforeach
+                    @if ($risk['standingOrder'] !== null)
+                        <div style="display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap">
+                            <span>הוראת קבע פעילה ב-SUMIT, צפויה לגבות עוד: <span class="ltr-num">₪{{ number_format($risk['standingOrder'], 0) }}</span></span>
+                            <button type="button" class="btn btn-secondary btn-sm" wire:click="markStandingOrderStopped" wire:confirm="אין אפשרות לעצור הוראת קבע מכאן — יש לעצור אותה קודם ב-SUMIT. האם היא כבר נעצרה שם?">הוראת הקבע נעצרה ב-SUMIT</button>
+                        </div>
+                    @endif
                 </div>
             </div>
         @endif

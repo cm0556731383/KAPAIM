@@ -54,6 +54,7 @@ class extends Component
                 'invoiceSentAt' => $invoice?->sent_at,
                 'link' => $link,
                 'task' => $tasks->get($deal->id),
+                'atRisk' => $deal->paymentRisk() !== null,
                 'since' => collect([$invoice?->sent_at, $link?->created_at])->filter()->min(),
             ];
         })->sortBy('since')->values();
@@ -112,7 +113,10 @@ class extends Component
                         @php $deal = $row->deal; @endphp
                         <tr class="row-link" onclick="location.href='{{ route('deal-detail', $deal) }}'">
                             <td>{{ $deal->customer->school?->name ?? '—' }}</td>
-                            <td>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</td>
+                            <td>
+                                {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}
+                                @if ($row->atRisk)<div><span class="badge badge-warning">חשש לתשלום כפול או ביתר</span></div>@endif
+                            </td>
                             <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
                             <td class="ltr-num">
                                 ₪{{ number_format($deal->totalPaid(), 0) }}

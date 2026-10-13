@@ -857,6 +857,83 @@ class Deal extends Model
         ];
     }
 
+    /**
+     * What the deal's registered standing order is still expected to collect:
+     * it was sized to the balance owed when it was registered, so it's that
+     * balance less what it has collected since. Null with no standing order,
+     * or once the user marked it stopped in SUMIT (markStandingOrderStopped()).
+     */
+    public function standingOrderRemaining(): ?float
+    {
+        $registeredAt = ExternalOperation::where('deal_id', $this->id)
+            ->where('system', 'summit')
+            ->where('operation_type', 'standing_order_registered')
+            ->where('status', ExternalOperation::STATUS_SUCCESS)
+            ->min('created_at');
+
+        if (! $registeredAt || $this->standingOrderStopped()) {
+            return null;
+        }
+
+        $settled = $this->payments()->with('paymentMethod')->get()->filter(fn (Payment $payment) => $payment->isSettled());
+        $paidBefore = $settled->filter(fn (Payment $payment) => $payment->created_at < $registeredAt)->sum('amount');
+        $collectedSince = $settled->filter(fn (Payment $payment) => $payment->created_at >= $registeredAt && $payment->paymentMethod?->type === 'recurring')->sum('amount');
+
+        return max(0.0, $this->amountDue() - $paidBefore - $collectedSince);
+    }
+
+    public function standingOrderStopped(): bool
+    {
+        return ExternalOperation::where('deal_id', $this->id)->where('operation_type', 'standing_order_stopped')->exists();
+    }
+
+    /**
+     * SUMIT has no API to stop a standing order: the user stops it there, then
+     * marks it here so it no longer counts as money on its way.
+     */
+    public function markStandingOrderStopped(): void
+    {
+        ExternalOperation::create([
+            'deal_id' => $this->id,
+            'triggered_by_user_id' => auth()->id(),
+            'system' => 'summit',
+            'operation_type' => 'standing_order_stopped',
+            'trigger_source' => 'user_action',
+            'status' => ExternalOperation::STATUS_SUCCESS,
+            'attempted_at' => now(),
+            'completed_at' => now(),
+        ]);
+    }
+
+    /**
+     * Risk of the customer paying twice or more than she owes: what was paid
+     * plus everything still on its way — checks not yet cleared, payment
+     * links not yet paid, a standing order still collecting — comes to more
+     * than the deal's amount due. Null when there's no such risk, or the
+     * deal is cancelled (cancelling has its own standing-order warning).
+     *
+     * @return ?array{due: float, paid: float, committed: float, checks: \Illuminate\Support\Collection, links: \Illuminate\Support\Collection, standingOrder: ?float}
+     */
+    public function paymentRisk(): ?array
+    {
+        if ($this->status?->name === self::CANCELLED_STATUS_NAME) {
+            return null;
+        }
+
+        $due = $this->amountDue();
+        $paid = $this->totalPaid();
+        $checks = $this->pendingChecks();
+        $links = $this->paymentLinks()->where('status', PaymentLink::STATUS_PENDING)->get()->reject->isExpired()->values();
+        $standingOrder = $this->standingOrderRemaining();
+        $committed = $paid + $checks->sum('amount') + $links->sum('amount') + ($standingOrder ?? 0);
+
+        if ($committed <= $due + 0.005) {
+            return null;
+        }
+
+        return compact('due', 'paid', 'committed', 'checks', 'links', 'standingOrder');
+    }
+
     /** SUMIT's recurring item IDs of this deal's registered standing order (empty when none). */
     public function standingOrderItemIds(): array
     {

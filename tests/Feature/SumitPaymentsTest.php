@@ -454,14 +454,15 @@ class SumitPaymentsTest extends TestCase
     {
         [$deal, $link] = $this->dealWithCheckAndPendingLink();
 
-        $component = Livewire::test('deal-detail', ['deal' => $deal]);
-        $this->assertNotNull($component->instance()->doublePayment);
-        $component->assertSee('סיכון לתשלום כפול')->call('cancelPendingPaymentLinks');
+        $component = Livewire::test('deal-detail', ['deal' => $deal])
+            ->assertSee('חשש לתשלום כפול או ביתר')
+            ->assertDispatched('notify', type: 'warning');
+        $component->call('cancelPaymentLink', $link->id);
 
         $this->assertSame('cancelled', $link->fresh()->status);
         $this->assertSame(1, $deal->payments()->count());
         $this->assertNotSame('שולמה', $deal->fresh()->status->name);
-        $component->assertDontSee('סיכון לתשלום כפול');
+        $component->assertDontSee('חשש לתשלום כפול או ביתר');
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'payment_link.cancelled', 'deal_id' => $deal->id]);
 
         Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertDontSee('קישור תשלום ·')->assertSee('הגיע מועד הפירעון');
@@ -470,17 +471,91 @@ class SumitPaymentsTest extends TestCase
     public function test_double_payment_cancelling_the_check_leaves_only_the_link(): void
     {
         [$deal, $link] = $this->dealWithCheckAndPendingLink();
+        $check = $deal->payments()->sole();
 
         Livewire::test('deal-detail', ['deal' => $deal])
-            ->call('cancelPendingChecks')
+            ->call('cancelCheck', $check->id)
             ->assertSet('paymentError', null)
-            ->assertDontSee('סיכון לתשלום כפול');
+            ->assertDontSee('חשש לתשלום כפול או ביתר');
 
         $this->assertSame(0, $deal->payments()->count());
         $this->assertSame('pending', $link->fresh()->status);
         $this->assertNotSame('שולמה', $deal->fresh()->status->name);
 
         Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertSee('קישור תשלום ·')->assertSee("אין כרגע צ'קים הממתינים לפירעון", false);
+    }
+
+    public function test_a_check_and_a_link_that_together_make_up_the_balance_are_no_risk(): void
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        $deal->recordPayment($deal->version, 200, null, $check->id, '56', now()->toDateString());
+        $this->pendingLink($deal, 200);
+
+        $this->assertNull($deal->fresh()->paymentRisk());
+    }
+
+    public function test_a_bank_transfer_recorded_while_a_link_is_pending_is_a_risk(): void
+    {
+        $this->fakeSumit();
+        $deal = $this->cardDealWithInvoice(400);
+        $this->actingAsOwner();
+        $link = $this->pendingLink($deal, 400);
+        $transfer = PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+
+        $component = Livewire::test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $transfer->id)
+            ->set('paymentAmount', '400')
+            ->call('recordPayment')
+            ->assertSet('paymentError', null)
+            ->assertDispatched('notify', type: 'warning')
+            ->assertSee('חשש לתשלום כפול או ביתר');
+
+        $this->assertSame('שולמה', $deal->fresh()->status->name);
+        $component->call('cancelPaymentLink', $link->id)->assertDontSee('חשש לתשלום כפול או ביתר');
+    }
+
+    public function test_paying_more_than_the_deal_is_a_risk_even_with_nothing_pending(): void
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $transfer = PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+        $deal->recordPayment($deal->version, 500, null, $transfer->id);
+
+        $risk = $deal->fresh()->paymentRisk();
+        $this->assertEquals(500, $risk['committed']);
+        $this->assertEquals(400, $risk['due']);
+    }
+
+    public function test_a_payment_recorded_while_a_standing_order_is_collecting_is_a_risk_until_it_is_marked_stopped(): void
+    {
+        $deal = $this->cardDealWithInvoice(400);
+        $this->actingAsOwner();
+        \App\Models\ExternalOperation::create([
+            'deal_id' => $deal->id, 'system' => 'summit', 'operation_type' => 'standing_order_registered',
+            'trigger_source' => 'user_action', 'status' => 'success', 'external_reference' => '901',
+        ]);
+        $this->assertNull($deal->fresh()->paymentRisk()); // the standing order alone covers exactly the balance
+
+        $transfer = PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+        $deal->fresh()->recordPayment($deal->fresh()->version, 400, null, $transfer->id);
+
+        $risk = $deal->fresh()->paymentRisk();
+        $this->assertEquals(400, $risk['standingOrder']);
+
+        Livewire::test('deal-detail', ['deal' => $deal->fresh()])
+            ->assertSee('הוראת קבע פעילה ב-SUMIT')
+            ->call('markStandingOrderStopped')
+            ->assertDontSee('חשש לתשלום כפול או ביתר');
+
+        $this->assertNull($deal->fresh()->paymentRisk());
+    }
+
+    private function pendingLink(Deal $deal, float $amount): \App\Models\PaymentLink
+    {
+        return \App\Models\PaymentLink::create([
+            'deal_id' => $deal->id, 'token' => \Illuminate\Support\Str::random(40), 'amount' => $amount, 'purpose' => 'payment',
+            'url' => 'https://pay.example.com/'.\Illuminate\Support\Str::random(6), 'status' => 'pending', 'expires_at' => now()->addDay(),
+        ]);
     }
 
     public function test_a_cancelled_payment_link_cannot_be_resent(): void
