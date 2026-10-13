@@ -1008,6 +1008,19 @@ class extends Component
     </div>
 
 
+    {{-- A cancelled subscription deal: what was decided in the cancellation window (⚡customer-detail.blade.php). --}}
+    @if ($deal->status?->name === Deal::CANCELLED_STATUS_NAME && ($cancelled = $deal->subscription)?->cancelled_at)
+        <div class="card" style="margin-bottom:var(--sp-lg); border-color:var(--color-error)">
+            <h3>פרטי ביטול המנוי</h3>
+            <div class="field"><div class="k">תאריך ביטול</div><div class="v ltr-num">{{ $cancelled->cancelled_at->format('d/m/Y') }}</div></div>
+            @if ($cancelled->cancelled_from_month)
+                <div class="field"><div class="k">בוטל החל מחודש</div><div class="v">חודש {{ $cancelled->cancelled_from_month }} — {{ $cancelled->monthLabel($cancelled->cancelled_from_month) }}</div></div>
+            @endif
+            <div class="field"><div class="k">סכום הזיכוי</div><div class="v ltr-num">₪{{ number_format((float) $cancelled->cancellation_credit, 0) }}</div></div>
+            <div class="field"><div class="k">סיבת הביטול</div><div class="v" style="white-space:pre-wrap">{{ $cancelled->cancellation_reason ?: '—' }}</div></div>
+        </div>
+    @endif
+
     <div class="cols2">
         <div>
             {{-- ===== פרטי המוצר הנמכר (Snapshot) ===== --}}
@@ -1206,7 +1219,7 @@ class extends Component
         <div class="pay-summary">
             <div class="cell"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>
             @if ($credited > 0)
-                <div class="cell"><div class="k">זוכה</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
+                <div class="cell"><div class="k">זוכה{{ $deal->issuedCreditTotal() < $credited - 0.005 ? ' (חשבונית הזיכוי טרם הופקה)' : '' }}</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
             @endif
             <div class="cell"><div class="k">שולם</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
             @php $pendingChecks = $this->deal->pendingChecks(); @endphp

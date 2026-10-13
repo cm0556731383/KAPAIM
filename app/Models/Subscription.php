@@ -34,7 +34,7 @@ use RuntimeException;
  */
 #[Fillable([
     'customer_id', 'deal_id', 'status_id', 'start_date', 'first_month_date', 'end_date',
-    'cancelled_at', 'cancelled_from_month', 'agreed_price', 'cancellation_credit', 'monthly_payment_override', 'version',
+    'cancelled_at', 'cancelled_from_month', 'agreed_price', 'cancellation_credit', 'cancellation_reason', 'monthly_payment_override', 'version',
 ])]
 class Subscription extends Model
 {
@@ -149,6 +149,11 @@ class Subscription extends Model
             ? $this->monthLabel($this->cancelled_from_month)
             : $this->monthLabel($this->cancelled_from_month).' – '.$this->monthLabel(self::TOTAL_DELIVERIES);
         $monthly = number_format((float) $this->agreed_price / self::TOTAL_DELIVERIES, 2);
+
+        // An amount set by hand in the cancellation window isn't months × monthly price.
+        if (abs((float) $this->cancellation_credit - $this->creditFor($this->cancelled_from_month)) > 0.005) {
+            return "זיכוי בגין ביטול מנוי החל מחודש {$this->cancelled_from_month} ({$range})";
+        }
 
         return "זיכוי בגין ביטול מנוי החל מחודש {$this->cancelled_from_month} ({$range}): {$months} חודשים × ₪{$monthly}";
     }
@@ -325,7 +330,11 @@ class Subscription extends Model
      * @throws RuntimeException when the subscription isn't currently active,
      *                          or $fromMonth is before a supplied month.
      */
-    public function cancel(?int $fromMonth = null): self
+    /**
+     * $credit defaults to creditFor($fromMonth); the user may set another
+     * amount in the cancellation window (0 up to the deal's agreed amount).
+     */
+    public function cancel(?int $fromMonth = null, ?float $credit = null, ?string $reason = null): self
     {
         if (! $this->isActive()) {
             throw new RuntimeException('ניתן לבטל רק מנוי פעיל.');
@@ -340,17 +349,25 @@ class Subscription extends Model
                 : "ניתן לבטל את המנוי החל מחודש {$firstCancellable} ועד חודש ".self::TOTAL_DELIVERIES.' — חודשים קודמים כבר סופקו.');
         }
 
+        $credit ??= $this->creditFor($fromMonth);
+        $maxCredit = (float) $this->deal->agreed_amount;
+
+        if ($credit < 0 || $credit > $maxCredit + 0.005) {
+            throw new RuntimeException('סכום הזיכוי חייב להיות בין ₪0 לסכום העסקה (₪'.number_format($maxCredit, 0).').');
+        }
+
         $cancelledStatus = StatusDefinition::firstOrCreate(
             ['scope' => 'subscription', 'name' => self::CANCELLED_STATUS_NAME],
             ['is_active' => true, 'sort_order' => 3],
         );
 
-        DB::transaction(function () use ($cancelledStatus, $fromMonth) {
+        DB::transaction(function () use ($cancelledStatus, $fromMonth, $credit, $reason) {
             $this->update([
                 'status_id' => $cancelledStatus->id,
                 'cancelled_at' => now()->toDateString(),
                 'cancelled_from_month' => $fromMonth,
-                'cancellation_credit' => $this->creditFor($fromMonth),
+                'cancellation_credit' => round($credit, 2),
+                'cancellation_reason' => filled($reason) ? trim($reason) : null,
             ]);
 
             $this->deal->cancelForSubscription();

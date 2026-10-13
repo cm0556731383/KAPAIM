@@ -165,7 +165,7 @@ class Deal extends Model
     /**
      * FR-4.32/FR-4.33: always computed from recorded payments — never a
      * stored column. A check counts only once cleared and receipted
-     * (Payment::isSettled()); until then it's in pendingChecksTotal().
+     * (Payment::isSettled()); until then it's in pendingChecks().
      */
     public function totalPaid(): float
     {
@@ -182,17 +182,32 @@ class Deal extends Model
     }
 
     /**
-     * What credit notes issued in SUMIT took off the deal (e.g. a cancelled
-     * subscription's credit). A draft credit note, or one SUMIT refused,
-     * doesn't count — only a sent one (Document::sendTo()).
+     * What was credited off the deal: credit notes issued in SUMIT (a draft,
+     * or one SUMIT refused, doesn't count — only a sent one,
+     * Document::sendTo()) — or, for a cancelled subscription, the credit set
+     * in its cancellation window, already before its credit note is issued
+     * (that note is for the same amount, so it's never counted twice).
      */
     public function totalCredited(): float
+    {
+        return max($this->issuedCreditTotal(), $this->subscriptionCancellationCredit());
+    }
+
+    public function issuedCreditTotal(): float
     {
         return (float) DocumentLine::whereHas('document', fn ($q) => $q
             ->where('deal_id', $this->id)
             ->where('document_type', 'credit_note')
             ->whereNotNull('sent_at'))
             ->sum('amount');
+    }
+
+    /** The cancelled subscription's credit (Subscription::cancel()), 0 with none. */
+    public function subscriptionCancellationCredit(): float
+    {
+        $subscription = $this->subscription;
+
+        return $subscription?->cancelled_at ? (float) $subscription->cancellation_credit : 0.0;
     }
 
     /** What the customer owes in all: the agreed amount less what was credited. */

@@ -475,6 +475,10 @@ class SubscriptionsTest extends TestCase
             ->call('cancelSubscription', $subscription->id)
             ->assertSet('subscriptionError', 'יש לבחור החל מאיזה חודש המנוי מבוטל.')
             ->set("cancelFromMonths.{$subscription->id}", '8')
+            ->assertSet("cancelCredits.{$subscription->id}", '900')
+            ->call('cancelSubscription', $subscription->id)
+            ->assertSet('subscriptionError', 'יש לרשום את סיבת הביטול.')
+            ->set("cancelReasons.{$subscription->id}", 'בית הספר צמצם תקציב')
             ->call('cancelSubscription', $subscription->id)
             ->assertSet('subscriptionError', null)
             ->assertSee('מבוטל החל מ')
@@ -487,6 +491,52 @@ class SubscriptionsTest extends TestCase
 
         $html = Livewire::actingAs($this->owner)->test('customers')->html();
         $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*customers\/'.$subscription->customer_id.'\b/u', $html);
+    }
+
+    public function test_the_cancellation_window_credit_can_be_changed_and_the_details_show_on_the_cancelled_deal(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 3000);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->set('activeTab', 'subscription')
+            ->set("cancelFromMonths.{$subscription->id}", '8')
+            ->set("cancelCredits.{$subscription->id}", '5000')
+            ->set("cancelReasons.{$subscription->id}", 'עברו לספק אחר')
+            ->call('cancelSubscription', $subscription->id)
+            ->assertSet('subscriptionError', 'סכום הזיכוי חייב להיות בין ₪0 לסכום העסקה (₪3,000).');
+
+        $component->set("cancelCredits.{$subscription->id}", '750')
+            ->call('cancelSubscription', $subscription->id)
+            ->assertSet('subscriptionError', null)
+            ->assertSee('עברו לספק אחר');
+
+        $subscription = $subscription->fresh();
+        $this->assertEquals(750, (float) $subscription->cancellation_credit);
+        $this->assertSame('עברו לספק אחר', $subscription->cancellation_reason);
+        $this->assertStringNotContainsString('×', $subscription->creditDescription()); // a hand-set amount isn't months × price
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $subscription->deal])
+            ->assertSee('פרטי ביטול המנוי')
+            ->assertSee('עברו לספק אחר')
+            ->assertSee('750');
+    }
+
+    public function test_the_cancellation_credit_lowers_the_balance_at_once_and_is_not_counted_twice_once_issued(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 4500);
+        $this->giveDealAnInvoice($subscription->deal);
+        $subscription->deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
+        $this->createTemplate('credit_note');
+        $subscription->cancel(1, 3150, 'בדיקה');
+        $deal = $subscription->deal->fresh();
+
+        $this->assertEquals(3150, $deal->totalCredited());
+        $this->assertEquals(1350, $deal->outstandingBalance());
+
+        $subscription->fresh()->generateCreditNote()->update(['sent_at' => now()]); // as if issued in SUMIT
+
+        $this->assertEquals(3150, $deal->fresh()->totalCredited());
+        $this->assertEquals(1350, $deal->fresh()->outstandingBalance());
     }
 
     public function test_a_new_subscription_pins_month_one_to_the_hebrew_month_set_in_settings(): void

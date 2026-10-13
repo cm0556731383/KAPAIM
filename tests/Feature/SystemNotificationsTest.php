@@ -150,14 +150,18 @@ class SystemNotificationsTest extends TestCase
             ->assertSeeHtml('wire:confirm="ביטול התזכורת הוא מחיקה לוגית — האם להמשיך?"');
     }
 
-    public function test_cancelling_a_subscription_already_has_a_confirmation(): void
+    /** Cancelling goes through a window: month, credit (filled from the month), reason, then an explicit confirm. */
+    public function test_cancelling_a_subscription_goes_through_a_confirmation_window(): void
     {
         $subscription = $this->openSubscription();
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer])
             ->set('activeTab', 'subscription')
             ->set("cancelFromMonths.{$subscription->id}", '3')
-            ->assertSeeHtml('wire:confirm="המנוי יבוטל החל מחודש 3 ('.$subscription->monthLabel(3).') ויחושב זיכוי של ₪'.number_format($subscription->creditFor(3), 0).'. גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה — להמשיך?"');
+            ->assertSet("cancelCredits.{$subscription->id}", (string) $subscription->creditFor(3))
+            ->assertSee('סיבת הביטול')
+            ->assertSee('אישור ביטול המנוי')
+            ->assertSee('פעולה זו אינה הפיכה');
     }
 
     /** No invoice yet: no "irreversible" confirm — clicking pops the blocking reason up instead. */

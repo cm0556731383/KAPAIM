@@ -125,6 +125,22 @@ class extends Component
     /** subscription_id => chosen cancellation month (1-10), bound per subscription card. */
     public array $cancelFromMonths = [];
 
+    /** subscription_id => credit amount in the cancellation window (filled from the month, editable). */
+    public array $cancelCredits = [];
+
+    /** subscription_id => why the subscription is cancelled. */
+    public array $cancelReasons = [];
+
+    /** Choosing the month fills in its computed credit — still editable after. */
+    public function updatedCancelFromMonths($value, $subscriptionId): void
+    {
+        $subscription = Subscription::where('customer_id', $this->customer->id)->find($subscriptionId);
+
+        $this->cancelCredits[$subscriptionId] = $subscription && (int) $value > 0
+            ? (string) $subscription->creditFor((int) $value)
+            : '';
+    }
+
     /** Business-rule error from Subscription::markDeliverySupplied()/cancel()/generateCreditNote(). */
     public ?string $subscriptionError = null;
 
@@ -656,8 +672,23 @@ class extends Component
             return;
         }
 
+        $reason = trim((string) ($this->cancelReasons[$subscriptionId] ?? ''));
+        $credit = trim((string) ($this->cancelCredits[$subscriptionId] ?? ''));
+
+        if ($reason === '') {
+            $this->subscriptionError = 'יש לרשום את סיבת הביטול.';
+
+            return;
+        }
+
+        if (! is_numeric($credit)) {
+            $this->subscriptionError = 'יש להזין סכום זיכוי (מספר; 0 אם אין זיכוי).';
+
+            return;
+        }
+
         try {
-            $subscription->cancel($fromMonth);
+            $subscription->cancel($fromMonth, (float) $credit, $reason);
         } catch (\RuntimeException $e) {
             $this->subscriptionError = $e->getMessage();
 
@@ -666,10 +697,11 @@ class extends Component
 
         $activityLogger->log('subscription.cancelled', "מנוי #{$subscription->id} בוטל החל מחודש {$fromMonth} ({$subscription->monthLabel($fromMonth)}) — קיזוז מחושב: ₪".number_format((float) $subscription->cancellation_credit, 0), [
             'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
-            'metadata' => ['cancellation_credit' => (float) $subscription->cancellation_credit, 'cancelled_from_month' => $fromMonth],
+            'metadata' => ['cancellation_credit' => (float) $subscription->cancellation_credit, 'cancelled_from_month' => $fromMonth, 'reason' => $reason],
         ]);
 
         unset($this->subscriptions, $this->hasActiveSubscription);
+        $this->dispatch('close-modals');
 
         $this->notifySuccess('המנוי בוטל בהצלחה.');
 
@@ -1454,35 +1486,49 @@ class extends Component
                 @if ($subscription->isActive())
                     @php $firstCancellableMonth = $subscription->firstCancellableMonth(); @endphp
                     @if ($firstCancellableMonth <= \App\Models\Subscription::TOTAL_DELIVERIES)
-                        <div style="margin-top:var(--sp-lg); display:flex; gap:var(--sp-sm); align-items:flex-end; justify-content:flex-end; flex-wrap:wrap">
-                            <div>
-                                <label for="cancelFromMonth{{ $subscription->id }}">ביטול החל מחודש</label>
-                                <select id="cancelFromMonth{{ $subscription->id }}" wire:model.live="cancelFromMonths.{{ $subscription->id }}">
-                                    <option value="">בחרו חודש</option>
-                                    @for ($month = $firstCancellableMonth; $month <= \App\Models\Subscription::TOTAL_DELIVERIES; $month++)
-                                        <option value="{{ $month }}">חודש {{ $month }} — {{ $subscription->monthLabel($month) }}</option>
-                                    @endfor
-                                </select>
-                            </div>
-                            @php $chosenCancelMonth = (int) ($cancelFromMonths[$subscription->id] ?? 0); @endphp
-                            <button
-                                type="button"
-                                class="btn btn-destructive"
-                                wire:click="cancelSubscription({{ $subscription->id }})"
-                                @if ($chosenCancelMonth)
-                                    wire:confirm="המנוי יבוטל החל מחודש {{ $chosenCancelMonth }} ({{ $subscription->monthLabel($chosenCancelMonth) }}) ויחושב זיכוי של ₪{{ number_format($subscription->creditFor($chosenCancelMonth), 0) }}. גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה — להמשיך?"
-                                @else
-                                    disabled
-                                @endif
-                            >ביטול מנוי</button>
+                        <div style="margin-top:var(--sp-lg); display:flex; justify-content:flex-end">
+                            <x-modal trigger-label="ביטול מנוי" trigger-class="btn btn-destructive" title="ביטול מנוי">
+                                <form wire:submit="cancelSubscription({{ $subscription->id }})" class="form-grid">
+                                    <div class="full">
+                                        <label for="cancelFromMonth{{ $subscription->id }}">ביטול החל מחודש</label>
+                                        <select id="cancelFromMonth{{ $subscription->id }}" wire:model.live="cancelFromMonths.{{ $subscription->id }}">
+                                            <option value="">בחרו חודש</option>
+                                            @for ($month = $firstCancellableMonth; $month <= \App\Models\Subscription::TOTAL_DELIVERIES; $month++)
+                                                <option value="{{ $month }}">חודש {{ $month }} — {{ $subscription->monthLabel($month) }}</option>
+                                            @endfor
+                                        </select>
+                                    </div>
+                                    @php $chosenCancelMonth = (int) ($cancelFromMonths[$subscription->id] ?? 0); @endphp
+                                    <div class="full">
+                                        <label for="cancelCredit{{ $subscription->id }}">סכום הזיכוי (₪)</label>
+                                        <input type="text" id="cancelCredit{{ $subscription->id }}" class="ltr-num" dir="ltr" wire:model="cancelCredits.{{ $subscription->id }}" @disabled(! $chosenCancelMonth)>
+                                        @if ($chosenCancelMonth)
+                                            <div style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">מחושב: ₪{{ number_format($subscription->creditFor($chosenCancelMonth), 0) }} ({{ \App\Models\Subscription::TOTAL_DELIVERIES - $chosenCancelMonth + 1 }} חודשים). ניתן לשנות.</div>
+                                        @endif
+                                    </div>
+                                    <div class="full">
+                                        <label for="cancelReason{{ $subscription->id }}">סיבת הביטול</label>
+                                        <textarea id="cancelReason{{ $subscription->id }}" rows="3" wire:model="cancelReasons.{{ $subscription->id }}"></textarea>
+                                    </div>
+                                    @if ($subscriptionError)
+                                        <div class="full" style="color:var(--color-error); font-size:var(--fs-small)">{{ $subscriptionError }}</div>
+                                    @endif
+                                    <div class="full" style="font-size:var(--fs-small); color:var(--color-text-secondary)">גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה.</div>
+                                    <div class="full"><button type="submit" class="btn btn-destructive" @disabled(! $chosenCancelMonth)>אישור ביטול המנוי</button></div>
+                                </form>
+                            </x-modal>
                         </div>
                     @endif
                 @elseif ($subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME)
                     <div class="card confirm-row" style="margin-top:var(--sp-lg); background:var(--color-background)">
                         <div style="display:flex; gap:var(--sp-xl); flex-wrap:wrap; font-size:var(--fs-small)">
                             <div><span style="color:var(--color-text-secondary)">תאריך ביטול: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->cancelled_at?->format('d/m/Y') }}</span></div>
-                            <div><span style="color:var(--color-text-secondary)">קיזוז מחושב: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->cancellation_credit, 0) }}</span></div>
+                            <div><span style="color:var(--color-text-secondary)">סכום הזיכוי: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->cancellation_credit, 0) }}</span></div>
                         </div>
+                        @if ($subscription->cancellation_reason)
+                            <div style="font-size:var(--fs-small); margin-top:var(--sp-xs)"><span style="color:var(--color-text-secondary)">סיבת הביטול: </span><span style="white-space:pre-wrap">{{ $subscription->cancellation_reason }}</span></div>
+                        @endif
+                        <div style="margin-top:var(--sp-md)">
                         @php $creditNote = $subscription->deal->documents()->where('document_type', 'credit_note')->first(); @endphp
                         @if ($creditNote)
                             <a href="{{ route('document-view', $creditNote) }}" class="btn btn-secondary">{{ $creditNote->sent_at ? 'צפייה בחשבונית הזיכוי' : 'חשבונית הזיכוי (טרם הופקה מול SUMIT)' }}</a>
@@ -1496,6 +1542,7 @@ class extends Component
                                 @endif
                             >הפקת חשבונית זיכוי</button>
                         @endif
+                        </div>
                     </div>
                 @endif
             </div>
