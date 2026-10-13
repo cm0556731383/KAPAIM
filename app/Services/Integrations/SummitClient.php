@@ -226,16 +226,28 @@ class SummitClient
         $deal->loadMissing('customer.school', 'customer.contacts');
         $customer = $this->customer($deal);
 
+        // The page itself only takes a one-off payment — for a standing order's
+        // first month it says so, so a customer who opens it without reading
+        // the email knows more monthly charges follow.
+        $label = $this->itemName($deal);
+
+        if ($link->isStandingOrder()) {
+            $plan = $deal->standingOrderPlan((float) $link->amount);
+            $label .= $plan['months'] > 1
+                ? ' — הוראת קבע: תשלום 1 מתוך '.$plan['months'].', ₪'.number_format($plan['monthly'], 0).' לחודש'
+                : ' — הוראת קבע';
+        }
+
         $data = $this->dataOrFail($this->post($entity, '/billing/payments/beginredirect/', array_filter([
             'Customer' => $customer,
             'Items' => [[
-                'Item' => ['Name' => $this->itemName($deal)],
+                'Item' => ['Name' => $label],
                 'Quantity' => 1,
                 'UnitPrice' => (float) $link->amount,
             ]],
             'VATIncluded' => true,
             'DocumentType' => self::DOCUMENT_RECEIPT,
-            'DocumentDescription' => $this->itemName($deal),
+            'DocumentDescription' => $label,
             'ExternalIdentifier' => $link->externalIdentifier(),
             'RedirectURL' => route('payment-links.return', $link->token),
             'CancelRedirectURL' => route('payment-links.return', ['token' => $link->token, 'cancelled' => 1]),

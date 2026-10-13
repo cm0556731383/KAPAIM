@@ -327,6 +327,10 @@ class SumitPaymentsTest extends TestCase
         $link = PaymentLink::createFor($deal, 100, app(ExternalOperationRunner::class), app(SummitClient::class), PaymentLink::PURPOSE_STANDING_ORDER);
         $this->fakeSumit([$this->sumitPayment($link, 70)]);
 
+        // SUMIT's page itself says it's a standing order's first payment.
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/billing/payments/beginredirect/')
+            && str_contains($request['Items'][0]['Item']['Name'], 'הוראת קבע: תשלום 1 מתוך 4'));
+
         $this->get(route('payment-links.return', $link->token).'?OG-PaymentID=70')->assertOk()->assertSee('התשלום התקבל');
 
         $this->assertSame(['90'], $deal->fresh()->standingOrderItemIds());
