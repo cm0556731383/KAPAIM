@@ -529,7 +529,9 @@ class Deal extends Model
 
             $attributes = ['version' => DB::raw('version + 1')];
 
-            if ($becomesFullyPaid && $this->status?->name !== self::PAID_STATUS_NAME) {
+            // A cancelled deal stays cancelled — paying off what's left after its
+            // credit doesn't reopen it as "שולמה" (refreshPaidStatus() does the same).
+            if ($becomesFullyPaid && ! in_array($this->status?->name, [self::PAID_STATUS_NAME, self::CANCELLED_STATUS_NAME], true)) {
                 $paidStatus = StatusDefinition::firstOrCreate(
                     ['scope' => 'deal', 'name' => self::PAID_STATUS_NAME],
                     ['is_active' => true, 'sort_order' => 3],

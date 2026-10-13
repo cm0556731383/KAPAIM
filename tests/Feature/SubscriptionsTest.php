@@ -539,6 +539,19 @@ class SubscriptionsTest extends TestCase
         $this->assertEquals(1350, $deal->fresh()->outstandingBalance());
     }
 
+    public function test_paying_off_a_cancelled_deals_remaining_balance_keeps_it_cancelled(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 4500);
+        $subscription->cancel(1, 4150, 'בדיקה');
+        $deal = $subscription->deal->fresh();
+        $transfer = \App\Models\PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+
+        $deal->recordPayment($deal->version, 350, null, $transfer->id);
+
+        $this->assertEquals(0, $deal->fresh()->outstandingBalance());
+        $this->assertSame(Deal::CANCELLED_STATUS_NAME, $deal->fresh()->status->name);
+    }
+
     public function test_a_new_subscription_pins_month_one_to_the_hebrew_month_set_in_settings(): void
     {
         $this->travelTo('2026-10-07'); // כ״ו תשרי תשפ״ז
