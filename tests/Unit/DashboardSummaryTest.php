@@ -73,13 +73,15 @@ class DashboardSummaryTest extends TestCase
 
     // ----- newLeadsCount -----
 
-    public function test_new_leads_count_only_counts_leads_with_the_new_status(): void
+    public function test_new_leads_count_matches_the_leads_pages_default_list(): void
     {
         $this->createLead($this->owner, schoolName: 'ליד חדש א');
         $this->createLead($this->owner, schoolName: 'ליד חדש ב');
         $this->advanceLeadStatus($this->createLead($this->owner, schoolName: 'ליד בתהליך'), 'בתהליך מכירה');
+        $this->advanceLeadStatus($this->createLead($this->owner, schoolName: 'ליד שנסגר'), Lead::CLOSED_NO_SALE_STATUS_NAME);
+        $this->createLead($this->owner, schoolName: 'ליד שהומר')->update(['converted_at' => now()]);
 
-        $this->assertSame(2, $this->dashboard->newLeadsCount($this->owner));
+        $this->assertSame(3, $this->dashboard->newLeadsCount($this->owner));
     }
 
     public function test_new_leads_count_is_scoped_to_the_reps_own_leads(): void

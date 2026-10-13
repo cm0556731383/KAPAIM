@@ -134,7 +134,6 @@ class extends Component
         </div>
     </div>
 
-    <div style="margin-bottom:var(--sp-sm)"><span class="subscription-legend">מסגרת = לקוחה מנויה</span></div>
     <div class="card" style="padding:0; overflow:hidden">
         <div class="table-scroll">
         <table>

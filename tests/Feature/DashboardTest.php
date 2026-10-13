@@ -69,7 +69,8 @@ class DashboardTest extends TestCase
         $response = $this->actingAs($this->owner)->get('/');
 
         $response->assertOk();
-        $response->assertSee('לידים חדשים');
+        $response->assertSee('לידים');
+        $response->assertSee(route('leads'));
         $response->assertSee('סך פתוח לגבייה');
         $response->assertSee('להפקדה');
     }
@@ -88,7 +89,8 @@ class DashboardTest extends TestCase
         $response = $this->actingAs($this->repA)->get('/');
 
         $response->assertOk();
-        $response->assertSee('לידים חדשים');
+        $response->assertSee('לידים');
+        $response->assertSee(route('leads'));
         $response->assertDontSee('סך פתוח לגבייה');
         $response->assertDontSee('להפקדה');
         $response->assertDontSee("עסקה #{$deal->id}");

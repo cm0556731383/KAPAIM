@@ -1,8 +1,10 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Models\Bundle;
 use App\Models\Lead;
 use App\Models\LeadSource;
+use App\Models\Program;
 use App\Models\School;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
@@ -21,6 +23,8 @@ class extends Component
     public string $filterCity = '';
     public string $filterSourceId = '';
     public string $filterStatusId = '';
+    /** "program:{id}" / "bundle:{id}" — same encoding as ⚡lead-detail's itemToAttach. */
+    public string $filterItem = '';
 
     // ===== ליד חדש (יצירה מהירה — FR-1.2: מייל+טלפון בלבד חובה) =====
     public string $newSchoolName = '';
@@ -157,6 +161,12 @@ class extends Component
             ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
             ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
             ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
+            ->when(str_starts_with($this->filterItem, 'program:'), fn ($q) => $q->whereHas(
+                'interestedPrograms', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8))
+            ))
+            ->when(str_starts_with($this->filterItem, 'bundle:'), fn ($q) => $q->whereHas(
+                'interestedBundles', fn ($bq) => $bq->where('bundles.id', (int) substr($this->filterItem, 7))
+            ))
             ->when(
                 $this->filterStatusId !== '',
                 fn ($q) => $q->where('status_id', $this->filterStatusId),
@@ -199,6 +209,18 @@ class extends Component
     public function sources()
     {
         return LeadSource::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function programs()
+    {
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function bundles()
+    {
+        return Bundle::where('is_active', true)->orderBy('name')->get();
     }
 
     #[Computed]
@@ -295,9 +317,28 @@ class extends Component
                 @endforeach
             </select>
         </div>
+        <div>
+            <label for="filterItem">תוכנית / מארז מבוקש</label>
+            <select id="filterItem" wire:model.live="filterItem">
+                <option value="">כל התוכניות והמארזים</option>
+                @if ($this->programs->isNotEmpty())
+                    <optgroup label="תוכניות">
+                        @foreach ($this->programs as $program)
+                            <option value="program:{{ $program->id }}">{{ $program->name }}</option>
+                        @endforeach
+                    </optgroup>
+                @endif
+                @if ($this->bundles->isNotEmpty())
+                    <optgroup label="מארזים">
+                        @foreach ($this->bundles as $bundle)
+                            <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }}</option>
+                        @endforeach
+                    </optgroup>
+                @endif
+            </select>
+        </div>
     </div>
 
-    <div style="margin-bottom:var(--sp-sm)"><span class="subscription-legend">מסגרת = מתעניינים במנוי</span></div>
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-lg)">
         <div class="table-scroll">
         <table>

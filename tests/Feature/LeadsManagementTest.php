@@ -479,6 +479,33 @@ class LeadsManagementTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*leads\/'.$regular->id.'\b/u', $html);
     }
 
+    public function test_leads_list_filters_by_requested_program_or_bundle(): void
+    {
+        $programLead = $this->createLead(schoolName: 'מתעניין בתוכנית');
+        $bundleLead = $this->createLead(schoolName: 'מתעניין במארז');
+        $otherLead = $this->createLead(schoolName: 'ללא בקשה');
+        $program = Program::create(['name' => 'תוכנית מבוקשת', 'price' => 500, 'is_premium' => false, 'is_active' => true]);
+        $bundle = \App\Models\Bundle::create(['name' => 'מארז מבוקש', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $programLead->interestedPrograms()->attach($program->id);
+        $bundleLead->interestedBundles()->attach($bundle->id);
+
+        // Rows link via onclick to the lead-detail URL; school names also
+        // appear in the school filter dropdown, so match on the row link.
+        $row = fn (Lead $lead) => "window.location='".route('lead-detail', $lead)."'";
+
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('filterItem', "program:{$program->id}")
+            ->assertSeeHtml($row($programLead))
+            ->assertDontSeeHtml($row($bundleLead))
+            ->assertDontSeeHtml($row($otherLead))
+            ->set('filterItem', "bundle:{$bundle->id}")
+            ->assertSeeHtml($row($bundleLead))
+            ->assertDontSeeHtml($row($programLead))
+            ->assertDontSeeHtml($row($otherLead))
+            ->set('filterItem', '')
+            ->assertSeeHtml($row($otherLead));
+    }
+
     public function test_attaching_an_invalid_item_is_rejected(): void
     {
         $lead = $this->createLead();

@@ -190,13 +190,13 @@ class extends Component
 
     <div class="kpis">
         @if ($this->canSeeLeadItems)
-            <div class="card kpi">
+            <a class="card kpi" href="{{ route('leads') }}" style="text-decoration:none; color:inherit">
                 <div class="kpi-head">
-                    <span class="label">לידים חדשים</span>
+                    <span class="label">לידים</span>
                     <span class="icon-chip tone-secondary"><svg><use href="#icon-leads"></use></svg></span>
                 </div>
                 <div class="num">{{ $this->newLeadsCount }}</div>
-            </div>
+            </a>
             <div class="card kpi">
                 <div class="kpi-head">
                     <span class="label">ממתינות לשיחה חוזרת</span>

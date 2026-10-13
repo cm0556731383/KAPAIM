@@ -51,8 +51,12 @@ class DashboardSummary
             return 0;
         }
 
+        // Same set as ⚡leads.blade.php's default (unfiltered) list: converted
+        // leads live on the customers page now, and closed-lost leads are
+        // hidden there unless explicitly filtered for.
         return $this->scopeLeadsToUser(
-            Lead::whereHas('status', fn (Builder $q) => $q->where('name', Lead::NEW_STATUS_NAME)),
+            Lead::whereNull('converted_at')
+                ->whereHas('status', fn (Builder $q) => $q->where('name', '!=', Lead::CLOSED_NO_SALE_STATUS_NAME)),
             $user,
         )->count();
     }
