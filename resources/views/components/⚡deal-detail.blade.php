@@ -5,12 +5,14 @@ use App\Models\BusinessEntity;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
+use App\Models\PaymentLink;
 use App\Models\PaymentMethod;
 use App\Models\ExternalOperation;
 use App\Models\Receipt;
 use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -73,6 +75,11 @@ class extends Component
     /** Business-rule error from Deal::recordPayment()/Payment::markCleared()/Receipt::issueFor(). */
     public ?string $paymentError = null;
 
+    // ===== קישור לתשלום (PaymentLink) =====
+    public string $linkAmount = '';
+
+    public string $linkEmail = '';
+
     public function mount(Deal $deal): void
     {
         abort_unless(auth()->user()->can('deals.manage'), 403);
@@ -83,6 +90,18 @@ class extends Component
         $this->invoiceBusinessEntityId = (string) ($this->deal->business_entity_id ?? '');
         // Set by ⚡document-view when a failed Summit issuance deleted the invoice draft.
         $this->documentError = session('documentError');
+        $this->resetLinkForm();
+    }
+
+    /** Defaults: the outstanding balance, to the billing contact (else the primary one). */
+    private function resetLinkForm(): void
+    {
+        $balance = $this->deal->outstandingBalance();
+        // A standing-order deal pays its first month by link; a card deal its balance.
+        $amount = $this->deal->paymentMethod?->type === 'recurring' ? $this->deal->standingOrderPlan()['monthly'] : $balance;
+        $this->linkAmount = $balance > 0 ? (string) round($amount, 2) : '';
+        $contacts = $this->linkRecipients;
+        $this->linkEmail = (string) ($contacts->firstWhere('is_accounting_contact', true)?->email ?? $contacts->firstWhere('is_primary', true)?->email ?? $contacts->first()?->email ?? '');
     }
 
     private function syncFields(): void
@@ -348,7 +367,98 @@ class extends Component
         $this->syncFields();
         unset($this->payments);
 
-        $this->notifySuccess("הסליקה הושלמה והתשלום נרשם בהצלחה (₪{$data['paymentAmount']}).");
+        // The receipt follows the charge right away (SUMIT emails it to the
+        // customer). If it fails the payment stays — it can be issued again
+        // from the payments table.
+        try {
+            Receipt::issueFor($this->deal->refresh(), $payment, $runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = "הסליקה הושלמה והתשלום נרשם (₪{$data['paymentAmount']}), אך הקבלה לא הופקה: {$e->getMessage()}";
+
+            return;
+        }
+
+        $this->notifySuccess("הסליקה הושלמה, התשלום נרשם והקבלה נשלחה ללקוחה (₪{$data['paymentAmount']}).");
+    }
+
+    /**
+     * Opens a SUMIT payment page (PaymentLink::createFor()) and emails it.
+     * If only the email fails the link still exists — it's listed with a
+     * copy button, so it can be sent by hand.
+     */
+    public function sendPaymentLink(ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
+    {
+        $this->paymentError = null;
+
+        $data = $this->validate([
+            'linkAmount' => ['required', 'numeric', 'gt:0'],
+            'linkEmail' => ['required', 'email'],
+        ], [], ['linkAmount' => 'סכום לתשלום', 'linkEmail' => 'דוא"ל הנמענת']);
+
+        try {
+            $link = PaymentLink::createFor($this->deal, (float) $data['linkAmount'], $runner, $summit);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        unset($this->paymentLinks);
+        $this->deal->refresh();
+
+        try {
+            $link->send($data['linkEmail'], $this->recipientName($data['linkEmail']), $runner, $smove);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = 'דף התשלום נוצר, אך '.$e->getMessage();
+
+            return;
+        }
+
+        $this->notifySuccess("הקישור לתשלום (₪{$data['linkAmount']}) נשלח אל {$data['linkEmail']}.");
+    }
+
+    public function resendPaymentLink(int $linkId, ExternalOperationRunner $runner, SmoveClient $smove): void
+    {
+        $this->paymentError = null;
+
+        $link = $this->deal->paymentLinks()->findOrFail($linkId);
+
+        if ($link->isPaid() || $link->isExpired()) {
+            $this->paymentError = 'הקישור כבר '.($link->isPaid() ? 'שולם' : 'פג תוקפו').' — אין לשלוח אותו שוב.';
+
+            return;
+        }
+
+        $email = $link->sent_to_email ?: $this->linkEmail;
+
+        try {
+            $link->send($email, $this->recipientName($email), $runner, $smove);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        unset($this->paymentLinks);
+        $this->notifySuccess("הקישור נשלח שוב אל {$email}.");
+    }
+
+    private function recipientName(string $email): string
+    {
+        return $this->linkRecipients->firstWhere('email', $email)?->name ?? ($this->deal->customer->school?->name ?? $email);
+    }
+
+    /** The customer's contacts with an email — who a payment link can go to. */
+    #[Computed]
+    public function linkRecipients()
+    {
+        return $this->deal->customer->contacts()->whereNotNull('email')->where('email', '!=', '')->orderByDesc('is_accounting_contact')->orderByDesc('is_primary')->get();
+    }
+
+    #[Computed]
+    public function paymentLinks()
+    {
+        return $this->deal->paymentLinks()->get();
     }
 
     /** Build-plan 12 — Deal::registerStandingOrderWithSummit(). */
@@ -357,14 +467,20 @@ class extends Component
         $this->paymentError = null;
 
         try {
-            $this->deal->registerStandingOrderWithSummit($runner, $summit);
+            $firstPayment = $this->deal->registerStandingOrderWithSummit($runner, $summit);
         } catch (\RuntimeException $e) {
             $this->paymentError = $e->getMessage();
 
             return;
         }
 
-        $this->notifySuccess('הוראת הקבע נרשמה מול Summit בהצלחה.');
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments);
+
+        $this->notifySuccess($firstPayment
+            ? "הוראת הקבע נרשמה ב-SUMIT, והתשלום הראשון (₪{$firstPayment->amount}) נגבה ונרשם. הקבלה נשלחה ללקוחה."
+            : 'הוראת הקבע נרשמה ב-SUMIT.');
     }
 
     /** FR-4.28: a separate explicit action from "received" — never inferred. */
@@ -644,15 +760,79 @@ class extends Component
             <div class="v ltr-num" style="{{ $this->outstandingBalance > 0 ? 'color:var(--color-error)' : 'color:var(--color-success)' }}">₪{{ number_format($this->outstandingBalance, 0) }}</div>
         </div>
 
-        @if ($deal->paymentMethod?->type === 'card')
-            <form wire:submit="chargeCard" class="form-grid" style="margin-bottom:var(--sp-lg)">
+        @if (in_array($deal->paymentMethod?->type, ['card', 'recurring'], true))
+            {{-- The customer pays by herself on a SUMIT payment page; SUMIT issues and emails the receipt. --}}
+            <h4 style="margin:0 0 var(--sp-sm)">שליחת קישור לתשלום</h4>
+            @if ($deal->paymentMethod?->type === 'recurring' && $deal->standingOrderItemIds() === [])
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:-4px 0 var(--sp-sm)">תשלום ראשון בקישור שומר את כרטיס הלקוחה ב-SUMIT — אחריו אפשר לרשום את הוראת הקבע, שתתחיל מהחודש הבא.</p>
+            @endif
+            <form wire:submit="sendPaymentLink" class="form-grid" style="margin-bottom:var(--sp-md)">
                 <div>
-                    <label for="paymentAmount">סכום לסליקה</label>
-                    <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                    @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    <label for="linkAmount">סכום לתשלום</label>
+                    <input type="text" id="linkAmount" wire:model="linkAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                    @error('linkAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </div>
-                <div class="full"><button type="submit" class="btn btn-primary">סליקת אשראי מול Summit</button></div>
+                <div>
+                    <label for="linkEmail">נשלח אל</label>
+                    @if ($this->linkRecipients->isNotEmpty())
+                        <select id="linkEmail" wire:model="linkEmail">
+                            @foreach ($this->linkRecipients as $contact)
+                                <option value="{{ $contact->email }}">{{ $contact->name }} — {{ $contact->email }}</option>
+                            @endforeach
+                        </select>
+                    @else
+                        <input type="text" id="linkEmail" wire:model="linkEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל">
+                    @endif
+                    @error('linkEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div class="full">
+                    <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="sendPaymentLink" @disabled($deal->issuedInvoice() === null || $this->outstandingBalance <= 0)>שליחת קישור לתשלום</button>
+                    @if ($deal->issuedInvoice() === null)
+                        <span class="text-text-secondary" style="font-size:var(--fs-caption); margin-inline-start:8px">יש להפיק חשבונית תחילה.</span>
+                    @endif
+                </div>
             </form>
+
+            @if ($this->paymentLinks->isNotEmpty())
+                <div class="table-scroll" style="margin-bottom:var(--sp-lg)">
+                <table>
+                    <thead><tr><th>נוצר</th><th>סכום</th><th>נשלח אל</th><th>סטטוס</th><th>בתוקף עד</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach ($this->paymentLinks as $link)
+                            <tr wire:key="paylink-{{ $link->id }}">
+                                <td class="ltr-num">{{ $link->created_at->format('d/m/Y H:i') }}</td>
+                                <td class="ltr-num">₪{{ number_format((float) $link->amount, 0) }}</td>
+                                <td class="ltr-num">{{ $link->sent_to_email ?? '—' }}</td>
+                                <td><span class="badge {{ $link->isPaid() ? 'badge-success' : ($link->isExpired() ? 'badge-neutral' : 'badge-warning') }}">{{ $link->statusLabel() }}</span></td>
+                                <td class="ltr-num">{{ $link->expires_at?->format('d/m/Y') }}</td>
+                                <td style="display:flex; gap:6px">
+                                    @unless ($link->isPaid() || $link->isExpired())
+                                        <button type="button" class="btn btn-ghost btn-sm" x-data x-on:click="navigator.clipboard.writeText(@js($link->url)); $el.textContent = 'הועתק'">העתקת קישור</button>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="resendPaymentLink({{ $link->id }})">שליחה חוזרת</button>
+                                    @endunless
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+                </div>
+            @endif
+
+        @endif
+
+        @if ($deal->paymentMethod?->type === 'card')
+            {{-- Charging a card already saved on the customer's SUMIT card, without her. --}}
+            <details style="margin-bottom:var(--sp-lg)">
+                <summary class="text-text-secondary" style="cursor:pointer; font-size:var(--fs-small)">חיוב כרטיס שכבר שמור אצל הלקוחה ב-SUMIT</summary>
+                <form wire:submit="chargeCard" class="form-grid" style="margin-top:var(--sp-sm)">
+                    <div>
+                        <label for="paymentAmount">סכום לסליקה</label>
+                        <input type="text" id="paymentAmount" wire:model="paymentAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                        @error('paymentAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-secondary" wire:confirm="לחייב עכשיו את הכרטיס השמור של הלקוחה?">חיוב הכרטיס השמור</button></div>
+                </form>
+            </details>
         @else
             <form wire:submit="recordPayment" class="form-grid" style="margin-bottom:var(--sp-lg)">
                 <div>
@@ -672,8 +852,17 @@ class extends Component
         @endif
 
         @if ($deal->paymentMethod?->type === 'recurring')
-            <div style="display:flex; gap:var(--sp-sm); align-items:center; margin-bottom:var(--sp-lg)">
-                <button type="button" wire:click="registerStandingOrder" class="btn btn-secondary">רישום הוראת קבע מול Summit</button>
+            <div style="display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap; margin-bottom:var(--sp-lg)">
+                @if ($deal->standingOrderItemIds() !== [])
+                    <span class="badge badge-success">הוראת קבע רשומה ב-SUMIT</span>
+                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">כל חיוב חודשי נרשם כאן אוטומטית, והקבלה נשלחת ללקוחה מ-SUMIT.</span>
+                @else
+                    @php $plan = $deal->standingOrderPlan(); @endphp
+                    <button type="button" wire:click="registerStandingOrder"
+                        wire:confirm="הוראת קבע מהכרטיס השמור של הלקוחה ב-SUMIT: ₪{{ number_format($plan['monthly'], 2) }} × {{ $plan['months'] }} חודשים, {{ $plan['startDate'] ? 'החל מ-'.\Illuminate\Support\Carbon::parse($plan['startDate'])->format('d/m/Y') : 'החיוב הראשון מיד' }}. להמשיך?"
+                        wire:loading.attr="disabled" class="btn btn-secondary" @disabled($this->outstandingBalance <= 0 || ($deal->subscription && ! $deal->subscription->isActive()))>רישום הוראת קבע מול Summit</button>
+                    <span class="text-text-secondary" style="font-size:var(--fs-caption)">₪{{ number_format($plan['monthly'], 0) }} × {{ $plan['months'] }} חודשים{{ $plan['startDate'] ? ', מהחודש הבא' : '' }}</span>
+                @endif
             </div>
         @endif
 
@@ -711,7 +900,7 @@ class extends Component
                                 @endif
                             </td>
                             <td>
-                                @if ($payment->receipt)
+                                @if ($payment->receipt || $payment->sumit_document_id)
                                     <span class="badge badge-info">הופקה קבלה</span>
                                 @elseif ($this->beforePaymentReceipt)
                                     <span class="text-text-secondary" style="font-size:var(--fs-caption)">בקבלה לפני תשלום</span>

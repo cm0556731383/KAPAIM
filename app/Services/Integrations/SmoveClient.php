@@ -202,6 +202,16 @@ class SmoveClient
         );
     }
 
+    /** A SUMIT payment page link (PaymentLink::send()) — the payment button is the email's one action. */
+    public function sendPaymentLinkEmail(string $toEmail, string $toName, string $subject, string $introText, string $paymentUrl, string $footerText): string
+    {
+        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>'
+            .BrandedEmail::primaryButton($paymentUrl, 'לתשלום מאובטח בכרטיס אשראי')
+            .'<p>'.e($footerText).'</p><p>בברכה, כפיים</p>';
+
+        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($body));
+    }
+
     /**
      * The "קבלת המסמך כ-PDF במייל" button's click (documents.email-pdf,
      * Document::requestPdfBySmove()) — a standalone follow-up send, not part

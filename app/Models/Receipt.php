@@ -90,7 +90,7 @@ class Receipt extends Model
                 throw new RuntimeException('לא ניתן להפיק קבלה עבור צ\'ק שטרם נפרע — קבלה מופקת רק בעת פירעון בפועל.');
             }
 
-            if (self::where('payment_id', $payment->id)->exists()) {
+            if ($payment->sumit_document_id || self::where('payment_id', $payment->id)->exists()) {
                 throw new RuntimeException('כבר הופקה קבלה עבור תשלום זה — לא ניתן להפיק יותר מקבלה אחת לאותו תשלום.');
             }
         }
@@ -125,6 +125,38 @@ class Receipt extends Model
 
             throw new RuntimeException('ההפקה מול SUMIT נכשלה, ולכן הקבלה לא נרשמה: '.$operation->error_message);
         }
+
+        return $receipt;
+    }
+
+    /**
+     * A receipt SUMIT issued by itself together with the payment (a paid
+     * payment page, a standing-order collection — Deal::recordSumitPayment()).
+     * Recorded locally like one issued through issueFor(), including its
+     * issue_receipt operation, so the deal screen and the activity log show
+     * it the same way. Without an issued invoice there's nothing to attach
+     * the local row to; the payment still carries sumit_document_id, which
+     * is what stops a second receipt for it.
+     */
+    public static function linkIssuedBySumit(Deal $deal, Payment $payment, string $sumitDocumentId, ExternalOperationRunner $runner): ?self
+    {
+        $invoice = $deal->issuedInvoice();
+
+        $receipt = $invoice ? self::create([
+            'payment_id' => $payment->id,
+            'document_id' => $invoice->id,
+            'status' => self::STATUS_ISSUED,
+            'issued_before_payment' => false,
+            'issued_at' => now(),
+        ]) : null;
+
+        $runner->run('summit', 'issue_receipt', 'scheduled_job', fn () => $sumitDocumentId, [
+            'document_id' => $invoice?->id,
+            'payment_id' => $payment->id,
+            'deal_id' => $deal->id,
+            'user' => null,
+            'description' => "קבלה שהפיקה SUMIT עם התשלום עבור עסקה #{$deal->id}",
+        ]);
 
         return $receipt;
     }

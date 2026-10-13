@@ -23,3 +23,8 @@ Schedule::command('materials:process-reminders')->daily();
 // for expenses still missing an invoice once their expense_date's calendar
 // month has fully closed. See App\Console\Commands\ProcessExpenseReminders.
 Schedule::command('expenses:process-reminders')->daily();
+
+// Records payments taken in SUMIT that the app hasn't seen yet (a paid
+// payment page whose customer never came back to the return page). SUMIT
+// has no payment webhook, so it's polled. See App\Console\Commands\SyncSumitPayments.
+Schedule::command('sumit:sync-payments')->everyTenMinutes()->withoutOverlapping();

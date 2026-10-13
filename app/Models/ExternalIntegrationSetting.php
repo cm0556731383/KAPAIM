@@ -30,8 +30,8 @@ class ExternalIntegrationSetting extends Model
     }
 
     /**
-     * Every inbound webhook (landing page, Smove material-opened, Summit
-     * standing-order-collected) is a public, unauthenticated URL by
+     * Every inbound webhook (landing page, Smove material-opened) is a
+     * public, unauthenticated URL by
      * necessity — this is its only gate. A webhook_secret that is blank
      * (the seeded default) NEVER matches anything, including an
      * empty/missing provided value — so a webhook stays hard-403'd until the

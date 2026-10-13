@@ -8,9 +8,9 @@ use App\Models\Deal;
 use App\Models\Document;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\ExternalOperation;
+use App\Models\PaymentLink;
 use App\Models\PaymentMethod;
 use App\Models\Receipt;
-use App\Models\Subscription;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -213,34 +213,127 @@ class SummitClient
     }
 
     /**
+     * A SUMIT payment page for $link (PaymentLink::createFor()): the customer
+     * pays there by card, SUMIT issues the receipt and emails it to the
+     * customer's billing address. The page reports back through $link's
+     * ExternalIdentifier — on the customer's return (PaymentLink::complete())
+     * and in the payment sync, whichever comes first. Returns the page URL.
+     */
+    public function createPaymentPage(PaymentLink $link): string
+    {
+        $deal = $link->deal;
+        $entity = $this->entityForDeal($deal);
+        $deal->loadMissing('customer.school', 'customer.contacts');
+        $customer = $this->customer($deal);
+
+        $data = $this->dataOrFail($this->post($entity, '/billing/payments/beginredirect/', array_filter([
+            'Customer' => $customer,
+            'Items' => [[
+                'Item' => ['Name' => $this->itemName($deal)],
+                'Quantity' => 1,
+                'UnitPrice' => (float) $link->amount,
+            ]],
+            'VATIncluded' => true,
+            'DocumentType' => self::DOCUMENT_RECEIPT,
+            'DocumentDescription' => $this->itemName($deal),
+            'ExternalIdentifier' => $link->externalIdentifier(),
+            'RedirectURL' => route('payment-links.return', $link->token),
+            'CancelRedirectURL' => route('payment-links.return', ['token' => $link->token, 'cancelled' => 1]),
+            'ExpirationHours' => PaymentLink::EXPIRATION_HOURS,
+            'Header' => $entity->name,
+            'SendUpdateByEmailAddress' => $customer['EmailAddress'] ?? null,
+            'UpdateCustomerOnSuccess' => true,
+            'DraftDocument' => $this->isTestMode() ?: null,
+        ], fn ($v) => $v !== null)));
+        $deal->lockToBusinessEntity($entity);
+
+        return (string) ($data['RedirectURL'] ?? throw new RuntimeException('SUMIT לא החזירה כתובת לדף התשלום.'));
+    }
+
+    /** SUMIT's Payment object for $paymentId (billing/payments/get). */
+    public function getPayment(BusinessEntity $entity, int $paymentId): array
+    {
+        $this->entityFor($entity);
+
+        return (array) ($this->dataOrFail($this->post($entity, '/billing/payments/get/', ['PaymentID' => $paymentId]))['Payment'] ?? []);
+    }
+
+    /**
+     * Every valid payment in $entity's SUMIT company between $from and now —
+     * payment pages, standing-order collections, direct charges alike.
+     *
+     * @return array<int, array> SUMIT Payment objects
+     */
+    public function listPayments(BusinessEntity $entity, \DateTimeInterface $from): array
+    {
+        $this->entityFor($entity);
+        $payments = [];
+        $startIndex = 0;
+
+        do {
+            $data = $this->dataOrFail($this->post($entity, '/billing/payments/list/', [
+                'Date_From' => $from->format(DATE_ATOM),
+                'Date_To' => now()->format(DATE_ATOM),
+                'Valid' => true,
+                'StartIndex' => $startIndex,
+            ]));
+            $page = (array) ($data['Payments'] ?? []);
+            $payments = array_merge($payments, $page);
+            $startIndex += count($page);
+        } while (($data['HasNextPage'] ?? false) && $page !== []);
+
+        return $payments;
+    }
+
+    /** Entities whose SUMIT company the payment sync should read. */
+    public function syncableEntities(): \Illuminate\Support\Collection
+    {
+        if (! $this->isActive()) {
+            return collect();
+        }
+
+        return BusinessEntity::where('is_active', true)->get()->filter->hasSumitCredentials()->values();
+    }
+
+    /**
      * Explicit user-triggered action — Deal::registerStandingOrderWithSummit().
      * Sets up a monthly recurring charge on the customer's saved SUMIT payment
-     * method: the subscription's monthly payment, for its number of
-     * deliveries (or the deal amount once, monthly, with no subscription).
+     * method, per Deal::standingOrderPlan().
+     *
+     * SUMIT charges the first month right away (unless the plan starts next
+     * month, when the deal was already paid in part) and every later month on
+     * its own, issuing a receipt each time and emailing it to the customer.
+     * Returns SUMIT's response data: the first charge's Payment and
+     * DocumentID, and the RecurringCustomerItemIDs that later collections
+     * carry (how the payment sync finds this deal's months).
      */
-    public function registerStandingOrder(Deal $deal): string
+    public function registerStandingOrder(Deal $deal): array
     {
         $entity = $this->entityForDeal($deal);
         $deal->loadMissing('customer.school', 'customer.contacts', 'subscription');
 
-        $subscription = $deal->subscription;
+        $plan = $deal->standingOrderPlan();
 
         $data = $this->dataOrFail($this->post($entity, '/billing/recurring/charge/', [
             'Customer' => $this->customer($deal),
-            'Items' => [[
+            'Items' => [array_filter([
                 'Item' => ['Name' => $this->itemName($deal)],
                 'Quantity' => 1,
-                'UnitPrice' => $subscription ? $subscription->monthlyPayment() : (float) $deal->agreed_amount,
+                'UnitPrice' => $plan['monthly'],
                 'Duration_Months' => 1,
-                'Recurrence' => $subscription ? Subscription::TOTAL_DELIVERIES : 1,
+                'Recurrence' => $plan['months'],
+                'Date_Start' => $plan['startDate'],
                 'Description' => "עסקה #{$deal->id}",
-            ]],
+            ], fn ($v) => $v !== null)],
             'VATIncluded' => true,
+            'DocumentType' => self::DOCUMENT_RECEIPT,
+            'UpdateCustomerByEmail' => true,
+            'UpdateCustomerByEmail_AttachDocument' => true,
             'AuthoriseOnly' => $this->isTestMode() ?: null,
         ]));
         $deal->lockToBusinessEntity($entity);
 
-        return implode(',', (array) ($data['RecurringCustomerItemIDs'] ?? []));
+        return $data;
     }
 
     /**

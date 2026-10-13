@@ -24,7 +24,7 @@ class WebhookCsrfTest extends TestCase
             }
         };
 
-        foreach (['/webhooks/landing-page/lead', '/webhooks/smove/material-opened/1', '/webhooks/summit/standing-order-collected'] as $uri) {
+        foreach (['/webhooks/landing-page/lead', '/webhooks/smove/material-opened/1'] as $uri) {
             $request = Request::create($uri, 'POST');
             $request->setLaravelSession($this->app['session.store']);
             $this->assertSame('ok', $middleware->handle($request, fn () => response('ok'))->getContent(), $uri);

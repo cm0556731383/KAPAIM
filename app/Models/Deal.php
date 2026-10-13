@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -472,6 +473,56 @@ class Deal extends Model
         });
     }
 
+    /** Payment pages sent to the customer for this deal (PaymentLink). */
+    public function paymentLinks(): HasMany
+    {
+        return $this->hasMany(PaymentLink::class)->orderByDesc('id');
+    }
+
+    /**
+     * Records a payment SUMIT already took — a paid payment page
+     * (PaymentLink::complete()) or a standing-order collection found by the
+     * payment sync (sumit:sync-payments). $sumitPayment is SUMIT's Payment
+     * object. Recorded once per SUMIT payment ID, however many times it's
+     * seen (the customer's return from the payment page and the sync can
+     * both report it). SUMIT already issued the receipt for these
+     * (DocumentID) and emailed it, so none is issued here — it's linked.
+     *
+     * Returns null for a payment SUMIT reports as not valid.
+     */
+    public function recordSumitPayment(array $sumitPayment, ExternalOperationRunner $runner): ?Payment
+    {
+        $sumitId = (string) ($sumitPayment['ID'] ?? '');
+
+        if ($sumitId === '' || ! ($sumitPayment['ValidPayment'] ?? false)) {
+            return null;
+        }
+
+        $lock = Cache::lock("sumit-payment-{$sumitId}", 60);
+        $lock->block(30);
+
+        try {
+            if ($existing = Payment::where('sumit_payment_id', $sumitId)->first()) {
+                return $existing;
+            }
+
+            $this->refresh();
+            $documentId = (string) ($sumitPayment['DocumentID'] ?? '');
+            $documentId = $documentId !== '' && $documentId !== '0' ? $documentId : null;
+
+            $payment = $this->recordPayment($this->version, (float) $sumitPayment['Amount'], $sumitPayment['Date'] ?? null);
+            $payment->update(['sumit_payment_id' => $sumitId, 'sumit_document_id' => $documentId]);
+
+            if ($documentId) {
+                Receipt::linkIssuedBySumit($this, $payment, $documentId, $runner);
+            }
+
+            return $payment;
+        } finally {
+            $lock->release();
+        }
+    }
+
     /**
      * Build-plan 12 — PRD §1.4 "סליקת אשראי": an explicit, user-triggered
      * action (never automatic on recordPayment() — the secretary decides
@@ -518,28 +569,49 @@ class Deal extends Model
     }
 
     /**
-     * Build-plan 12 — PRD §1.4 "ניהול הוראות קבע": registers the standing
-     * order with Summit, passing this deal's own id as Summit's merchant
-     * reference (see SummitClient::registerStandingOrder()'s docblock) so
-     * the later standing-order-collected webhook (routes/web.php) can find
-     * its way back to this exact deal. A local-only action — no Payment/
-     * Deal column changes here; the actual monthly collections arrive later,
-     * one webhook call at a time.
+     * Build-plan 12 — PRD §1.4 "ניהול הוראות קבע": sets up the monthly
+     * recurring charge in SUMIT (SummitClient::registerStandingOrder()).
+     * SUMIT charges the first month at once — that payment and its receipt
+     * are recorded right here — and every later month by itself; the payment
+     * sync (sumit:sync-payments) records those as they're collected, finding
+     * this deal by the recurring item IDs kept as the operation's reference
+     * (standingOrderItemIds()). SUMIT issues and emails each month's receipt
+     * (FR-4.27 — automatic, no staff action).
      *
      * @throws RuntimeException when the deal's payment method isn't a
-     *                          standing order, or Summit fails the request.
+     *                          standing order, one is already registered, or
+     *                          SUMIT fails the request.
      */
-    public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit): void
+    public function registerStandingOrderWithSummit(ExternalOperationRunner $runner, SummitClient $summit): ?Payment
     {
         if ($this->paymentMethod?->type !== 'recurring') {
             throw new RuntimeException('רישום הוראת קבע מול Summit זמין רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
         }
 
+        if ($this->standingOrderItemIds() !== []) {
+            throw new RuntimeException('לעסקה זו כבר נרשמה הוראת קבע ב-SUMIT — רישום נוסף יחייב את הלקוחה פעמיים.');
+        }
+
+        if ($this->outstandingBalance() <= 0) {
+            throw new RuntimeException('העסקה שולמה במלואה — אין מה לגבות בהוראת קבע.');
+        }
+
+        if ($this->subscription && ! $this->subscription->isActive()) {
+            throw new RuntimeException('המנוי של העסקה אינו פעיל — לא ניתן לרשום עבורו הוראת קבע.');
+        }
+
+        $result = [];
+        $plan = $this->standingOrderPlan();
+
         $operation = $runner->run(
             'summit',
             'standing_order_registered',
             'user_action',
-            fn () => $summit->registerStandingOrder($this),
+            function () use ($summit, &$result) {
+                $result = $summit->registerStandingOrder($this);
+
+                return implode(',', (array) ($result['RecurringCustomerItemIDs'] ?? []));
+            },
             [
                 'deal_id' => $this->id,
                 'description' => "רישום הוראת קבע מול Summit עבור עסקה #{$this->id}",
@@ -549,37 +621,48 @@ class Deal extends Model
         if ($operation->failed()) {
             throw new RuntimeException("רישום הוראת הקבע מול Summit נכשל: {$operation->error_message}");
         }
+
+        $firstCharge = (array) ($result['Payment'] ?? []);
+
+        return $firstCharge
+            ? $this->recordSumitPayment($firstCharge + ['DocumentID' => $result['DocumentID'] ?? null, 'Amount' => $plan['monthly']], $runner)
+            : null;
     }
 
     /**
-     * Build-plan 12 — FR-4.27: the automatic half, called only from the
-     * /webhooks/summit/standing-order-collected route once Summit confirms a
-     * month's direct-debit collection actually cleared. Records the payment
-     * (reusing recordPayment()'s own FR-4.30-FR-4.34 rules — a standing order
-     * is never a check, so no expectedVersion contention beyond the ordinary
-     * concurrent-edit case) and immediately auto-issues the receipt, exactly
-     * as FR-4.27 requires — unlike every other payment method, where issuing
-     * a receipt is always a separate explicit staff action.
+     * What the standing order charges: the subscription's monthly payment for
+     * as many months as the balance still needs (all its deliveries when
+     * nothing was paid yet), or the whole balance once with no subscription.
+     * When the deal was already paid in part — typically the first month,
+     * paid through a payment link, which is also how the customer's card gets
+     * saved in SUMIT — it starts next month, so that month isn't charged twice.
      *
-     * @throws RuntimeException when the deal's payment method isn't a
-     *                          standing order, or on a version conflict.
+     * @return array{monthly: float, months: int, startDate: ?string}
      */
-    public function collectStandingOrderPayment(float $amount, ExternalOperationRunner $runner, SummitClient $summit): Payment
+    public function standingOrderPlan(): array
     {
-        if ($this->paymentMethod?->type !== 'recurring') {
-            throw new RuntimeException('גבייה אוטומטית בהוראת קבע זמינה רק כאשר אמצעי התשלום של העסקה הוא הוראת קבע.');
-        }
+        $balance = $this->outstandingBalance();
+        $subscription = $this->subscription;
+        $monthly = $subscription ? min($subscription->monthlyPayment(), $balance) : $balance;
 
-        $payment = $this->recordPayment($this->version, $amount);
+        return [
+            'monthly' => round($monthly, 2),
+            'months' => $subscription && $monthly > 0 ? max(1, (int) ceil(round($balance / $monthly, 2))) : 1,
+            'startDate' => $this->payments()->exists() ? now()->addMonthNoOverflow()->toDateString() : null,
+        ];
+    }
 
-        // The money already arrived — a receipt failure (logged by the runner)
-        // must not undo the payment; the receipt can be issued again by hand.
-        try {
-            Receipt::issueFor($this, $payment, $runner, $summit);
-        } catch (RuntimeException) {
-        }
-
-        return $payment;
+    /** SUMIT's recurring item IDs of this deal's registered standing order (empty when none). */
+    public function standingOrderItemIds(): array
+    {
+        return ExternalOperation::where('deal_id', $this->id)
+            ->where('system', 'summit')
+            ->where('operation_type', 'standing_order_registered')
+            ->where('status', ExternalOperation::STATUS_SUCCESS)
+            ->pluck('external_reference')
+            ->flatMap(fn ($reference) => array_filter(explode(',', (string) $reference)))
+            ->values()
+            ->all();
     }
 }
 

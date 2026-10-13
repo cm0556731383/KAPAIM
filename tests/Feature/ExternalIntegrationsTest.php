@@ -188,49 +188,7 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertSame('נפתח', $delivery->fresh()->status->name);
     }
 
-    // ----- FR-4.27: Summit standing-order-collected webhook -----
-
-    public function test_standing_order_webhook_is_rejected_without_the_configured_secret(): void
-    {
-        $deal = $this->dealWithInvoice();
-        $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
-
-        $this->postJson('/webhooks/summit/standing-order-collected', ['deal_id' => $deal->id, 'amount' => 100])->assertStatus(403);
-        $this->assertSame(0.0, $deal->totalPaid());
-    }
-
-    public function test_standing_order_webhook_records_a_payment_and_auto_issues_a_receipt(): void
-    {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
-        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 558]], 200)]);
-        $deal = $this->dealWithInvoice(1000);
-        $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
-
-        $response = $this->postJson('/webhooks/summit/standing-order-collected', [
-            'deal_id' => $deal->id, 'amount' => 100,
-        ], ['X-Webhook-Secret' => 'sekret']);
-
-        $response->assertOk();
-        $response->assertJson(['status' => ExternalOperation::STATUS_SUCCESS]);
-
-        $deal->refresh();
-        $this->assertSame(100.0, $deal->totalPaid());
-        $this->assertSame(1, $deal->payments()->count());
-        $this->assertNotNull($deal->payments()->first()->receipt);
-    }
-
-    public function test_a_collected_standing_order_payment_is_kept_even_if_its_receipt_fails(): void
-    {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
-        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 1, 'UserErrorMessage' => 'שגיאה'], 200)]);
-        $deal = $this->dealWithInvoice(1000);
-        $deal->update(['payment_method_id' => $this->createPaymentMethod('הוראת קבע', 'recurring')->id]);
-
-        $this->postJson('/webhooks/summit/standing-order-collected', ['deal_id' => $deal->id, 'amount' => 100], ['X-Webhook-Secret' => 'sekret'])->assertOk();
-
-        $this->assertSame(100.0, $deal->fresh()->totalPaid());
-        $this->assertNull($deal->payments()->first()->receipt);
-    }
+    // ----- receipts and list removal against SUMIT/Smove -----
 
     public function test_a_receipt_sumit_rejects_is_not_kept_and_can_be_issued_again(): void
     {
@@ -277,20 +235,6 @@ class ExternalIntegrationsTest extends TestCase
         MailingMembership::removeCustomer($list, $deal->customer);
 
         $this->assertSame(0, ExternalOperation::where('operation_type', 'mailing_list_remove')->count());
-    }
-
-    public function test_standing_order_webhook_fails_gracefully_for_the_wrong_payment_method(): void
-    {
-        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['webhook_secret' => 'sekret']]);
-        $deal = $this->dealWithInvoice(); // no payment method set at all
-
-        $response = $this->postJson('/webhooks/summit/standing-order-collected', [
-            'deal_id' => $deal->id, 'amount' => 100,
-        ], ['X-Webhook-Secret' => 'sekret']);
-
-        $response->assertOk();
-        $response->assertJson(['status' => ExternalOperation::STATUS_FAILED]);
-        $this->assertSame(0.0, $deal->fresh()->totalPaid());
     }
 
     // ----- non-blocking Smove push on a mailing-list membership change -----

@@ -150,15 +150,46 @@ Route::get('/documents/{document}/email-pdf', function (
 })->middleware('signed')->name('documents.email-pdf');
 
 /**
- * Build-plan 12 — three public, unauthenticated-by-Laravel-auth webhook
- * endpoints (landing page, Smove, Summit). Each is gated instead by
- * ExternalIntegrationSetting::verifyWebhookSecret() against an
+ * Where SUMIT's payment page sends the customer back (PaymentLink — see
+ * SummitClient::createPaymentPage()). Outside auth: she isn't logged in.
+ * The unguessable token finds the link; nothing here is trusted from the
+ * query string — the OG-PaymentID SUMIT appends is only looked up in SUMIT
+ * itself, and PaymentLink::complete() accepts it only if SUMIT reports a
+ * valid payment carrying this link's own ExternalIdentifier.
+ */
+Route::get('/pay/{token}/return', function (string $token, Request $request, ExternalOperationRunner $runner, SummitClient $summit, ActivityLogger $logger) {
+    $link = \App\Models\PaymentLink::where('token', $token)->firstOrFail();
+
+    if ($request->boolean('cancelled') && ! $link->isPaid()) {
+        return view('payments.returned', ['link' => $link, 'state' => 'cancelled']);
+    }
+
+    $paymentId = (int) $request->query('OG-PaymentID');
+
+    if (! $link->isPaid() && $paymentId > 0) {
+        try {
+            $entity = $link->deal->businessEntity ?? throw new \RuntimeException('העסקה אינה משויכת לעוסק.');
+            $link->complete($summit->getPayment($entity, $paymentId), $runner, $logger);
+        } catch (\Throwable $e) {
+            // The payment sync picks it up later; the customer just sees "pending".
+            report($e);
+        }
+    }
+
+    return view('payments.returned', ['link' => $link->refresh(), 'state' => $link->isPaid() ? 'paid' : 'pending']);
+})->where('token', '[A-Za-z0-9]{40}')->name('payment-links.return');
+
+/**
+ * Build-plan 12 — two public, unauthenticated-by-Laravel-auth webhook
+ * endpoints (landing page, Smove) — SUMIT has no payment webhook; its
+ * payments are read by the payment sync instead (sumit:sync-payments).
+ * Each is gated by ExternalIntegrationSetting::verifyWebhookSecret() against an
  * X-Webhook-Secret header — see that method's docblock for why a blank
  * configured secret (the seeded default) always 403s rather than ever
  * silently accepting an unauthenticated request. All business logic lives
  * on the relevant model (Lead::createFromLandingPage(), MaterialDelivery::
- * markOpened(), Deal::collectStandingOrderPayment()) — these closures are
- * thin, matching the materials.acknowledge route above.
+ * markOpened()) — these closures are thin, matching the
+ * materials.acknowledge route above.
  */
 Route::post('/webhooks/landing-page/lead', function (
     Request $request,
@@ -195,41 +226,6 @@ Route::post('/webhooks/smove/material-opened/{material}', function (Request $req
 
     return response()->json(['status' => 'ok']);
 })->name('webhooks.smove.material-opened');
-
-/**
- * FR-4.27: Summit's confirmation that a month's standing-order collection
- * actually cleared. $data['deal_id'] is expected to be exactly the id
- * Deal::registerStandingOrderWithSummit() sent Summit as its own merchant
- * reference — see that method's docblock. A business-rule failure (wrong
- * payment method, version conflict) or an unknown deal_id both come back as
- * a normal failed EXTERNAL_OPERATION (logged, visible in the activity log)
- * rather than a non-200 response, so Summit doesn't endlessly retry a
- * request that will never succeed differently — only an auth failure 403s.
- */
-Route::post('/webhooks/summit/standing-order-collected', function (Request $request, ExternalOperationRunner $runner, SummitClient $summit) {
-    abort_unless(ExternalIntegrationSetting::verifyWebhookSecret('summit', $request->header('X-Webhook-Secret')), 403);
-
-    $data = $request->validate([
-        'deal_id' => ['required', 'integer'],
-        'amount' => ['required', 'numeric', 'gt:0'],
-        'reference' => ['nullable', 'string'],
-    ]);
-
-    $operation = $runner->run(
-        'summit',
-        'standing_order_collected',
-        'webhook',
-        function () use ($data, $runner, $summit) {
-            $deal = Deal::findOrFail($data['deal_id']);
-            $deal->collectStandingOrderPayment((float) $data['amount'], $runner, $summit);
-
-            return $data['reference'] ?? (string) $deal->id;
-        },
-        ['deal_id' => $data['deal_id'], 'user' => null, 'description' => "גבייה אוטומטית בהוראת קבע עבור עסקה #{$data['deal_id']}"],
-    );
-
-    return response()->json(['status' => $operation->status]);
-})->name('webhooks.summit.standing-order-collected');
 
 Route::middleware('auth')->group(function () {
     Route::livewire('/', 'home');
