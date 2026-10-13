@@ -160,14 +160,34 @@ class SystemNotificationsTest extends TestCase
             ->assertSeeHtml('wire:confirm="המנוי יבוטל החל מחודש 3 ('.$subscription->monthLabel(3).') ויחושב זיכוי של ₪'.number_format($subscription->creditFor(3), 0).'. גם העסקה תסומן כמבוטלת. פעולה זו אינה הפיכה — להמשיך?"');
     }
 
-    public function test_generating_a_subscription_credit_note_requires_confirmation(): void
+    /** No invoice yet: no "irreversible" confirm — clicking pops the blocking reason up instead. */
+    public function test_a_credit_note_without_an_invoice_pops_up_the_reason_instead_of_confirming(): void
     {
         $subscription = $this->openSubscription();
         $subscription->cancel();
 
-        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer])
-            ->set('activeTab', 'subscription')
-            ->assertSeeHtml('wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"');
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer]);
+        $component->set('activeTab', 'subscription')
+            ->assertDontSeeHtml('wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"')
+            ->call('generateSubscriptionCreditNote', $subscription->id)
+            ->assertDispatched('notify', fn ($name, $params) => $params['type'] === 'error' && $params['sticky'] === true
+                && $params['message'] === $component->get('subscriptionError'));
+    }
+
+    public function test_customer_card_errors_pop_up_once_and_sending_materials_without_recipients_explains_why(): void
+    {
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer])
+            ->set('activeTab', 'materials')
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsLinks', [['url' => 'https://example.com/video', 'name' => '']])
+            ->call('sendMaterials')
+            ->assertDispatched('notify', type: 'error', message: 'אין עדיין נמענים — יש להוסיף לפחות נמען אחד לפני השליחה.', sticky: true);
+
+        // An unrelated re-render doesn't pop the same error again.
+        $component->set('materialsRecipientName', 'x')->assertNotDispatched('notify');
     }
 
     /** Cancelling a deal (status -> מבוטלת) needs confirmation; routine progression does not. */

@@ -206,13 +206,17 @@ td.mono { display: table-cell; }
 .list-item .who { font-size: var(--fs-caption); color: var(--color-text-secondary); }
 
 /* Build-plan 16 — shared toast stack (FR-7.21-FR-7.23). Fixed to the
-   top-start corner (RTL: visually top-right); the layout stays LTR-agnostic
-   since `top`/`inset-inline-start` follow html[dir=rtl] automatically. */
-.toast-stack { position: fixed; top: var(--sp-lg); inset-inline-start: var(--sp-lg); z-index: 100; display: flex; flex-direction: column; gap: var(--sp-sm); max-width: 380px; }
-.toast { display: flex; align-items: flex-start; gap: var(--sp-sm); padding: var(--sp-sm) var(--sp-md); border-radius: var(--radius-control); font-size: var(--fs-small); font-weight: 500; box-shadow: var(--shadow-card-hover); }
-.toast-success { background: var(--color-success-bg); color: var(--color-success); }
-.toast-info { background: var(--color-info-bg); color: var(--color-info); }
-.toast-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+   top-end corner (RTL: visually top-left) — clear of the sidebar and its
+   logo on the start side; `inset-inline-end` follows html[dir=rtl]. */
+.toast-stack { position: fixed; top: var(--sp-lg); inset-inline-end: var(--sp-lg); z-index: 100; display: flex; flex-direction: column; gap: var(--sp-sm); max-width: 380px; }
+.toast { display: flex; align-items: flex-start; gap: var(--sp-sm); padding: 12px var(--sp-md); border-radius: var(--radius-control); font-size: var(--fs-small); font-weight: 500; line-height: 1.5; box-shadow: var(--shadow-card-hover); border-inline-start: 4px solid currentColor; animation: toast-in .22s ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+.toast-icon { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--toast-color); color: #FFFFFF; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; line-height: 1; margin-top: 1px; }
+.toast-error { --toast-color: var(--color-error); background: var(--color-error-bg); color: var(--color-error); }
+.toast-success { --toast-color: var(--color-success); background: var(--color-success-bg); color: var(--color-success); }
+.toast-info { --toast-color: var(--color-info); background: var(--color-info-bg); color: var(--color-info); }
+.toast-warning { --toast-color: var(--color-warning); background: var(--color-warning-bg); color: var(--color-warning); }
 .toast-message { flex: 1; }
 .toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 0 0 6px; opacity: .7; }
 .toast-close:hover { opacity: 1; }

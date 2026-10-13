@@ -370,6 +370,18 @@ class SubscriptionsTest extends TestCase
         $this->assertEquals((float) $subscription->fresh()->cancellation_credit, $document->totalAmount());
     }
 
+    public function test_generating_a_credit_note_with_an_invoice_asks_for_confirmation(): void
+    {
+        $this->createTemplate('credit_note');
+        $subscription = $this->openSubscription();
+        $this->giveDealAnInvoice($subscription->deal);
+        $subscription->cancel();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->fresh()->customer])
+            ->set('activeTab', 'subscription')
+            ->assertSeeHtml('wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"');
+    }
+
     public function test_credit_note_cannot_be_generated_before_cancellation(): void
     {
         $subscription = $this->openSubscription();

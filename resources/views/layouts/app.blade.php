@@ -115,19 +115,21 @@
 {{--
     Build-plan 16 — shared toast listener (FR-7.21/FR-7.22/FR-7.23). Any
     component fires `$this->dispatch('notify', type: 'success'|'info'|
-    'warning', message: '...')` (see App\Concerns\Notifies); Livewire turns
-    that into a `notify` browser event this single Alpine listener catches,
-    queues, and auto-dismisses. The 4th message type ("business-error",
-    FR-7.25) is deliberately NOT here — see <x-business-error-banner>, which
-    stays visible inline until the blocking condition is resolved.
+    'warning'|'error', message: '...', sticky: bool)` (see
+    App\Concerns\Notifies); Livewire turns that into a `notify` browser
+    event this single Alpine listener catches, queues, and auto-dismisses —
+    except a sticky one (a business error, FR-7.25, or a rule warning),
+    which stays until closed.
 --}}
 <div
     x-data="{
         toasts: [],
         add(toast) {
             const id = Date.now() + Math.random();
-            this.toasts.push({ id, type: toast.type ?? 'info', message: toast.message ?? '' });
-            setTimeout(() => this.remove(id), 5000);
+            const type = toast.type ?? 'info';
+            this.toasts = this.toasts.filter(t => t.message !== toast.message);
+            this.toasts.push({ id, type, message: toast.message ?? '' });
+            if (! toast.sticky) setTimeout(() => this.remove(id), 5000);
         },
         remove(id) {
             this.toasts = this.toasts.filter(t => t.id !== id);
@@ -138,7 +140,8 @@
     aria-live="polite"
 >
     <template x-for="toast in toasts" :key="toast.id">
-        <div class="toast" :class="'toast-' + toast.type">
+        <div class="toast" :class="'toast-' + toast.type" :role="toast.type === 'error' ? 'alert' : 'status'">
+            <span class="toast-icon" x-text="{ success: '✓', info: 'i', warning: '!', error: '!' }[toast.type] ?? 'i'"></span>
             <span class="toast-message" x-text="toast.message"></span>
             <button type="button" class="toast-close" @click="remove(toast.id)" aria-label="סגירה">×</button>
         </div>

@@ -63,6 +63,9 @@ class extends Component
 
     public string $activeTab = 'info';
 
+    /** error property => the message already popped up, so a re-render doesn't pop it again. */
+    public array $shownErrors = [];
+
     // ===== פרטי בית ספר (עריכה) =====
     public bool $editingSchool = false;
     public string $schoolName = '';
@@ -160,6 +163,25 @@ class extends Component
      */
     /** 95MB — Cloudflare (in front of the site) refuses an upload over 100MB; bigger videos go as a link instead. */
     private const MATERIALS_FILE_RULES = ['file', 'max:97280', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mov,mp3'];
+
+    /**
+     * Business errors on this card pop up (notifyError(), stays until closed —
+     * FR-7.25) right after the action that raised them, instead of a
+     * standing banner. Each action still sets its own $xxxError, as before.
+     */
+    public function rendered(): void
+    {
+        foreach (['contactError', 'subscriptionError', 'dealError', 'materialsError'] as $property) {
+            $message = $this->{$property};
+
+            if ($message === null) {
+                unset($this->shownErrors[$property]);
+            } elseif (($this->shownErrors[$property] ?? null) !== $message) {
+                $this->shownErrors[$property] = $message;
+                $this->notifyError($message);
+            }
+        }
+    }
 
     public function mount(Customer $customer): void
     {
@@ -659,6 +681,10 @@ class extends Component
         unset($this->subscriptions, $this->hasActiveSubscription);
 
         $this->notifySuccess('המנוי בוטל בהצלחה.');
+
+        if ($subscription->deal->standingOrderItemIds() !== []) {
+            $this->notifyWarning('לעסקה זו הוראת קבע ב-SUMIT — יש לעצור אותה גם ב-SUMIT, אחרת החיובים ימשיכו.', sticky: true);
+        }
     }
 
     /**
@@ -820,6 +846,18 @@ class extends Component
 
         if (! $this->materialsProgramId) {
             $this->materialsError = 'יש לבחור תוכנית לפני שליחת חומרי הלימוד.';
+
+            return;
+        }
+
+        if (empty($this->materialsFiles) && empty($this->materialsLinks)) {
+            $this->materialsError = 'לא צורפו קבצים או קישורים — יש לצרף לפחות קובץ אחד או קישור אחד לפני השליחה.';
+
+            return;
+        }
+
+        if (empty($this->materialsRecipients)) {
+            $this->materialsError = 'אין עדיין נמענים — יש להוסיף לפחות נמען אחד לפני השליחה.';
 
             return;
         }
@@ -1077,7 +1115,6 @@ class extends Component
         </div>
     @endif
 
-    <x-business-error-banner :message="$contactError" />
 
     <div class="tabs">
         <span class="{{ $activeTab === 'info' ? 'active' : '' }}" wire:click="$set('activeTab', 'info')">בית ספר ואנשי קשר</span>
@@ -1243,7 +1280,6 @@ class extends Component
                     @empty
                         <p class="text-text-secondary" style="font-size:var(--fs-small)">אין עדיין אנשי קשר ללקוחה זו.</p>
                     @endforelse
-                    <p style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">לכל לקוחה חייב להיות תמיד לפחות איש קשר ראשי אחד — לא ניתן להסיר את הסימון או למחוק את הראשי האחרון.</p>
                 </div>
 
                 {{-- ===== פרטים נוספים ===== --}}
@@ -1306,7 +1342,6 @@ class extends Component
             </div>
         </div>
     @elseif ($activeTab === 'subscription')
-        <x-business-error-banner :message="$subscriptionError" />
 
         @forelse ($this->subscriptions as $subscription)
             <div class="card" style="margin-bottom:var(--sp-lg)">
@@ -1423,9 +1458,6 @@ class extends Component
                                 @endif
                             >ביטול מנוי</button>
                         </div>
-                        @if ($subscription->deal->standingOrderItemIds() !== [])
-                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm); text-align:end">לעסקה זו הוראת קבע ב-SUMIT — לאחר הביטול יש לעצור אותה גם ב-SUMIT.</p>
-                        @endif
                     @endif
                 @elseif ($subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME)
                     <div class="card confirm-row" style="margin-top:var(--sp-lg); background:var(--color-background)">
@@ -1441,21 +1473,18 @@ class extends Component
                                 type="button"
                                 class="btn btn-secondary"
                                 wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
-                                wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
-                                @disabled(! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                                @if (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
+                                    wire:confirm="הפקת חשבונית זיכוי היא פעולה חשבונאית בלתי הפיכה — האם להמשיך?"
+                                @endif
                             >הפקת חשבונית זיכוי</button>
                         @endif
                     </div>
-                    @if (! $creditNote && ! \App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-sm)">לא ניתן להפיק חשבונית זיכוי — לעסקה זו טרם הופקה חשבונית.</p>
-                    @endif
                 @endif
             </div>
         @empty
             <div class="card empty-state">אין ללקוחה זו מנוי.</div>
         @endforelse
     @elseif ($activeTab === 'deals')
-        <x-business-error-banner :message="$dealError" />
         <div class="card">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
                 <h3 style="margin:0">עסקאות הלקוחה</h3>
@@ -1564,10 +1593,8 @@ class extends Component
                 </tbody>
             </table>
             </div>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:var(--sp-md)">מסמכים ותשלומים מפורטים לכל עסקה נמצאים בכרטיס העסקה עצמה.</p>
         </div>
     @elseif ($activeTab === 'materials')
-        <x-business-error-banner :message="$materialsError" />
         <div class="cols2">
             <div class="card">
                 <h3>שליחת חומרים</h3>
@@ -1608,7 +1635,7 @@ class extends Component
 
                     {{-- A video too big to upload goes as a link (YouTube unlisted, Vimeo, Google Drive…). --}}
                     <div class="full">
-                        <label>קישורים <span class="text-text-secondary" style="font-weight:400">(לסרטון גדול — יוטיוב, Vimeo, Google Drive)</span></label>
+                        <label>קישורים</label>
                         @foreach ($materialsLinks as $i => $link)
                             <div class="material-link-row" wire:key="material-link-{{ $i }}">
                                 <div>
@@ -1623,20 +1650,17 @@ class extends Component
                             </div>
                         @endforeach
                         <button type="button" wire:click="addMaterialsLink" class="btn btn-ghost btn-sm">+ הוספת קישור</button>
-                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ביוטיוב — העלו כ"לא רשום"; ב-Google Drive — שתפו כ"כל מי שיש לו את הקישור".</div>
                     </div>
 
                     <div class="full">
                         <label>נמענים</label>
                         <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-bottom:var(--sp-sm)">
-                            @forelse ($materialsRecipients as $index => $recipient)
+                            @foreach ($materialsRecipients as $index => $recipient)
                                 <span class="badge badge-primary" style="display:inline-flex; align-items:center; gap:6px">
                                     {{ $recipient['name'] }}
                                     <button type="button" wire:click="removeMaterialsRecipient({{ $index }})" title="הסרה" aria-label="הסרת נמען" style="background:none; border:none; cursor:pointer; color:inherit; font-weight:700;">×</button>
                                 </span>
-                            @empty
-                                <span class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין נמענים — הוסיפו לפחות אחד לפני השליחה.</span>
-                            @endforelse
+                            @endforeach
                         </div>
                         <div class="field-row" style="display:flex; gap:var(--sp-sm)">
                             <input type="text" wire:model="materialsRecipientName" placeholder="שם הנמען (אופציונלי)">
@@ -1644,10 +1668,6 @@ class extends Component
                             <button type="button" class="btn btn-secondary" wire:click="addMaterialsRecipient">הוספה</button>
                         </div>
                     </div>
-
-                    @if ((empty($materialsFiles) && empty($materialsLinks)) || empty($materialsRecipients))
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">יש לצרף קובץ או קישור אחד לפחות ולבחור נמען אחד לפחות לפני השליחה.</p>
-                    @endif
 
                     <div class="full"><button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="materialsFiles, sendMaterials">שליחה באמצעות Smove</button></div>
                 </form>
