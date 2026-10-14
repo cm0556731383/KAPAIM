@@ -233,7 +233,7 @@ class extends Component
             </div>
             <div class="card kpi tone-teal">
                 <div class="kpi-head">
-                    <span class="label">Up Follow להיום</span>
+                    <span class="label">מעקבים להיום</span>
                     <span class="icon-chip tone-primary"><svg><use href="#icon-activity"></use></svg></span>
                 </div>
                 <div class="num">{{ $this->followUpsDueTodayCount }}</div>

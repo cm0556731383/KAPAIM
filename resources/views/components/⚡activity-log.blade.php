@@ -118,7 +118,7 @@ class extends Component
                                 מערכת חיצונית <span class="actor-auto">אוטומטי</span>
                             @endif
                         </td>
-                        <td><span class="badge badge-info">{{ $entry->activity_type }}</span></td>
+                        <td><span class="badge badge-info">{{ \App\Models\ActivityLog::typeLabel($entry->activity_type) }}</span></td>
                         <td>{{ $entry->description }}</td>
                     </tr>
                 @empty

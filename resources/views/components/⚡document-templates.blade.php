@@ -466,7 +466,7 @@ class extends Component
                             <tr>
                                 <td>{{ $field->name }}</td>
                                 <td><span class="scope-pill">{{ $field->field_type === 'linked' ? 'מקושר' : 'טקסט חופשי' }}</span></td>
-                                <td class="mono">{{ $field->linked_field ?? '—' }}</td>
+                                <td>{{ $field->linked_field ? (DocumentLinkedFields::OPTIONS[$field->linked_field] ?? '—') : '—' }}</td>
                                 <td>{{ $field->is_required ? 'כן' : 'לא' }}</td>
                                 <td class="ltr-num">{{ $field->sort_order }}</td>
                                 <td><button type="button" wire:click="removeField({{ $field->id }})" class="btn btn-ghost btn-sm">הסרה</button></td>

@@ -22,6 +22,31 @@ class ExternalOperation extends Model
 {
     use HasFactory;
 
+    /** How each connected system is named on screen, instead of its technical key. */
+    public const SYSTEM_LABELS = ['summit' => 'SUMIT', 'smove' => 'Smove', 'landing_page' => 'דף הנחיתה'];
+
+    /** How each operation type is named on screen, instead of its technical key. */
+    public const OPERATION_LABELS = [
+        'issue_invoice' => 'הפקת חשבונית',
+        'issue_receipt' => 'הפקת קבלה',
+        'issue_credit_note' => 'הפקת חשבונית זיכוי',
+        'card_charge' => 'חיוב כרטיס אשראי',
+        'standing_order_registered' => 'הקמת הוראת קבע',
+        'standing_order_stopped' => 'עצירת הוראת קבע',
+        'payment_link_created' => 'יצירת קישור לתשלום',
+        'payment_link_send' => 'שליחת קישור לתשלום',
+        'document_send' => 'שליחת מסמך',
+        'materials_send' => 'שליחת חומרי לימוד',
+        'material_reminder' => 'תזכורת על חומרי לימוד',
+        'expense_invoice_reminder' => 'תזכורת על חשבונית הוצאה',
+        'lead_confirmation' => 'מייל אישור לליד',
+        'mailing_list_join' => 'הצטרפות לרשימת תפוצה',
+        'mailing_list_remove' => 'הסרה מרשימת תפוצה',
+        'mailing_list_email' => 'שליחת מייל לרשימות',
+        'mailing_list_email_test' => 'מייל בדיקה לרשימות',
+        'payments_sync' => 'סנכרון תשלומים',
+    ];
+
     public const STATUS_PENDING = 'pending';
 
     public const STATUS_SUCCESS = 'success';

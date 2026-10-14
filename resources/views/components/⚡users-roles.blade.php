@@ -276,7 +276,7 @@ class extends Component
                         <tbody>
                             @foreach ($this->previewResources() as $resource)
                                 <tr>
-                                    <td>{{ $resource }}</td>
+                                    <td>{{ ['leads' => 'לידים', 'customers' => 'לקוחות', 'deals' => 'עסקאות', 'documents' => 'מסמכים', 'payments' => 'תשלומים'][$resource] ?? $resource }}</td>
                                     <td class="{{ $role->hasPermission($resource, 'view') ? 'perm-cell-yes' : 'perm-cell-no' }}">{{ $role->hasPermission($resource, 'view') ? 'כן' : '—' }}</td>
                                     <td class="{{ $role->hasPermission($resource, 'edit') ? 'perm-cell-yes' : 'perm-cell-no' }}">{{ $role->hasPermission($resource, 'edit') ? 'כן' : '—' }}</td>
                                 </tr>

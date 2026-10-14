@@ -12,6 +12,12 @@ class EmailTemplateField extends Model
 {
     use HasFactory;
 
+    /** The lead details a linked email field can take, by Hebrew label (the key is what's stored). */
+    public const LINKED_FIELDS = [
+        'lead.contact_name' => 'שם איש הקשר של הליד',
+        'lead.school_name' => 'שם בית הספר של הליד',
+    ];
+
     protected function casts(): array
     {
         return [

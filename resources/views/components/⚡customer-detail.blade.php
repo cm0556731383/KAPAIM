@@ -1115,7 +1115,7 @@ class extends Component
         foreach ($this->followUps as $followUp) {
             $items->push([
                 'date' => $followUp->occurred_at,
-                'title' => 'Up Follow'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
+                'title' => 'מעקב'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
                 'body' => trim(($followUp->summary ?? '').($followUp->result ? ' — '.$followUp->result : '')),
             ]);
         }
@@ -1123,7 +1123,7 @@ class extends Component
         foreach ($this->activityLogs as $log) {
             $items->push([
                 'date' => $log->occurred_at,
-                'title' => $log->activity_type,
+                'title' => \App\Models\ActivityLog::typeLabel($log->activity_type),
                 'body' => $log->description,
             ]);
         }

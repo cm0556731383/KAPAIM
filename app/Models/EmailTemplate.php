@@ -21,6 +21,26 @@ class EmailTemplate extends Model
 {
     use HasFactory;
 
+    /**
+     * What a template is used for, by Hebrew label. The key is what the code
+     * looks up (e.g. Lead::sendLandingPageConfirmation() wants
+     * 'lead_confirmation'); 'general' is a template nothing sends automatically.
+     */
+    public const TYPE_LABELS = [
+        'lead_confirmation' => 'אישור קליטת ליד (נשלח אוטומטית)',
+        'general' => 'כללי',
+    ];
+
+    /**
+     * The Hebrew placeholders a template's subject/content can use, mapped to
+     * the data key render() receives. The older English spelling
+     * ({{contact_name}}) still works — render() accepts both.
+     */
+    public const PLACEHOLDERS = [
+        'שם_איש_הקשר' => 'contact_name',
+        'שם_בית_הספר' => 'school_name',
+    ];
+
     protected function casts(): array
     {
         return [
@@ -40,8 +60,8 @@ class EmailTemplate extends Model
     public function render(array $data): array
     {
         $replace = static fn (string $text): string => preg_replace_callback(
-            '/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/',
-            fn ($m) => $data[$m[1]] ?? $m[0],
+            '/\{\{\s*([\p{L}\p{N}_.]+)\s*\}\}/u',
+            fn ($m) => $data[self::PLACEHOLDERS[$m[1]] ?? $m[1]] ?? $m[0],
             $text,
         );
 

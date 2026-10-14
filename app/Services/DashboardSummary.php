@@ -34,7 +34,7 @@ use Illuminate\Support\Str;
  * ⚡global-search.blade.php's results() scoping exactly, rather than
  * inventing a new pattern.
  *
- * Judgment call (see this stage's report): US-019 says "משימות ה-Up Follow"
+ * Judgment call (see this stage's report): US-019 says "משימות המעקב"
  * — per build-plan 04's ERD that is specifically FOLLOW_UP.next_at, never
  * TASK rows. A personal reminder (TASK, task_type='reminder') is a distinct
  * concept also surfaced in attentionItems() below, but never counted by
@@ -44,26 +44,6 @@ class DashboardSummary
 {
     /** FR-1.6 (build-plan 04): the only sub_status value meaning "ממתינה לשיחה חוזרת". */
     private const AWAITING_CALLBACK_SUB_STATUS = 'ממתינה לשיחה חוזרת';
-
-    /** How a failed external operation reads on the home screen, instead of its technical name. */
-    private const SYSTEM_LABELS = ['summit' => 'SUMIT', 'smove' => 'Smove', 'landing_page' => 'דף הנחיתה'];
-
-    private const OPERATION_LABELS = [
-        'issue_invoice' => 'הפקת חשבונית',
-        'issue_receipt' => 'הפקת קבלה',
-        'issue_credit_note' => 'הפקת חשבונית זיכוי',
-        'card_charge' => 'חיוב כרטיס אשראי',
-        'standing_order_registered' => 'הקמת הוראת קבע',
-        'payment_link_created' => 'יצירת קישור לתשלום',
-        'payment_link_send' => 'שליחת קישור לתשלום',
-        'document_send' => 'שליחת מסמך',
-        'materials_send' => 'שליחת חומרי לימוד',
-        'mailing_list_join' => 'הצטרפות לרשימת תפוצה',
-        'mailing_list_remove' => 'הסרה מרשימת תפוצה',
-        'mailing_list_email' => 'שליחת מייל לרשימות',
-        'mailing_list_email_test' => 'מייל בדיקה לרשימות',
-        'payments_sync' => 'סנכרון תשלומים',
-    ];
 
     public function newLeadsCount(User $user): int
     {
@@ -94,7 +74,7 @@ class DashboardSummary
     }
 
     /**
-     * US-019's "Up Follow להיום" — FOLLOW_UP.next_at falling today, not TASK
+     * US-019's "מעקב להיום" — FOLLOW_UP.next_at falling today, not TASK
      * rows (see class docblock).
      */
     public function followUpsDueTodayCount(User $user): int
@@ -228,7 +208,7 @@ class DashboardSummary
 
     // ----- attentionItems() sections -----
 
-    /** Up Follow due today or overdue (FOLLOW_UP.next_at) — leads-permission scoped. */
+    /** מעקב due today or overdue (FOLLOW_UP.next_at) — leads-permission scoped. */
     private function upFollowItems(User $user): Collection
     {
         if (! $this->canSeeAnyLeads($user)) {
@@ -246,7 +226,7 @@ class DashboardSummary
                 $badge = $this->badgeForDate($followUp->next_at);
 
                 return [
-                    'label' => 'לחזור ל'.($lead->school?->name ?? $lead->email).' — Up Follow',
+                    'label' => 'לחזור ל'.($lead->school?->name ?? $lead->email).' — מעקב',
                     'subtitle' => 'ליד · '.($lead->assignedUser?->name ?? '—'),
                     'badge' => $badge['badge'],
                     'badgeClass' => $badge['badgeClass'],
@@ -387,7 +367,7 @@ class DashboardSummary
             ->limit(10)
             ->get()
             ->map(fn (ExternalOperation $operation) => [
-                'label' => 'כשל ב-'.(self::SYSTEM_LABELS[$operation->system] ?? $operation->system).': '.(self::OPERATION_LABELS[$operation->operation_type] ?? $operation->operation_type),
+                'label' => 'כשל ב-'.(ExternalOperation::SYSTEM_LABELS[$operation->system] ?? $operation->system).': '.(ExternalOperation::OPERATION_LABELS[$operation->operation_type] ?? 'פעולה מול מערכת חיצונית'),
                 'subtitle' => Str::limit((string) $operation->error_message, 70) ?: '—',
                 'badge' => 'כשל',
                 'badgeClass' => 'badge-error',

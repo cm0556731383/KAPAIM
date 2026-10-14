@@ -60,7 +60,7 @@ class ReferenceDataSeeder extends Seeder
             'name' => 'אישור קליטת ליד',
             'template_type' => 'lead_confirmation',
             'subject' => 'תודה שפניתם לכפיים!',
-            'content' => "שלום {{contact_name}},\n\nקיבלנו את פנייתכם עבור {{school_name}} ונחזור אליכם בהקדם.\n\nבברכה, צוות כפיים",
+            'content' => "שלום {{שם_איש_הקשר}},\n\nקיבלנו את פנייתכם עבור {{שם_בית_הספר}} ונחזור אליכם בהקדם.\n\nבברכה, צוות כפיים",
             'is_active' => true,
         ]);
         $leadConfirmation->fields()->createMany([

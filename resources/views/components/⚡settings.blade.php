@@ -7,6 +7,7 @@ use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
 use App\Models\EmailTemplateField;
 use App\Models\ExternalIntegrationSetting;
+use App\Models\ExternalOperation;
 use App\Models\LeadSource;
 use App\Models\PaymentMethod;
 use App\Models\StatusDefinition;
@@ -292,7 +293,8 @@ class extends Component
             'lead_source' => ['editForm.name' => ['required', 'string', 'max:255', "unique:lead_sources,name,{$record->id}"]],
             'payment_method' => [
                 'editForm.name' => ['required', 'string', 'max:255', "unique:payment_methods,name,{$record->id}"],
-                'editForm.type' => ['required', 'string', 'max:255'],
+                // An older free-text type stays valid as-is; the screen only offers TYPE_LABELS' keys.
+                'editForm.type' => ['required', 'string', 'max:255', 'in:'.implode(',', array_unique([...array_keys(PaymentMethod::TYPE_LABELS), $record->type]))],
             ],
             'business_entity' => [
                 'editForm.name' => ['required', 'string', 'max:255'],
@@ -303,7 +305,7 @@ class extends Component
             ],
             'email_template' => [
                 'editForm.name' => ['required', 'string', 'max:255'],
-                'editForm.template_type' => ['required', 'string', 'max:255'],
+                'editForm.template_type' => ['required', 'string', 'max:255', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), $record->template_type]))],
                 'editForm.subject' => ['required', 'string'],
                 'editForm.content' => ['required', 'string'],
             ],
@@ -412,7 +414,7 @@ class extends Component
     {
         $data = $this->validate([
             'paymentMethodName' => ['required', 'string', 'max:255', 'unique:payment_methods,name'],
-            'paymentMethodType' => ['required', 'string', 'max:255'],
+            'paymentMethodType' => ['required', 'in:'.implode(',', array_keys(PaymentMethod::TYPE_LABELS))],
         ], [], ['paymentMethodName' => 'שם אמצעי תשלום', 'paymentMethodType' => 'סוג']);
 
         $method = PaymentMethod::create([
@@ -491,7 +493,7 @@ class extends Component
     {
         $data = $this->validate([
             'emailTemplateName' => ['required', 'string', 'max:255'],
-            'emailTemplateType' => ['required', 'string', 'max:255'],
+            'emailTemplateType' => ['required', 'in:'.implode(',', array_keys(EmailTemplate::TYPE_LABELS))],
             'emailTemplateSubject' => ['required', 'string'],
             'emailTemplateContent' => ['required', 'string'],
         ], [], [
@@ -536,7 +538,7 @@ class extends Component
             'fieldTemplateId' => ['required', 'exists:email_templates,id'],
             'fieldName' => ['required', 'string', 'max:255'],
             'fieldType' => ['required', 'in:free_text,linked'],
-            'fieldLinkedField' => ['required_if:fieldType,linked', 'nullable', 'string', 'max:255'],
+            'fieldLinkedField' => ['required_if:fieldType,linked', 'nullable', 'in:'.implode(',', array_keys(EmailTemplateField::LINKED_FIELDS))],
             'fieldIsRequired' => ['boolean'],
         ], [], ['fieldName' => 'שם השדה', 'fieldLinkedField' => 'שדה מקושר']);
 
@@ -606,7 +608,7 @@ class extends Component
         $record->is_active = ! $record->is_active;
         $record->save();
 
-        $label = $record->name ?? $record->system ?? "#{$record->id}";
+        $label = $record->name ?? (ExternalOperation::SYSTEM_LABELS[$record->system] ?? null) ?? "#{$record->id}";
         $verb = $record->is_active ? 'הופעל' : 'הושבת';
 
         $activityLogger->log("{$activityPrefix}.toggled", "{$label} {$verb}", [
@@ -789,14 +791,14 @@ class extends Component
                         @if ($editingRecord === "payment_method:{$method->id}")
                             <tr>
                                 <td><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
-                                <td><input type="text" wire:model="editForm.type"> @error('editForm.type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
+                                <td><select wire:model="editForm.type">@foreach (PaymentMethod::TYPE_LABELS as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach @if (! array_key_exists($editForm['type'] ?? '', PaymentMethod::TYPE_LABELS))<option value="{{ $editForm['type'] }}">אחר</option>@endif</select> @error('editForm.type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
                                 <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
                             </tr>
                             @continue
                         @endif
                         <tr>
                             <td>{{ $method->name }}</td>
-                            <td>{{ $method->type }}</td>
+                            <td>{{ $method->typeLabel() }}</td>
                             <td>
                                 @if ($method->is_active)
                                     <span class="badge badge-success">פעיל</span>
@@ -820,7 +822,12 @@ class extends Component
                 </div>
                 <div>
                     <label for="paymentMethodType">סוג</label>
-                    <input type="text" id="paymentMethodType" wire:model="paymentMethodType" placeholder="למשל: recurring">
+                    <select id="paymentMethodType" wire:model="paymentMethodType">
+                        <option value="">בחרי סוג...</option>
+                        @foreach (PaymentMethod::TYPE_LABELS as $value => $label)
+                            <option value="{{ $value }}">{{ $label }}</option>
+                        @endforeach
+                    </select>
                     @error('paymentMethodType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                 </div>
                 <div class="full"><button type="submit" class="btn btn-primary">הוספת אמצעי תשלום</button></div>
@@ -920,7 +927,7 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>תבניות דואר</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מיילים תפעוליים שהמערכת שולחת ישירות (SMTP) — לא מסמכים עסקיים ולא דיוור רשימות תפוצה (תמיד דרך Smove)</p>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מיילים אוטומטיים שהמערכת שולחת בעצמה, כמו אישור קליטת ליד — לא מסמכים עסקיים ולא דיוור לרשימות תפוצה</p>
         </div>
 
         @foreach ($this->emailTemplates as $template)
@@ -928,7 +935,7 @@ class extends Component
                 <div style="display:flex; justify-content:space-between; align-items:flex-start">
                     <div>
                         <h3 style="margin-bottom:2px">{{ $template->name }}</h3>
-                        <p class="text-text-secondary" style="margin:0; font-size:var(--fs-caption)">{{ $template->template_type }} · {{ $template->subject }}</p>
+                        <p class="text-text-secondary" style="margin:0; font-size:var(--fs-caption)">{{ EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' }} · {{ $template->subject }}</p>
                     </div>
                     <div style="display:flex; align-items:center; gap:10px">
                         @if ($template->is_active)
@@ -944,9 +951,9 @@ class extends Component
                 @if ($editingRecord === "email_template:{$template->id}")
                     <div class="form-grid" style="margin-top:var(--sp-md)">
                         <div><label>שם התבנית</label><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div><label>סוג (מזהה טכני)</label><input type="text" wire:model="editForm.template_type" class="ltr-num" dir="ltr"> @error('editForm.template_type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div><label>שימוש</label><select wire:model="editForm.template_type">@foreach (EmailTemplate::TYPE_LABELS as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach @if (! array_key_exists($editForm['template_type'] ?? '', EmailTemplate::TYPE_LABELS))<option value="{{ $editForm['template_type'] }}">כללי</option>@endif</select> @error('editForm.template_type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                         <div class="full"><label>נושא</label><input type="text" wire:model="editForm.subject"> @error('editForm.subject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div class="full"><label>תוכן</label><textarea wire:model="editForm.content" rows="6"></textarea> @error('editForm.content') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div class="full"><label>תוכן</label><textarea wire:model="editForm.content" rows="6"></textarea> <div class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">אפשר לשלב בטקסט: @foreach (array_keys(EmailTemplate::PLACEHOLDERS) as $token)<span dir="rtl" style="unicode-bidi:isolate">{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}</span>@if (! $loop->last), @endif @endforeach</div> @error('editForm.content') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                         <div class="full"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></div>
                     </div>
                 @endif
@@ -959,7 +966,7 @@ class extends Component
                             <tr>
                                 <td>{{ $field->name }}</td>
                                 <td><span class="scope-pill">{{ $field->field_type === 'linked' ? 'מקושר' : 'טקסט חופשי' }}</span></td>
-                                <td>{{ $field->linked_field ?? '—' }}</td>
+                                <td>{{ $field->linked_field ? (EmailTemplateField::LINKED_FIELDS[$field->linked_field] ?? '—') : '—' }}</td>
                                 <td>{{ $field->is_required ? 'כן' : 'לא' }}</td>
                                 <td><button type="button" wire:click="removeEmailTemplateField({{ $field->id }})" class="btn btn-ghost">הסרה</button></td>
                             </tr>
@@ -982,8 +989,13 @@ class extends Component
                         @error('emailTemplateName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
-                        <label for="emailTemplateType">סוג (מזהה טכני)</label>
-                        <input type="text" id="emailTemplateType" wire:model="emailTemplateType" class="ltr-num" dir="ltr" placeholder="lead_confirmation">
+                        <label for="emailTemplateType">שימוש</label>
+                        <select id="emailTemplateType" wire:model="emailTemplateType">
+                            <option value="">בחרי...</option>
+                            @foreach (EmailTemplate::TYPE_LABELS as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </select>
                         @error('emailTemplateType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
@@ -994,6 +1006,7 @@ class extends Component
                     <div class="full">
                         <label for="emailTemplateContent">תוכן</label>
                         <textarea id="emailTemplateContent" wire:model="emailTemplateContent" rows="3"></textarea>
+                        <div class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">אפשר לשלב בטקסט: @foreach (array_keys(EmailTemplate::PLACEHOLDERS) as $token)<span dir="rtl" style="unicode-bidi:isolate">{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}</span>@if (! $loop->last), @endif @endforeach</div>
                         @error('emailTemplateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">הוספת תבנית</button></div>
@@ -1028,7 +1041,12 @@ class extends Component
                     @if ($fieldType === 'linked')
                         <div class="full">
                             <label for="fieldLinkedField">שדה מקושר</label>
-                            <input type="text" id="fieldLinkedField" wire:model="fieldLinkedField" class="ltr-num" dir="ltr" placeholder="school.name">
+                            <select id="fieldLinkedField" wire:model="fieldLinkedField">
+                                <option value="">בחרי שדה...</option>
+                                @foreach (EmailTemplateField::LINKED_FIELDS as $value => $label)
+                                    <option value="{{ $value }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
                             @error('fieldLinkedField') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                     @endif
@@ -1057,7 +1075,7 @@ class extends Component
                 <tbody>
                     @foreach ($this->integrations as $integration)
                         <tr>
-                            <td class="ltr-num" style="direction:ltr; text-align:right">{{ $integration->system }}</td>
+                            <td>{{ ExternalOperation::SYSTEM_LABELS[$integration->system] ?? 'חיבור חיצוני' }}</td>
                             <td>
                                 @if ($integration->is_active)
                                     <span class="badge badge-success">פעיל</span>

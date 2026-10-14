@@ -111,10 +111,10 @@ class ReferenceDataSettingsTest extends TestCase
     {
         Livewire::actingAs($this->owner)->test('settings')
             ->set('paymentMethodName', 'ביט')
-            ->set('paymentMethodType', 'wallet')
+            ->set('paymentMethodType', 'other')
             ->call('addPaymentMethod');
 
-        $this->assertDatabaseHas('payment_methods', ['name' => 'ביט', 'type' => 'wallet', 'is_active' => true]);
+        $this->assertDatabaseHas('payment_methods', ['name' => 'ביט', 'type' => 'other', 'is_active' => true]);
     }
 
     public function test_toggling_a_payment_method_never_deletes_it(): void
@@ -144,7 +144,7 @@ class ReferenceDataSettingsTest extends TestCase
     {
         Livewire::actingAs($this->owner)->test('settings')
             ->set('emailTemplateName', 'תבנית בדיקה')
-            ->set('emailTemplateType', 'test_type')
+            ->set('emailTemplateType', 'general')
             ->set('emailTemplateSubject', 'נושא בדיקה')
             ->set('emailTemplateContent', 'תוכן בדיקה')
             ->call('addEmailTemplate');
@@ -155,7 +155,7 @@ class ReferenceDataSettingsTest extends TestCase
             ->set('fieldTemplateId', $template->id)
             ->set('fieldName', 'שם ליד')
             ->set('fieldType', 'linked')
-            ->set('fieldLinkedField', 'lead.name')
+            ->set('fieldLinkedField', 'lead.contact_name')
             ->call('addEmailTemplateField');
 
         $this->assertDatabaseHas('email_template_fields', [
