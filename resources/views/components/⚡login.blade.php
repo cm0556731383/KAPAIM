@@ -43,8 +43,7 @@ class extends Component
 ?>
 
 <div>
-    <h2 class="mb-1">התחברות</h2>
-    <p class="text-text-secondary" style="margin-top:0; margin-bottom: var(--sp-lg);">כניסה למשתמשות קיימות בלבד — אין הרשמה עצמית.</p>
+    <h2 class="mb-1" style="margin-bottom: var(--sp-lg);">התחברות</h2>
 
     @if ($errorMessage)
         <div class="mb-4" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small);">
