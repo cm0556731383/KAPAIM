@@ -566,6 +566,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 </section>
 
 <footer>מערכת כפיים · מדריך למשתמשת · עודכן באוקטובר 2026</footer>
+@include('partials.site-credit')
 </main>
 
 <nav class="toc" id="toc" aria-label="תוכן העניינים">

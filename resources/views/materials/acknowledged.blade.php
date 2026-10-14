@@ -25,6 +25,7 @@
             background: var(--color-background);
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 24px;
@@ -68,5 +69,6 @@
             נקלט בהצלחה. תודה שאישרתם!
         </p>
     </div>
+    @include('partials.site-credit')
 </body>
 </html>

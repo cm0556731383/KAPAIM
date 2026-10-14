@@ -84,6 +84,7 @@
         <div class="brand"><img src="{{ asset('images/logo.png') }}" alt="כפיים"></div>
         {{ $slot }}
     </div>
+    @include('partials.site-credit')
     @livewireScripts
 </body>
 </html>

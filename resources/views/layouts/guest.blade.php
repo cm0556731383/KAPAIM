@@ -23,6 +23,8 @@
     <div class="card w-full" style="max-width: 380px;">
         {{ $slot }}
     </div>
+
+    @include('partials.site-credit')
 </div>
 
 @livewireScripts

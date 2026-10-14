@@ -25,6 +25,7 @@
             background: var(--color-background);
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 24px;
@@ -66,5 +67,6 @@
             מצורף. אם אינו מגיע בדקות הקרובות, כדאי לבדוק את תיקיית הספאם.
         </p>
     </div>
+    @include('partials.site-credit')
 </body>
 </html>

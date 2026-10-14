@@ -187,7 +187,8 @@
         </div>
     </aside>
 
-    <main>
+    <main style="display:flex; flex-direction:column; min-height:100vh;">
+        <div style="flex:1; min-width:0;">
         {{-- A page whose own header carries the user and "יציאה" (the work screen) passes hideUserBar. --}}
         @if (auth()->check() && ! ($hideUserBar ?? false))
             <div class="topbar-user" style="justify-content:flex-end; margin-bottom: var(--sp-md);">
@@ -200,6 +201,9 @@
         @endif
 
         {{ $slot }}
+        </div>
+
+        @include('partials.site-credit')
     </main>
 </div>
 

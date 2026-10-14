@@ -27,6 +27,7 @@
             background: var(--color-background);
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 24px;
@@ -76,5 +77,6 @@
             <p>עדיין לא קיבלנו אישור על התשלום. אם שילמת, האישור והקבלה יגיעו בדקות הקרובות — אין צורך לשלם שוב.</p>
         @endif
     </div>
+    @include('partials.site-credit')
 </body>
 </html>
