@@ -74,7 +74,7 @@ class extends Component
     public string $interactionSummary = '';
     public string $interactionResult = '';
 
-    // ===== מעקב (FOLLOW_UP) =====
+    // ===== Follow Up (FOLLOW_UP) =====
     public string $followUpSummary = '';
     public string $followUpResult = '';
     public string $followUpNextAt = '';
@@ -511,7 +511,7 @@ class extends Component
         $this->dispatch('close-modals');
     }
 
-    // ----- מעקב (FOLLOW_UP) -----
+    // ----- Follow Up (FOLLOW_UP) -----
 
     public function addFollowUp(ActivityLogger $activityLogger): void
     {
@@ -530,7 +530,7 @@ class extends Component
             'next_at' => $data['followUpNextAt'] ?: null,
         ]);
 
-        $activityLogger->log('lead.follow_up_logged', "נרשם מעקב עבור ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+        $activityLogger->log('lead.follow_up_logged', "נרשם Follow Up עבור ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
 
         $this->reset(['followUpSummary', 'followUpResult', 'followUpNextAt']);
         unset($this->followUps, $this->timeline);
@@ -538,7 +538,7 @@ class extends Component
         $this->dispatch('close-modals');
     }
 
-    // ----- עריכה / מחיקה של אינטראקציה ומעקב -----
+    // ----- עריכה / מחיקה של אינטראקציה ו-Follow Up -----
 
     public function editTimelineItem(string $kind, int $id): void
     {
@@ -593,7 +593,7 @@ class extends Component
                 'result' => $data['editResult'] ?: null,
                 'next_at' => $data['editNextAt'] ?: null,
             ]);
-            $activityLogger->log('lead.follow_up_updated', "עודכן מעקב עבור ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
+            $activityLogger->log('lead.follow_up_updated', "עודכן Follow Up עבור ליד #{$this->lead->id}", ['lead_id' => $this->lead->id]);
         } else {
             return;
         }
@@ -611,7 +611,7 @@ class extends Component
             $activityLogger->log('lead.interaction_deleted', "נמחקה אינטראקציה עבור ליד #{$this->lead->id}: {$interaction->interaction_type} (מחיקה לוגית)", ['lead_id' => $this->lead->id]);
         } else {
             $this->lead->followUps()->findOrFail($id)->delete();
-            $activityLogger->log('lead.follow_up_deleted', "נמחק מעקב עבור ליד #{$this->lead->id} (מחיקה לוגית)", ['lead_id' => $this->lead->id]);
+            $activityLogger->log('lead.follow_up_deleted', "נמחק Follow Up עבור ליד #{$this->lead->id} (מחיקה לוגית)", ['lead_id' => $this->lead->id]);
         }
 
         $this->cancelTimelineEdit();
@@ -807,7 +807,7 @@ class extends Component
 
     /**
      * Merges LEAD_INTERACTION + FOLLOW_UP + the lead's own creation into one
-     * chronological feed for the "היסטוריית פעילות ומעקב" card
+     * chronological feed for the "היסטוריית פעילות ו-Follow Up" card
      * (docs/storyboard/lead-detail.html).
      */
     #[Computed]
@@ -836,7 +836,7 @@ class extends Component
                 'kind' => 'follow_up',
                 'id' => $followUp->id,
                 'date' => $followUp->occurred_at,
-                'title' => 'מעקב'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
+                'title' => 'Follow Up'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
                 'body' => trim(($followUp->summary ?? '').($followUp->result ? ' — '.$followUp->result : '')),
             ]);
         }
@@ -1099,9 +1099,9 @@ class extends Component
                 @endforelse
             </div>
 
-            {{-- ===== היסטוריית פעילות ומעקב ===== --}}
+            {{-- ===== היסטוריית פעילות ו-Follow Up ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
-                <h3>היסטוריית פעילות ומעקב</h3>
+                <h3>היסטוריית פעילות ו-Follow Up</h3>
                 <div class="timeline">
                     @foreach ($this->timeline as $item)
                         @php $itemKey = isset($item['kind']) ? "{$item['kind']}:{$item['id']}" : null; @endphp
@@ -1119,7 +1119,7 @@ class extends Component
                                     <div class="full"><label>תוצאה</label><input type="text" wire:model="editResult"></div>
                                     @if ($item['kind'] === 'follow_up')
                                         <div class="full">
-                                            <label>מועד המעקב הבא</label><input type="date" wire:model="editNextAt">
+                                            <label>מועד Follow Up הבא</label><input type="date" wire:model="editNextAt">
                                             @error('editNextAt') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                                         </div>
                                     @endif
@@ -1143,7 +1143,7 @@ class extends Component
                 </div>
             </div>
 
-            {{-- ===== אינטראקציה חדשה / מעקב חדש ===== --}}
+            {{-- ===== אינטראקציה חדשה / Follow Up חדש ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg); display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                 <x-modal trigger-label="+ תיעוד אינטראקציה" trigger-class="btn btn-secondary" title="תיעוד אינטראקציה">
                     <form wire:submit="addInteraction" class="form-grid">
@@ -1158,16 +1158,16 @@ class extends Component
                     </form>
                 </x-modal>
 
-                <x-modal trigger-label="+ מעקב חדש" trigger-class="btn btn-secondary" title="מעקב חדש">
+                <x-modal trigger-label="+ Follow Up חדש" trigger-class="btn btn-secondary" title="Follow Up חדש">
                     <form wire:submit="addFollowUp" class="form-grid">
                         <div class="full"><label for="followUpSummary">סיכום</label><textarea id="followUpSummary" wire:model="followUpSummary" rows="2"></textarea></div>
                         <div class="full"><label for="followUpResult">תוצאה</label><input type="text" id="followUpResult" wire:model="followUpResult"></div>
                         <div class="full">
-                            <label for="followUpNextAt">מועד המעקב הבא (אופציונלי)</label>
+                            <label for="followUpNextAt">מועד Follow Up הבא (אופציונלי)</label>
                             <input type="date" id="followUpNextAt" wire:model="followUpNextAt">
                             @error('followUpNextAt') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
-                        <div class="full"><button type="submit" class="btn btn-primary">שמירת מעקב</button></div>
+                        <div class="full"><button type="submit" class="btn btn-primary">שמירת Follow Up</button></div>
                     </form>
                 </x-modal>
             </div>

@@ -350,7 +350,7 @@ class extends Component
                     <th>תוכניות מבוקשות</th>
                     <th>סטטוס</th>
                     <th>מטפלת</th>
-                    <th>מעקב הבא</th>
+                    <th>Follow Up הבא</th>
                     <th>עדכון אחרון</th>
                 </tr>
             </thead>

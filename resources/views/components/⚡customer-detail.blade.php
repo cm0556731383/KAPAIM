@@ -1115,7 +1115,7 @@ class extends Component
         foreach ($this->followUps as $followUp) {
             $items->push([
                 'date' => $followUp->occurred_at,
-                'title' => 'מעקב'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
+                'title' => 'Follow Up'.($followUp->next_at ? ' · הבא: '.$followUp->next_at->format('d/m/Y') : ''),
                 'body' => trim(($followUp->summary ?? '').($followUp->result ? ' — '.$followUp->result : '')),
             ]);
         }

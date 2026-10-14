@@ -34,7 +34,7 @@ use Illuminate\Support\Str;
  * ⚡global-search.blade.php's results() scoping exactly, rather than
  * inventing a new pattern.
  *
- * Judgment call (see this stage's report): US-019 says "משימות המעקב"
+ * Judgment call (see this stage's report): US-019 says "משימות ה-Follow Up"
  * — per build-plan 04's ERD that is specifically FOLLOW_UP.next_at, never
  * TASK rows. A personal reminder (TASK, task_type='reminder') is a distinct
  * concept also surfaced in attentionItems() below, but never counted by
@@ -74,7 +74,7 @@ class DashboardSummary
     }
 
     /**
-     * US-019's "מעקב להיום" — FOLLOW_UP.next_at falling today, not TASK
+     * US-019's "Follow Up להיום" — FOLLOW_UP.next_at falling today, not TASK
      * rows (see class docblock).
      */
     public function followUpsDueTodayCount(User $user): int
@@ -208,7 +208,7 @@ class DashboardSummary
 
     // ----- attentionItems() sections -----
 
-    /** מעקב due today or overdue (FOLLOW_UP.next_at) — leads-permission scoped. */
+    /** Follow Up due today or overdue (FOLLOW_UP.next_at) — leads-permission scoped. */
     private function upFollowItems(User $user): Collection
     {
         if (! $this->canSeeAnyLeads($user)) {
@@ -226,7 +226,7 @@ class DashboardSummary
                 $badge = $this->badgeForDate($followUp->next_at);
 
                 return [
-                    'label' => 'לחזור ל'.($lead->school?->name ?? $lead->email).' — מעקב',
+                    'label' => 'לחזור ל'.($lead->school?->name ?? $lead->email).' — Follow Up',
                     'subtitle' => 'ליד · '.($lead->assignedUser?->name ?? '—'),
                     'badge' => $badge['badge'],
                     'badgeClass' => $badge['badgeClass'],
