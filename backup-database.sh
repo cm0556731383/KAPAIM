@@ -2,6 +2,9 @@
 
 set -Eeuo pipefail
 
+# Dumps hold every customer's personal data — readable by the owner only.
+umask 077
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="${SCRIPT_DIR}/backups"
 

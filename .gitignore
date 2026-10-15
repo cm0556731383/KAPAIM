@@ -45,8 +45,19 @@ Homestead.yaml
 .env.*
 !.env.example
 
-# Backups produced by backup-database.sh
-/backups/*.dump
+# Backups produced by backup-database.sh, and manual SQL dumps of real data —
+# never committed (only the folder's .gitkeep is tracked).
+/backups/*
+!/backups/.gitkeep
+
+# Runtime files holding real business data: uploaded supplier invoices,
+# material attachments, school logos, Livewire temp uploads, compiled views.
+/storage/app/private/
+/storage/app/public/
+/storage/framework/views_v2/
+
+# Local QA scratch (screenshots of real pages, ad-hoc scripts, minted sessions).
+/storage/qa/
 
 # Duplicate of assets/logo/kapaim-logo.gif left at the repo root (same md5) —
 # kept on disk but not tracked twice.
