@@ -156,6 +156,108 @@ class RevenueReportTest extends TestCase
         $this->assertSame(700.0, $profit[$program->name]);
     }
 
+    // ----- the filtered income statement (⚡cashflow-report / its PDF) -----
+
+    public function test_the_statement_lists_income_by_program_and_expenses_by_supplier_with_net_profit(): void
+    {
+        [$programA, $programB, $supplier] = $this->statementFixtures();
+
+        $statement = $this->report->statement();
+
+        $this->assertSame([
+            ['label' => $programA->name, 'amount' => 1500.0],
+            ['label' => $programB->name, 'amount' => 800.0],
+        ], $statement['revenue']);
+        $this->assertSame(2300.0, $statement['revenue_total']);
+        $this->assertSame([['label' => $supplier->name, 'amount' => 650.0, 'count' => 3]], $statement['expenses']);
+        $this->assertSame(650.0, $statement['expense_total']);
+        $this->assertSame(1650.0, $statement['profit']);
+        $this->assertSame(['ספטמבר 2025', 'מרץ 2026', 'ספטמבר 2026'], array_column($statement['months'], 'label'));
+        $this->assertSame('כל השנים', $statement['period']);
+    }
+
+    public function test_the_statement_filters_by_year_month_and_program_in_any_combination(): void
+    {
+        [$programA, $programB] = $this->statementFixtures();
+
+        $year = $this->report->statement(years: [2026]);
+        $this->assertSame(1600.0, $year['revenue_total']);
+        $this->assertSame(450.0, $year['expense_total']);
+
+        // September of both years.
+        $september = $this->report->statement(months: [9]);
+        $this->assertSame(1500.0, $september['revenue_total']);
+        $this->assertSame(['ספטמבר 2025', 'ספטמבר 2026'], array_column($september['months'], 'label'));
+
+        // Program A only: its income and its own expenses — never another program's or a program-less one.
+        $onlyA = $this->report->statement(sources: ["program:{$programA->id}"]);
+        $this->assertSame(1500.0, $onlyA['revenue_total']);
+        $this->assertSame(100.0, $onlyA['expense_total']);
+
+        // Combined: program B, 2026, March.
+        $combined = $this->report->statement([2026], [3], ["program:{$programB->id}"]);
+        $this->assertSame(800.0, $combined['revenue_total']);
+        $this->assertSame(0.0, $combined['expense_total']);
+        $this->assertSame("שנים: 2026 · חודשים: מרץ · תוכניות: {$programB->name}", $combined['period']);
+
+        // Program-less expenses have their own filter option.
+        $general = $this->report->statement(sources: [RevenueReport::NO_PROGRAM_SOURCE]);
+        $this->assertSame(0.0, $general['revenue_total']);
+        $this->assertSame(550.0, $general['expense_total']);
+        $this->assertArrayHasKey(RevenueReport::NO_PROGRAM_SOURCE, $this->report->sourceOptions());
+    }
+
+    public function test_the_statement_spreads_a_subscription_and_files_it_under_its_bundle(): void
+    {
+        Carbon::setTestNow('2026-01-15');
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1200, bundle: $bundle);
+        $deal->recordPayment($deal->version, 1200);
+
+        $march = $this->report->statement(years: [2026], months: [3]);
+        $this->assertEqualsWithDelta(100.0, $march['revenue_total'], 0.01);
+        $this->assertSame($bundle->name, $march['revenue'][0]['label']);
+
+        $this->assertEqualsWithDelta(1200.0, $this->report->statement(sources: ["bundle:{$bundle->id}"])['revenue_total'], 0.01);
+        $this->assertContains(2026, $this->report->availableYears());
+    }
+
+    public function test_the_statement_pdf_renders(): void
+    {
+        $this->statementFixtures();
+
+        $pdf = $this->report->statementPdf([2026]);
+
+        $this->assertStringStartsWith('%PDF', $pdf);
+    }
+
+    /**
+     * Program A: ₪700 (Sep 2025) + ₪800 (Sep 2026); program B: ₪800 (Mar 2026).
+     * Expenses, one supplier: ₪100 on A (Sep 2026), ₪200 general (Sep 2025), ₪350 general (Mar 2026).
+     */
+    private function statementFixtures(): array
+    {
+        $programA = $this->createProgram('תוכנית א לדוח');
+        $programB = $this->createProgram('תוכנית ב לדוח');
+        $supplier = $this->createSupplier();
+
+        $dealA = $this->dealWithPaymentMethod(agreedAmount: 1500, program: $programA);
+        Carbon::setTestNow('2025-09-10');
+        $dealA->recordPayment($dealA->version, 700);
+        Carbon::setTestNow('2026-09-10');
+        $dealA->fresh()->recordPayment($dealA->fresh()->version, 800);
+
+        $dealB = $this->dealWithPaymentMethod(agreedAmount: 800, program: $programB);
+        Carbon::setTestNow('2026-03-05');
+        $dealB->recordPayment($dealB->version, 800);
+
+        Expense::createForSupplier($supplier, 100, '2026-09-12', $programA);
+        Expense::createForSupplier($supplier, 200, '2025-09-20');
+        Expense::createForSupplier($supplier, 350, '2026-03-20');
+
+        return [$programA, $programB, $supplier];
+    }
+
     // ----- helpers -----
 
     private function createSupplier(): Supplier

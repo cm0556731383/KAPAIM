@@ -191,7 +191,7 @@ class extends Component
     <div class="tabs">
         <a href="{{ route('suppliers') }}" class="active">ספקים</a>
         <a href="{{ route('expenses') }}">הוצאות</a>
-        <a href="{{ route('cashflow-report') }}">דוח הכנסות ורווח</a>
+        <a href="{{ route('cashflow-report') }}">דוח הכנסות והוצאות</a>
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">

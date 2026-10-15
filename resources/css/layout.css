@@ -141,7 +141,7 @@ tr.is-subscription { outline: 1.5px solid var(--color-primary); outline-offset: 
 .tabs span { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); cursor: pointer; }
 .tabs span.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }
 /* Build-plan 11 — same visual tab strip, but as real <a> links across the
-   ספקים / הוצאות ותזרים / דוח הכנסות ורווח pages (three separate routes,
+   ספקים / הוצאות ותזרים / דוח הכנסות והוצאות pages (three separate routes,
    unlike the in-component $activeTab tabs above). */
 .tabs a { padding-bottom: var(--sp-sm); color: var(--color-text-secondary); text-decoration: none; }
 .tabs a.active { color: var(--color-primary-hover); border-bottom: 2px solid var(--color-primary); font-weight: 600; }

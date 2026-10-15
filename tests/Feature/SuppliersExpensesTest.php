@@ -506,6 +506,31 @@ class SuppliersExpensesTest extends TestCase
         Livewire::actingAs($this->owner)->test('settings')->assertDontSee('נושא חדש')->assertDontSee('בקשת כמה חשבוניות מספק');
     }
 
+    // ----- income statement page -----
+
+    public function test_the_income_statement_page_filters_and_links_its_pdf_to_the_same_filters(): void
+    {
+        $supplier = $this->createSupplier();
+        Expense::createForSupplier($supplier, 300, '2026-09-10');
+        Expense::createForSupplier($supplier, 120, '2025-02-10');
+
+        Livewire::actingAs($this->owner)->test('cashflow-report')
+            ->assertSee('דוח הכנסות והוצאות')
+            ->assertSee('₪420')
+            ->set('years', ['2026'])
+            ->assertSee('₪300')
+            ->assertDontSee('₪420')
+            ->assertSee(e(route('cashflow-report.pdf', ['years' => ['2026']])), false)
+            ->call('clearFilters')
+            ->assertSee('₪420');
+
+        $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['years' => [2026], 'months' => [9]]))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['months' => [13]]))->assertSessionHasErrors('months.0');
+    }
+
     private function fakeSmove(): void
     {
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);

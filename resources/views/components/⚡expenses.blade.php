@@ -340,7 +340,7 @@ class extends Component
     <div class="tabs">
         <a href="{{ route('suppliers') }}">ספקים</a>
         <a href="{{ route('expenses') }}" class="active">הוצאות</a>
-        <a href="{{ route('cashflow-report') }}">דוח הכנסות ורווח</a>
+        <a href="{{ route('cashflow-report') }}">דוח הכנסות והוצאות</a>
     </div>
 
 

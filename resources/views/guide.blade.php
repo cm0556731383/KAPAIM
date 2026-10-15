@@ -440,7 +440,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 
 <!-- 12 -->
 <section class="chapter" id="suppliers">
-  <h2><span class="num">12</span>ספקים, הוצאות ודוח הכנסות ורווח</h2>
+  <h2><span class="num">12</span>ספקים, הוצאות ודוח הכנסות והוצאות</h2>
   <p class="lead-text">שלושה מסכים מקושרים, שעוברים ביניהם בכפתורים שבראש כל מסך.</p>
   <h3>ספקים</h3>
   <figure><img src="/images/guide/11-suppliers.png" alt="ספקים" loading="lazy" width="1440" height="900"></figure>
@@ -452,11 +452,12 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
     <li>לוחצים <b class="ui">שמירת הוצאה</b>.</li>
     <li>בטבלה רואים לכל הוצאה אם יש לה חשבונית. <b class="ui">צירוף חשבונית</b> מאפשר לצרף אותה מאוחר יותר, והשורה תעבור מ"חסרה חשבונית" ל"יש חשבונית".</li>
   </ol>
-  <h3>דוח הכנסות ורווח</h3>
-  <figure class="tall"><img src="/images/guide/13-cashflow.png" alt="דוח הכנסות ורווח" loading="lazy" width="1440" height="1063"></figure>
+  <h3>דוח הכנסות והוצאות</h3>
+  <figure class="tall"><img src="/images/guide/13-cashflow.png" alt="דוח הכנסות והוצאות" loading="lazy" width="1440" height="1063"></figure>
   <ul>
-    <li><b>לפי חודש:</b> הכנסה, הוצאה ורווח. הכנסה ממנוי שנתי ששולם מראש נפרשת על פני חודשי המנוי.</li>
-    <li><b>לפי תוכנית:</b> כמה כל תוכנית הכניסה, כמה הוצאות שויכו אליה ומה הרווח.</li>
+    <li><b>בנוי כמו דוח רווח והפסד:</b> הכנסות למעלה לפי תוכנית או מארז, הוצאות מתחת לפי ספק, ובסוף הרווח הנקי, ואחריו פירוט לפי חודש. הכנסה ממנוי שנתי ששולם מראש נפרשת על פני חודשי המנוי.</li>
+    <li><b>סינון:</b> בוחרים שנים, חודשים ותוכניות, בכל שילוב. בלי בחירה, כל הנתונים נכללים.</li>
+    <li><b>PDF להדפסה:</b> הכפתור "הפקת PDF להדפסה" מפיק קובץ מעוצב עם הלוגו, לפי הסינון שעל המסך.</li>
   </ul>
 </section>
 

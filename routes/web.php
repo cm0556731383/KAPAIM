@@ -291,6 +291,25 @@ Route::middleware('auth')->group(function () {
         return \Illuminate\Support\Facades\Storage::disk('local')->response($path, null, ['Content-Disposition' => $disposition]);
     })->name('expenses.invoice');
     Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
+    // The income statement as a PDF, with the same filters as the page (years[], months[], sources[]).
+    Route::get('/cashflow-report/pdf', function (\Illuminate\Http\Request $request, \App\Services\RevenueReport $report) {
+        abort_unless(auth()->user()->can('expenses.manage'), 403);
+
+        $filters = $request->validate([
+            'years' => ['array'], 'years.*' => ['integer', 'between:2000,2100'],
+            'months' => ['array'], 'months.*' => ['integer', 'between:1,12'],
+            'sources' => ['array'], 'sources.*' => ['string', 'max:50'],
+        ]);
+        $pdf = $report->statementPdf($filters['years'] ?? [], $filters['months'] ?? [], $filters['sources'] ?? []);
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Length' => strlen($pdf),
+            'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+                'inline', 'דוח הכנסות והוצאות '.now()->format('d-m-Y').'.pdf', 'income-statement-'.now()->format('Y-m-d').'.pdf',
+            ),
+        ]);
+    })->name('cashflow-report.pdf');
     Route::livewire('/document-templates', 'document-templates')->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {

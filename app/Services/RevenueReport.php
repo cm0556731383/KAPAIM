@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\Bundle;
 use App\Models\Deal;
 use App\Models\Expense;
 use App\Models\Payment;
+use App\Models\Program;
 use App\Models\Subscription;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -47,6 +49,176 @@ use Illuminate\Support\Collection;
 class RevenueReport
 {
     public const BUNDLE_BUCKET_LABEL = 'מארזים';
+
+    /** statement()'s source filter key for an expense with no program. */
+    public const NO_PROGRAM_SOURCE = 'none';
+
+    public const MONTH_NAMES = [
+        1 => 'ינואר', 2 => 'פברואר', 3 => 'מרץ', 4 => 'אפריל', 5 => 'מאי', 6 => 'יוני',
+        7 => 'יולי', 8 => 'אוגוסט', 9 => 'ספטמבר', 10 => 'אוקטובר', 11 => 'נובמבר', 12 => 'דצמבר',
+    ];
+
+    /**
+     * The income statement on ⚡cashflow-report.blade.php and its PDF: income
+     * by program/bundle on top, expenses by supplier below, net profit, and a
+     * month-by-month breakdown — over the same recognized-revenue rules as
+     * the rest of this class (FR-6.4 subscription spreading included).
+     *
+     * Each filter is optional and they combine: $years (e.g. [2026]), $months
+     * (1-12, in any of those years — so [9, 10] over [2025, 2026] is four
+     * months), $sources (SOURCE keys from sourceOptions(): 'program:{id}',
+     * 'bundle:{id}', or NO_PROGRAM_SOURCE for expenses not tied to a program).
+     * An empty filter means "all".
+     *
+     * @return array{revenue: list<array{label: string, amount: float}>, revenue_total: float, expenses: list<array{label: string, amount: float, count: int}>, expense_total: float, profit: float, months: list<array{label: string, revenue: float, expense: float, profit: float}>, period: string}
+     */
+    public function statement(array $years = [], array $months = [], array $sources = []): array
+    {
+        $matches = function (array $entry) use ($years, $months, $sources): bool {
+            [$year, $month] = array_map('intval', explode('-', $entry['month']));
+
+            return (! $years || in_array($year, array_map('intval', $years), true))
+                && (! $months || in_array($month, array_map('intval', $months), true))
+                && (! $sources || in_array($entry['source'], $sources, true));
+        };
+
+        $revenue = $this->revenueEntries()->filter($matches);
+        $expenses = $this->expenseEntries()->filter($matches);
+
+        $revenueLines = $revenue->groupBy('label')
+            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2)])
+            ->sortByDesc('amount')->values()->all();
+        $expenseLines = $expenses->groupBy('label')
+            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2), 'count' => $rows->count()])
+            ->sortByDesc('amount')->values()->all();
+
+        $monthRows = $revenue->pluck('month')->merge($expenses->pluck('month'))->unique()->sort()->values()
+            ->map(function (string $month) use ($revenue, $expenses) {
+                $in = round($revenue->where('month', $month)->sum('amount'), 2);
+                $out = round($expenses->where('month', $month)->sum('amount'), 2);
+
+                return ['label' => $this->monthLabel($month), 'revenue' => $in, 'expense' => $out, 'profit' => round($in - $out, 2)];
+            })->all();
+
+        $revenueTotal = round($revenue->sum('amount'), 2);
+        $expenseTotal = round($expenses->sum('amount'), 2);
+
+        return [
+            'revenue' => $revenueLines,
+            'revenue_total' => $revenueTotal,
+            'expenses' => $expenseLines,
+            'expense_total' => $expenseTotal,
+            'profit' => round($revenueTotal - $expenseTotal, 2),
+            'months' => $monthRows,
+            'period' => $this->periodDescription($years, $months, $sources),
+        ];
+    }
+
+    /** statement() as a printable A4 PDF (reports/statement-pdf.blade.php) — the raw bytes. */
+    public function statementPdf(array $years = [], array $months = [], array $sources = []): string
+    {
+        $mpdf = new \Mpdf\Mpdf([
+            'default_font' => 'dejavusans', 'directionality' => 'rtl', 'format' => 'A4',
+            'margin_top' => 16, 'margin_bottom' => 18, 'margin_left' => 14, 'margin_right' => 14,
+        ]);
+        $mpdf->SetTitle('דוח הכנסות והוצאות');
+        $mpdf->SetHTMLFooter('<div style="font-family:dejavusans; font-size:9px; color:#5C6B5F; text-align:center; direction:rtl">כפיים · עמוד {PAGENO} מתוך {nbpg}</div>');
+
+        // Same benign-warning suppression as Document::renderPdfBinary().
+        $previousErrorReporting = error_reporting(E_ERROR | E_PARSE | E_COMPILE_ERROR | E_CORE_ERROR);
+
+        try {
+            $mpdf->WriteHTML(view('reports.statement-pdf', ['statement' => $this->statement($years, $months, $sources)])->render());
+
+            return $mpdf->Output('', \Mpdf\Output\Destination::STRING_RETURN);
+        } finally {
+            error_reporting($previousErrorReporting);
+        }
+    }
+
+    /** @return array<string, string> statement() source key => label: every program, every bundle, and program-less expenses. */
+    public function sourceOptions(): array
+    {
+        $options = [];
+        foreach (Program::orderBy('name')->get() as $program) {
+            $options["program:{$program->id}"] = $program->name;
+        }
+        foreach (Bundle::orderBy('name')->get() as $bundle) {
+            $options["bundle:{$bundle->id}"] = $bundle->name;
+        }
+        $options[self::NO_PROGRAM_SOURCE] = 'הוצאות כלליות (ללא תוכנית)';
+
+        return $options;
+    }
+
+    /** @return list<int> every year with income or expenses, plus the current one, newest first. */
+    public function availableYears(): array
+    {
+        return $this->revenueEntries()->merge($this->expenseEntries())
+            ->map(fn (array $entry) => (int) substr($entry['month'], 0, 4))
+            ->push((int) now()->format('Y'))
+            ->unique()->sortDesc()->values()->all();
+    }
+
+    public function monthLabel(string $month): string
+    {
+        [$year, $number] = array_map('intval', explode('-', $month));
+
+        return self::MONTH_NAMES[$number].' '.$year;
+    }
+
+    /** @return Collection<int, array{month: string, amount: float, source: string, label: string}> one row per non-subscription payment and per subscription month-slice */
+    private function revenueEntries(): Collection
+    {
+        $entries = $this->nonSubscriptionPayments()->toBase()->map(fn (Payment $payment) => [
+            'month' => CarbonImmutable::parse($payment->payment_date)->format('Y-m'),
+            'amount' => (float) $payment->amount,
+        ] + $this->revenueSource($payment->deal));
+
+        $this->subscriptions()->each(function (Subscription $subscription) use (&$entries) {
+            foreach ($this->subscriptionMonthlySlices($subscription) as $month => $amount) {
+                $entries->push(['month' => $month, 'amount' => $amount] + $this->revenueSource($subscription->deal));
+            }
+        });
+
+        return $entries->values();
+    }
+
+    /** @return Collection<int, array{month: string, amount: float, source: string, label: string}> one row per expense, labelled by supplier */
+    private function expenseEntries(): Collection
+    {
+        return Expense::with('supplier')->get()->toBase()->map(fn (Expense $expense) => [
+            'month' => CarbonImmutable::parse($expense->expense_date)->format('Y-m'),
+            'amount' => (float) $expense->amount,
+            'source' => $expense->program_id ? "program:{$expense->program_id}" : self::NO_PROGRAM_SOURCE,
+            'label' => $expense->supplier?->name ?? 'ספק לא ידוע',
+        ]);
+    }
+
+    /** @return array{source: string, label: string} what a deal's income is filed under — its program, else its bundle. */
+    private function revenueSource(Deal $deal): array
+    {
+        if ($deal->program) {
+            return ['source' => "program:{$deal->program_id}", 'label' => $deal->program->name];
+        }
+
+        return ['source' => 'bundle:'.(int) $deal->bundle_id, 'label' => $deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL];
+    }
+
+    private function periodDescription(array $years, array $months, array $sources): string
+    {
+        $parts = [];
+        $parts[] = $years ? 'שנים: '.collect($years)->map(fn ($y) => (int) $y)->sort()->implode(', ') : 'כל השנים';
+        if ($months) {
+            $parts[] = 'חודשים: '.collect($months)->map(fn ($m) => (int) $m)->sort()->map(fn ($m) => self::MONTH_NAMES[$m] ?? $m)->implode(', ');
+        }
+        if ($sources) {
+            $labels = $this->sourceOptions();
+            $parts[] = 'תוכניות: '.collect($sources)->map(fn ($key) => $labels[$key] ?? $key)->implode(', ');
+        }
+
+        return implode(' · ', $parts);
+    }
 
     /** @return array<string, float> 'Y-m' => recognized revenue, sorted ascending */
     public function revenueByMonth(): array
@@ -149,7 +321,7 @@ class RevenueReport
     /** Every real Payment whose deal is NOT against the subscription-type bundle — those are handled by subscriptionMonthlySlices() instead. */
     private function nonSubscriptionPayments(): Collection
     {
-        return Payment::with('deal.bundle')->get()
+        return Payment::with('deal.bundle', 'deal.program')->get()
             ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type);
     }
 
