@@ -81,7 +81,6 @@ class extends Component
         <tbody>
             <tr><th>תאריך התשלום</th><td><span class="ltr-num">{{ $expense->expense_date->format('d/m/Y') }}</span></td></tr>
             <tr><th>סכום</th><td><span class="ltr-num">₪{{ $expense->invoiceRequestData()['amount'] }}</span></td></tr>
-            <tr><th>מספר הוצאה</th><td><span class="ltr-num">{{ $expense->id }}</span></td></tr>
         </tbody>
     </table>
 
