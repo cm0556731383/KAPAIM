@@ -37,20 +37,65 @@ class extends Component
         abort_unless(auth()->user()->can('expenses.manage'), 403);
     }
 
-    /** A filter chip's click — adds or removes $value from years/months/sources. */
+    /**
+     * Every choice each filter offers, value => label. An empty filter means
+     * "all of them" — so "הכל" is simply the empty selection.
+     *
+     * @return array<string, array<string, string>>
+     */
+    public function filterOptions(): array
+    {
+        return [
+            'years' => collect($this->availableYears)->mapWithKeys(fn ($year) => [(string) $year => (string) $year])->all(),
+            'months' => collect(RevenueReport::MONTH_NAMES)->mapWithKeys(fn ($name, $number) => [(string) $number => $name])->all(),
+            'sources' => $this->sourceOptions,
+        ];
+    }
+
+    /**
+     * One option's checkbox. From "all" (empty), unticking an option keeps
+     * every other one selected; ticking the last missing one returns to
+     * "all".
+     */
     public function toggleFilter(string $filter, string $value): void
+    {
+        $options = array_map('strval', array_keys($this->filterOptions()[$filter] ?? abort(404)));
+        abort_unless(in_array($value, $options, true), 404);
+
+        $selected = $this->{$filter} ? array_map('strval', $this->{$filter}) : $options;
+        $selected = in_array($value, $selected, true)
+            ? array_values(array_diff($selected, [$value]))
+            : array_values(array_intersect($options, [...$selected, $value]));
+
+        // Nothing ticked can't mean anything useful; everything ticked is just "all".
+        $this->{$filter} = ($selected === [] || count($selected) === count($options)) ? [] : $selected;
+    }
+
+    /** The "הכל" checkbox. */
+    public function selectAll(string $filter): void
     {
         abort_unless(in_array($filter, ['years', 'months', 'sources'], true), 404);
 
-        $current = array_map('strval', $this->{$filter});
-        $this->{$filter} = in_array($value, $current, true)
-            ? array_values(array_diff($current, [$value]))
-            : [...$current, $value];
+        $this->{$filter} = [];
     }
 
     public function clearFilters(): void
     {
         $this->reset(['years', 'months', 'sources']);
+    }
+
+    /** What a filter's dropdown button says — "כל החודשים", "ספטמבר, אוקטובר", or "5 חודשים". */
+    public function filterSummary(string $filter, string $allLabel, string $plural): string
+    {
+        if (! $this->{$filter}) {
+            return $allLabel;
+        }
+
+        $options = $this->filterOptions()[$filter];
+        $labels = collect(array_keys($options))->filter(fn ($key) => in_array((string) $key, array_map('strval', $this->{$filter}), true))
+            ->map(fn ($key) => $options[$key])->values();
+
+        return $labels->count() <= 2 ? $labels->implode(', ') : $labels->count().' '.$plural;
     }
 
     #[Computed]
@@ -71,12 +116,13 @@ class extends Component
         return app(RevenueReport::class)->sourceOptions();
     }
 
-    public function pdfUrl(): string
+    public function pdfUrl(string $detail): string
     {
         return route('cashflow-report.pdf', array_filter([
             'years' => array_values($this->years),
             'months' => array_values($this->months),
             'sources' => array_values($this->sources),
+            'detail' => $detail,
         ]));
     }
 };
@@ -88,14 +134,27 @@ class extends Component
     $countOf = fn (int $n, string $plural) => $n === 1
         ? ['תוכניות' => 'תוכנית אחת', 'ספקים' => 'ספק אחד', 'תשלומים' => 'תשלום אחד', 'הוצאות' => 'הוצאה אחת'][$plural]
         : "{$n} {$plural}";
-    $isOn = fn (string $filter, $value) => in_array((string) $value, array_map('strval', $this->{$filter}), true);
+    $isOn = fn (string $filter, $value) => ! $this->{$filter} || in_array((string) $value, array_map('strval', $this->{$filter}), true);
 @endphp
 
 <div>
     <style>
-        .rp-filters { display:grid; grid-template-columns:auto 1fr; gap:10px var(--sp-md); align-items:center; }
-        .rp-filters .filters { margin:0; gap:6px; }
-        .rp-filters .rp-label { font-size:var(--fs-small); font-weight:600; color:var(--color-text-secondary); }
+        .rp-filterbar { display:flex; gap:var(--sp-sm); align-items:center; flex-wrap:wrap; margin-bottom:var(--sp-lg); }
+        .rp-dd { position:relative; }
+        .rp-dd-btn { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-pill); font:inherit; font-size:var(--fs-small); color:var(--color-text-primary); cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+        .rp-dd-btn:hover { border-color:var(--color-primary); }
+        .rp-dd-btn.is-set { border-color:var(--color-primary); background:var(--color-primary-lighter); }
+        .rp-dd-title { color:var(--color-text-secondary); }
+        .rp-dd-value { font-weight:600; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .rp-dd-caret { width:14px; height:14px; color:var(--color-text-secondary); }
+        .rp-dd-panel { position:absolute; top:calc(100% + 6px); inset-inline-start:0; z-index:30; min-width:220px; max-height:340px; overflow:auto; background:var(--color-surface); border:1px solid var(--color-border); border-radius:12px; box-shadow:var(--shadow-card-hover); padding:6px; }
+        .rp-dd-item { display:flex; align-items:center; gap:8px; width:100%; margin:0; padding:7px 10px; border:none; background:none; border-radius:8px; font:inherit; font-size:var(--fs-small); color:var(--color-text-primary); text-align:start; cursor:pointer; white-space:nowrap; }
+        .rp-dd-item:hover { background:var(--color-primary-lighter); }
+        .rp-box { flex:0 0 16px; height:16px; border:1.5px solid var(--color-border); border-radius:4px; background:#fff; display:inline-flex; align-items:center; justify-content:center; }
+        .rp-dd-item[aria-checked="true"] .rp-box { background:var(--color-primary); border-color:var(--color-primary); }
+        .rp-dd-item[aria-checked="true"] .rp-box::after { content:""; width:8px; height:4px; border:2px solid #fff; border-top:none; border-right:none; transform:rotate(-45deg) translate(1px,-1px); }
+        .rp-dd-all { font-weight:600; border-bottom:1px solid var(--color-border); border-radius:8px 8px 0 0; margin-bottom:4px; }
+        .rp-dd-cols { display:grid; grid-template-columns:1fr 1fr; min-width:240px; }
         .rp-table td, .rp-table th { padding:12px 16px; }
         .rp-table .num { text-align:left; white-space:nowrap; }
         .rp-toggle { cursor:pointer; user-select:none; }
@@ -111,7 +170,8 @@ class extends Component
         .rp-net td { font-weight:800; font-size:18px; border-top:2px solid var(--color-text-primary); }
         .rp-pos { color:var(--color-success); } .rp-neg { color:var(--color-error); }
         @media (max-width: 640px) {
-            .rp-filters { grid-template-columns:1fr; }
+            .rp-dd, .rp-dd-btn { width:100%; } .rp-dd-value { max-width:none; flex:1; text-align:start; }
+            .rp-dd-panel { inset-inline:0; }
             .rp-table td, .rp-table th { padding:10px 8px; }
             .rp-l1 td:first-child { padding-inline-start:24px; }
             .rp-l2 td:first-child { padding-inline-start:36px; }
@@ -122,7 +182,10 @@ class extends Component
         <div>
             <h1 style="margin-bottom:2px">דוח הכנסות והוצאות</h1>
         </div>
-        <a href="{{ $this->pdfUrl() }}" target="_blank" class="btn btn-primary">הפקת PDF להדפסה</a>
+        <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+            <a href="{{ $this->pdfUrl('summary') }}" target="_blank" class="btn btn-secondary" title="הכנסות, הוצאות ורווח — סכומים כוללים בלבד">PDF מקוצר</a>
+            <a href="{{ $this->pdfUrl('full') }}" target="_blank" class="btn btn-primary" title="כל תוכנית וספק, וכל תשלום והוצאה">PDF מפורט</a>
+        </div>
     </div>
 
     <div class="tabs">
@@ -131,33 +194,33 @@ class extends Component
         <a href="{{ route('cashflow-report') }}" class="active">דוח הכנסות והוצאות</a>
     </div>
 
-    <div class="card" style="margin-bottom:var(--sp-lg)">
-        <div class="rp-filters">
-            <span class="rp-label">שנים</span>
-            <div class="filters">
-                @foreach ($this->availableYears as $year)
-                    <button type="button" wire:click="toggleFilter('years', '{{ $year }}')" class="chip {{ $isOn('years', $year) ? 'active' : '' }}">{{ $year }}</button>
-                @endforeach
+    <div class="rp-filterbar">
+        @foreach ([['key' => 'years', 'title' => 'שנים', 'all' => 'כל השנים', 'plural' => 'שנים'],
+                   ['key' => 'months', 'title' => 'חודשים', 'all' => 'כל החודשים', 'plural' => 'חודשים'],
+                   ['key' => 'sources', 'title' => 'תוכניות', 'all' => 'כל התוכניות', 'plural' => 'תוכניות']] as $filter)
+            <div class="rp-dd" x-data="{ open: false }" x-on:click.outside="open = false" x-on:keydown.escape="open = false">
+                <button type="button" class="rp-dd-btn {{ $this->{$filter['key']} ? 'is-set' : '' }}" x-on:click="open = ! open" :aria-expanded="open">
+                    <span class="rp-dd-title">{{ $filter['title'] }}</span>
+                    <span class="rp-dd-value">{{ $this->filterSummary($filter['key'], $filter['all'], $filter['plural']) }}</span>
+                    <svg class="rp-dd-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 6 4 4 4-4"/></svg>
+                </button>
+                <div class="rp-dd-panel" x-show="open" x-cloak x-transition.opacity.duration.100ms>
+                    <button type="button" class="rp-dd-item rp-dd-all" role="menuitemcheckbox" aria-checked="{{ $this->{$filter['key']} ? 'false' : 'true' }}" wire:click="selectAll('{{ $filter['key'] }}')">
+                        <span class="rp-box"></span>הכל
+                    </button>
+                    <div class="rp-dd-list {{ $filter['key'] === 'months' ? 'rp-dd-cols' : '' }}">
+                        @foreach ($this->filterOptions()[$filter['key']] as $value => $label)
+                            <button type="button" class="rp-dd-item" role="menuitemcheckbox" aria-checked="{{ $isOn($filter['key'], $value) ? 'true' : 'false' }}" wire:key="{{ $filter['key'] }}-{{ $value }}" wire:click="toggleFilter('{{ $filter['key'] }}', '{{ $value }}')">
+                                <span class="rp-box"></span>{{ $label }}
+                            </button>
+                        @endforeach
+                    </div>
+                </div>
             </div>
-            <span class="rp-label">חודשים</span>
-            <div class="filters">
-                @foreach (RevenueReport::MONTH_NAMES as $number => $name)
-                    <button type="button" wire:click="toggleFilter('months', '{{ $number }}')" class="chip {{ $isOn('months', $number) ? 'active' : '' }}">{{ $name }}</button>
-                @endforeach
-            </div>
-            <span class="rp-label">תוכניות</span>
-            <div class="filters">
-                @foreach ($this->sourceOptions as $key => $label)
-                    <button type="button" wire:click="toggleFilter('sources', '{{ $key }}')" class="chip {{ $isOn('sources', $key) ? 'active' : '' }}">{{ $label }}</button>
-                @endforeach
-            </div>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--sp-sm); flex-wrap:wrap; margin-top:var(--sp-md); font-size:var(--fs-caption); color:var(--color-text-secondary)">
-            <span>{{ $statement['period'] }}</span>
-            @if ($years || $months || $sources)
-                <button type="button" wire:click="clearFilters" class="btn btn-ghost btn-sm">ניקוי הסינון</button>
-            @endif
-        </div>
+        @endforeach
+        @if ($years || $months || $sources)
+            <button type="button" wire:click="clearFilters" class="btn btn-ghost btn-sm">ניקוי</button>
+        @endif
     </div>
 
     <div class="kpis" wire:loading.class="opacity-60">

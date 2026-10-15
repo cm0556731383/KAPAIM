@@ -18,6 +18,7 @@
         .st-section td { background: #286E9A; color: #FFFFFF; font-weight: bold; font-size: 13px; }
         .st-line td { border-bottom: 1px solid #E6E3D6; }
         .st-empty td { color: #5C6B5F; }
+        .st-item td { font-size: 10px; color: #5C6B5F; padding: 4px 12px 4px 12px; padding-right: 30px; border-bottom: 1px dotted #E6E3D6; }
         .st-total td { font-weight: bold; background: #EFEEE5; border-top: 1.5px solid #20241F; }
         .st-gap td { height: 12px; padding: 0; }
         .st-net td { font-weight: bold; font-size: 16px; padding: 12px; }
@@ -33,7 +34,7 @@
     <table class="head">
         <tr>
             <td style="width:68%">
-                <h1>דוח הכנסות והוצאות</h1>
+                <h1>דוח הכנסות והוצאות{{ $detail === 'summary' ? ' — מקוצר' : ' — מפורט' }}</h1>
                 <p class="meta">{{ $statement['period'] }}</p>
                 <p class="meta">הופק בתאריך <span class="ltr-num">{{ now()->format('d/m/Y') }}</span></p>
             </td>
@@ -45,6 +46,6 @@
     </table>
     <div class="rule"></div>
 
-    @include('reports.statement-body', ['statement' => $statement])
+    @include('reports.statement-body', ['statement' => $statement, 'detail' => $detail])
 </body>
 </html>

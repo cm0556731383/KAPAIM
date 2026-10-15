@@ -520,15 +520,60 @@ class SuppliersExpensesTest extends TestCase
             ->set('years', ['2026'])
             ->assertSee('₪300')
             ->assertDontSee('₪420')
-            ->assertSee(e(route('cashflow-report.pdf', ['years' => ['2026']])), false)
+            ->assertSee(e(route('cashflow-report.pdf', ['years' => ['2026'], 'detail' => 'summary'])), false)
+            ->assertSee(e(route('cashflow-report.pdf', ['years' => ['2026'], 'detail' => 'full'])), false)
             ->call('clearFilters')
             ->assertSee('₪420');
 
-        $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['years' => [2026], 'months' => [9]]))
-            ->assertOk()
-            ->assertHeader('content-type', 'application/pdf');
+        foreach (['summary', 'full'] as $detail) {
+            $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['years' => [2026], 'months' => [9], 'detail' => $detail]))
+                ->assertOk()
+                ->assertHeader('content-type', 'application/pdf');
+        }
 
         $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['months' => [13]]))->assertSessionHasErrors('months.0');
+        $this->actingAs($this->owner)->get(route('cashflow-report.pdf', ['detail' => 'huge']))->assertSessionHasErrors('detail');
+    }
+
+    public function test_income_statement_filters_start_at_all_and_unticking_keeps_the_rest(): void
+    {
+        $component = Livewire::actingAs($this->owner)->test('cashflow-report')
+            ->assertSee('כל החודשים')
+            ->assertSee('כל התוכניות');
+
+        // From "all", unticking one month leaves the other eleven.
+        $component->call('toggleFilter', 'months', '3');
+        $this->assertCount(11, $component->get('months'));
+        $this->assertNotContains('3', $component->get('months'));
+        $component->assertSee('11 חודשים');
+
+        // Ticking it back means everything again — stored as "all".
+        $component->call('toggleFilter', 'months', '3')->assertSet('months', [])->assertSee('כל החודשים');
+
+        // Narrow to two months, then "הכל" restores everything.
+        $component->set('months', ['9', '10'])->assertSee('ספטמבר, אוקטובר')
+            ->call('selectAll', 'months')->assertSet('months', []);
+
+        // Unticking the last selected one isn't "nothing" — it falls back to all.
+        $component->set('months', ['9'])->call('toggleFilter', 'months', '9')->assertSet('months', []);
+
+        $component->call('toggleFilter', 'months', '13')->assertStatus(404);
+    }
+
+    public function test_the_short_pdf_has_totals_only_and_the_detailed_one_every_expense(): void
+    {
+        $supplier = $this->createSupplier();
+        Expense::createForSupplier($supplier, 300, '2026-09-10', null, 'הדפסת חוברות לבדיקה');
+        $statement = app(\App\Services\RevenueReport::class)->statement();
+
+        $summary = view('reports.statement-pdf', ['statement' => $statement, 'detail' => 'summary'])->render();
+        $full = view('reports.statement-pdf', ['statement' => $statement, 'detail' => 'full'])->render();
+
+        $this->assertStringContainsString('₪300', $summary);
+        $this->assertStringNotContainsString(e($supplier->name), $summary);
+        $this->assertStringContainsString(e($supplier->name), $full);
+        $this->assertStringContainsString('10/09/2026', $full);
+        $this->assertStringContainsString('הדפסת חוברות לבדיקה', $full);
     }
 
     private function fakeSmove(): void

@@ -113,8 +113,14 @@ class RevenueReport
         ];
     }
 
-    /** statement() as a printable A4 PDF (reports/statement-pdf.blade.php) — the raw bytes. */
-    public function statementPdf(array $years = [], array $months = [], array $sources = []): string
+    public const PDF_DETAILS = ['summary' => 'מקוצר', 'full' => 'מפורט'];
+
+    /**
+     * statement() as a printable A4 PDF (reports/statement-pdf.blade.php) —
+     * the raw bytes. $detail: 'summary' (totals only) or 'full' (every
+     * program/supplier and its individual payments/expenses).
+     */
+    public function statementPdf(array $years = [], array $months = [], array $sources = [], string $detail = 'full'): string
     {
         $mpdf = new \Mpdf\Mpdf([
             'default_font' => 'dejavusans', 'directionality' => 'rtl', 'format' => 'A4',
@@ -127,7 +133,10 @@ class RevenueReport
         $previousErrorReporting = error_reporting(E_ERROR | E_PARSE | E_COMPILE_ERROR | E_CORE_ERROR);
 
         try {
-            $mpdf->WriteHTML(view('reports.statement-pdf', ['statement' => $this->statement($years, $months, $sources)])->render());
+            $mpdf->WriteHTML(view('reports.statement-pdf', [
+                'statement' => $this->statement($years, $months, $sources),
+                'detail' => array_key_exists($detail, self::PDF_DETAILS) ? $detail : 'full',
+            ])->render());
 
             return $mpdf->Output('', \Mpdf\Output\Destination::STRING_RETURN);
         } finally {

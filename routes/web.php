@@ -291,7 +291,7 @@ Route::middleware('auth')->group(function () {
         return \Illuminate\Support\Facades\Storage::disk('local')->response($path, null, ['Content-Disposition' => $disposition]);
     })->name('expenses.invoice');
     Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
-    // The income statement as a PDF, with the same filters as the page (years[], months[], sources[]).
+    // The income statement as a PDF, with the same filters as the page (years[], months[], sources[]) — detail=summary|full.
     Route::get('/cashflow-report/pdf', function (\Illuminate\Http\Request $request, \App\Services\RevenueReport $report) {
         abort_unless(auth()->user()->can('expenses.manage'), 403);
 
@@ -299,14 +299,16 @@ Route::middleware('auth')->group(function () {
             'years' => ['array'], 'years.*' => ['integer', 'between:2000,2100'],
             'months' => ['array'], 'months.*' => ['integer', 'between:1,12'],
             'sources' => ['array'], 'sources.*' => ['string', 'max:50'],
+            'detail' => ['nullable', 'in:'.implode(',', array_keys(\App\Services\RevenueReport::PDF_DETAILS))],
         ]);
-        $pdf = $report->statementPdf($filters['years'] ?? [], $filters['months'] ?? [], $filters['sources'] ?? []);
+        $detail = $filters['detail'] ?? 'full';
+        $pdf = $report->statementPdf($filters['years'] ?? [], $filters['months'] ?? [], $filters['sources'] ?? [], $detail);
 
         return response($pdf, 200, [
             'Content-Type' => 'application/pdf',
             'Content-Length' => strlen($pdf),
             'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
-                'inline', 'דוח הכנסות והוצאות '.now()->format('d-m-Y').'.pdf', 'income-statement-'.now()->format('Y-m-d').'.pdf',
+                'inline', 'דוח הכנסות והוצאות '.\App\Services\RevenueReport::PDF_DETAILS[$detail].' '.now()->format('d-m-Y').'.pdf', "income-statement-{$detail}-".now()->format('Y-m-d').'.pdf',
             ),
         ]);
     })->name('cashflow-report.pdf');
