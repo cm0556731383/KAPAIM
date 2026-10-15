@@ -298,16 +298,47 @@ class extends Component
         $this->notifySuccess('הזיכוי הופק ב-SUMIT ונשלח ללקוחה במייל.');
     }
 
-    public function generateDocument(string $documentType): void
+    /**
+     * The active templates of each template-based document type. With more
+     * than one active template of a type, its "+ הפקת …" button asks which
+     * one to use (the business owner's 2026-10-16 choice) instead of silently
+     * taking the oldest.
+     *
+     * @return \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, DocumentTemplate>>
+     */
+    #[Computed]
+    public function activeTemplatesByType()
+    {
+        return DocumentTemplate::where('is_active', true)->orderBy('name')->orderBy('id')->get()->groupBy('document_type');
+    }
+
+    public function generateDocument(string $documentType, ?int $templateId = null): void
     {
         $this->documentError = null;
 
-        $template = in_array($documentType, DocumentTemplate::SYSTEM_TYPES, true)
-            ? $documentType
-            : DocumentTemplate::where('document_type', $documentType)->where('is_active', true)->orderBy('id')->first();
+        if (in_array($documentType, DocumentTemplate::SYSTEM_TYPES, true)) {
+            $template = $documentType;
+        } else {
+            $active = $this->activeTemplatesByType->get($documentType, collect());
+
+            $template = match (true) {
+                $templateId !== null => $active->firstWhere('id', $templateId),
+                $active->count() > 1 => false,
+                default => $active->first(),
+            };
+
+            if ($template === false) {
+                $this->documentError = 'יש כמה תבניות פעילות לסוג מסמך זה — יש לבחור באיזו תבנית להשתמש.';
+
+                return;
+            }
+        }
 
         if (! $template) {
-            $this->documentError = 'לא נמצאה תבנית פעילה עבור סוג מסמך זה — יש להגדיר תבנית תחילה במסך תבניות מסמכים.';
+            $this->documentError = $templateId !== null
+                ? 'התבנית שנבחרה כבר אינה פעילה — יש לבחור תבנית אחרת.'
+                : 'לא נמצאה תבנית פעילה עבור סוג מסמך זה — יש להגדיר תבנית תחילה במסך תבניות מסמכים.';
+            $this->dispatch('close-modals');
 
             return;
         }
@@ -321,6 +352,7 @@ class extends Component
             );
         } catch (\RuntimeException $e) {
             $this->documentError = $e->getMessage();
+            $this->dispatch('close-modals');
 
             return;
         }
@@ -1153,6 +1185,19 @@ class extends Component
                         </div>
                         <button type="button" wire:click="generateDocument('invoice')" class="btn btn-primary" @disabled(! $this->canGenerateDocument('invoice'))>הפקת חשבונית</button>
                     </div>
+                @elseif (($choices = $this->activeTemplatesByType->get($type, collect()))->count() > 1 && $this->canGenerateDocument($type))
+                    {{-- Several active templates of this type — pick one. --}}
+                    <x-modal :trigger-label="'+ הפקת '.$label" trigger-class="btn btn-secondary" :title="'באיזו תבנית להפיק '.$label.'?'">
+                        <div style="display:flex; flex-direction:column; gap:var(--sp-sm)">
+                            @foreach ($choices as $choice)
+                                <button type="button" wire:click="generateDocument('{{ $type }}', {{ $choice->id }})" wire:loading.attr="disabled" class="template-choice">
+                                    <span class="template-choice-name">{{ $choice->name }}</span>
+                                    <span class="template-choice-excerpt">{{ \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags(str_replace(['<br>', '<br/>', '<br />', '</p>', '</div>'], ' ', $choice->content))))), 140) }}</span>
+                                    <span class="template-choice-meta">עודכנה ב-<span class="ltr-num">{{ $choice->updated_at?->format('d/m/Y') }}</span></span>
+                                </button>
+                            @endforeach
+                        </div>
+                    </x-modal>
                 @else
                     <button type="button" wire:click="generateDocument('{{ $type }}')" class="btn btn-secondary" @disabled(! $this->canGenerateDocument($type))>+ הפקת {{ $label }}</button>
                 @endif

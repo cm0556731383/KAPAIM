@@ -509,3 +509,11 @@ td.mono { display: table-cell; }
 @keyframes confirm-fade { from { opacity: 0; } }
 @keyframes confirm-pop { from { opacity: 0; transform: translateY(8px) scale(.97); } }
 @media (prefers-reduced-motion: reduce) { .confirm-overlay, .confirm-panel { animation: none; } }
+
+/* Deal page — choosing a template when a document type has several active ones. */
+.template-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; padding: var(--sp-md); text-align: start; font: inherit; color: var(--color-text-primary); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-control); cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
+.template-choice:hover, .template-choice:focus-visible { border-color: var(--color-primary); background: var(--color-primary-lighter); outline: none; }
+.template-choice:disabled { opacity: .6; cursor: wait; }
+.template-choice-name { font-weight: 600; }
+.template-choice-excerpt { font-size: var(--fs-small); color: var(--color-text-secondary); line-height: 1.6; }
+.template-choice-meta { font-size: var(--fs-caption); color: var(--color-text-secondary); }

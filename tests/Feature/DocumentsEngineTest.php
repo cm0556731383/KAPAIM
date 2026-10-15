@@ -211,6 +211,49 @@ class DocumentsEngineTest extends TestCase
         $this->get(route('document-view', $invoice))->assertOk();
     }
 
+    public function test_with_several_active_templates_the_deal_page_asks_which_one_to_use(): void
+    {
+        $deal = $this->createDeal();
+        $standard = $this->createTemplate('quote');
+        $summer = $this->createTemplate('quote');
+        $summer->update(['name' => 'הצעת מחיר — קיץ', 'content' => 'נוסח הקיץ']);
+        $retired = $this->createTemplate('quote');
+        $retired->update(['is_active' => false]);
+
+        $page = Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertSee('באיזו תבנית להפיק הצעת מחיר?')
+            ->assertSee('הצעת מחיר — קיץ')
+            ->assertSee($standard->name)
+            ->assertDontSee($retired->name);
+
+        // No silent pick of the oldest one.
+        $page->call('generateDocument', 'quote')
+            ->assertSet('documentError', 'יש כמה תבניות פעילות לסוג מסמך זה — יש לבחור באיזו תבנית להשתמש.');
+        $this->assertSame(0, $deal->documents()->count());
+
+        // An inactive (or another type's) template can't be chosen.
+        $page->call('generateDocument', 'quote', $retired->id)
+            ->assertSet('documentError', 'התבנית שנבחרה כבר אינה פעילה — יש לבחור תבנית אחרת.');
+
+        $page->call('generateDocument', 'quote', $summer->id)->assertSet('documentError', null);
+        $quote = $deal->documents()->where('document_type', 'quote')->sole();
+        $this->assertSame($summer->id, $quote->document_template_id);
+        $this->assertStringContainsString('נוסח הקיץ', $quote->rendered_content);
+    }
+
+    public function test_with_one_active_template_the_document_is_created_straight_away(): void
+    {
+        $deal = $this->createDeal();
+        $only = $this->createTemplate('quote');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertDontSee('באיזו תבנית להפיק')
+            ->call('generateDocument', 'quote')
+            ->assertSet('documentError', null);
+
+        $this->assertSame($only->id, $deal->documents()->where('document_type', 'quote')->sole()->document_template_id);
+    }
+
     public function test_the_templates_page_offers_only_the_types_the_app_lays_out_itself(): void
     {
         $types = Livewire::actingAs($this->owner)->test('document-templates')->instance()->documentTypes();
