@@ -626,6 +626,121 @@ class SubscriptionsTest extends TestCase
         $this->assertNull($subscription->fresh()->end_date);
     }
 
+    // ----- a subscription ends once its 10 months are over -----
+
+    public function test_a_subscription_ends_by_itself_once_its_ten_months_are_over_even_with_unsupplied_months(): void
+    {
+        $this->travelTo('2026-10-16');
+        $expired = $this->openSubscription();
+        $program = $this->createProgram();
+        $first = $expired->deliveries()->where('sequence_number', 1)->first();
+        $expired->markDeliverySupplied($expired->version, $first->id, $program->id, $this->owner);
+        $cancelled = $this->openSubscription();
+        $cancelled->cancel();
+
+        // The last day of month 10 — still active.
+        $this->travelTo($expired->periodEndDate()->setTime(12, 0));
+        $this->artisan('subscriptions:end-expired')->assertSuccessful();
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $expired->fresh()->status?->name);
+
+        // The next day the next cycle has begun — a subscription bought now belongs to it.
+        $this->travel(1)->days();
+        $current = $this->openSubscription();
+        $this->artisan('subscriptions:end-expired')->assertSuccessful();
+
+        $expired->refresh();
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $expired->status?->name);
+        $this->assertSame($expired->periodEndDate()->toDateString(), $expired->end_date->toDateString());
+        $this->assertSame(9, $expired->deliveries()->where('is_supplied', false)->count());
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $current->fresh()->status?->name);
+        $this->assertSame(Subscription::CANCELLED_STATUS_NAME, $cancelled->fresh()->status?->name);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'subscription.ended', 'deal_id' => $expired->deal_id]);
+
+        // The deal stays as history, and the subscriber discount on premium programs stops.
+        $this->assertNotNull(Deal::find($expired->deal_id));
+        $premium = $this->createProgram(price: 1000, isPremium: true);
+        $this->assertEquals(1000, (float) Deal::createForCustomer($expired->customer, $premium, null)->agreed_amount);
+    }
+
+    public function test_an_ended_subscription_can_still_record_a_late_delivery_and_is_not_reopened_by_unmarking(): void
+    {
+        $this->travelTo('2026-10-16');
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+        $this->travelTo($subscription->periodEndDate()->addDays(3));
+        Subscription::endExpired(app(\App\Services\ActivityLogger::class));
+
+        $subscription->refresh();
+        $delivery = $subscription->deliveries()->where('sequence_number', 2)->first();
+        $subscription->markDeliverySupplied($subscription->version, $delivery->id, $program->id, $this->owner);
+        $this->assertTrue($delivery->fresh()->is_supplied);
+
+        $subscription->refresh()->unmarkDeliverySupplied($subscription->version, $delivery->id);
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $subscription->fresh()->status?->name);
+    }
+
+    public function test_a_subscription_bought_after_the_cycle_ends_belongs_to_the_next_years_months(): void
+    {
+        \App\Models\AppSetting::put(\App\Services\HebrewCalendar::START_MONTH_SETTING, '12'); // אלול
+
+        $this->travelTo('2026-10-16'); // חשוון תשפ״ז
+        $thisYear = $this->openSubscription();
+        $this->assertSame('אלול תשפ״ו', $thisYear->monthLabel(1));
+        $this->assertSame('אייר תשפ״ז', $thisYear->monthLabel(10)); // a leap year — both Adars count
+
+        $this->travelTo('2027-07-15'); // תמוז תשפ״ז, after that cycle
+        $nextYear = $this->openSubscription();
+        $this->assertSame('אלול תשפ״ז', $nextYear->monthLabel(1));
+        $this->assertSame('סיוון תשפ״ח', $nextYear->monthLabel(10));
+
+        $this->artisan('subscriptions:end-expired');
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $thisYear->fresh()->status?->name);
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $nextYear->fresh()->status?->name);
+    }
+
+    public function test_an_ended_subscription_leaves_the_subscribers_list_unless_a_renewal_is_active(): void
+    {
+        $isSubscriber = fn (Customer $customer) => \App\Models\MailingMembership::where('mailing_list_id', \App\Models\MailingList::subscribersList()->id)
+            ->where('customer_id', $customer->id)->where('membership_status', \App\Models\MailingMembership::STATUS_ACTIVE)->exists();
+
+        $this->travelTo('2026-10-16');
+        $lapsed = $this->openSubscription();
+        $renewed = $this->openSubscription();
+        $this->assertTrue($isSubscriber($lapsed->customer));
+
+        // The renewing customer buys next year's subscription once the next cycle has begun.
+        $this->travelTo($renewed->periodEndDate()->addDays(1)->setTime(9, 0));
+        $renewal = Subscription::where('deal_id', Deal::createForCustomer($renewed->customer, null, $this->createSubscriptionBundle())->id)->firstOrFail();
+
+        $this->artisan('subscriptions:end-expired');
+
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $lapsed->fresh()->status?->name);
+        $this->assertFalse($isSubscriber($lapsed->customer));
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $renewed->fresh()->status?->name);
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $renewal->fresh()->status?->name);
+        $this->assertTrue($isSubscriber($renewed->customer));
+    }
+
+    public function test_ending_on_the_tenth_delivery_leaves_the_subscribers_list_and_unmarking_rejoins_it(): void
+    {
+        $isSubscriber = fn (Customer $customer) => \App\Models\MailingMembership::where('mailing_list_id', \App\Models\MailingList::subscribersList()->id)
+            ->where('customer_id', $customer->id)->where('membership_status', \App\Models\MailingMembership::STATUS_ACTIVE)->exists();
+
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+        foreach ($subscription->deliveries as $delivery) {
+            $subscription->fresh()->markDeliverySupplied($subscription->fresh()->version, $delivery->id, $program->id, $this->owner);
+        }
+        $this->assertSame(Subscription::ENDED_STATUS_NAME, $subscription->fresh()->status?->name);
+        $this->assertFalse($isSubscriber($subscription->customer));
+
+        $last = $subscription->deliveries()->where('sequence_number', 10)->first();
+        $subscription->fresh()->unmarkDeliverySupplied($subscription->fresh()->version, $last->id);
+
+        $this->assertSame(Subscription::ACTIVE_STATUS_NAME, $subscription->fresh()->status?->name);
+        $this->assertTrue($isSubscriber($subscription->customer));
+    }
+
     // ----- FR-8.23: standalone-program price-exceeded alert -----
 
     public function test_price_exceeded_alert_appears_when_standalone_purchases_exceed_the_subscription_price(): void

@@ -24,6 +24,10 @@ Schedule::command('materials:process-reminders')->daily();
 // calendar month has fully closed. See App\Console\Commands\ProcessExpenseReminders.
 Schedule::command('expenses:process-reminders')->daily();
 
+// A subscription ends once its 10 Hebrew months are over, even if not every
+// month was marked supplied. See App\Console\Commands\EndExpiredSubscriptions.
+Schedule::command('subscriptions:end-expired')->daily();
+
 // Records payments taken in SUMIT that the app hasn't seen yet (a paid
 // payment page whose customer never came back to the return page). SUMIT
 // has no payment webhook, so it's polled. See App\Console\Commands\SyncSumitPayments.

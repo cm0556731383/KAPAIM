@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\ActivityLogger;
 use App\Services\HebrewCalendar;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -108,6 +109,56 @@ class Subscription extends Model
         return $this->first_month_date
             ? CarbonImmutable::parse($this->first_month_date->toDateString())
             : HebrewCalendar::cycleStartFor($this->start_date, HebrewCalendar::startMonth(), self::TOTAL_DELIVERIES);
+    }
+
+    /** The last day of the subscription's 10th month — after it, the subscription is over (see endExpired()). */
+    public function periodEndDate(): CarbonImmutable
+    {
+        return HebrewCalendar::addMonths($this->firstMonthDate(), self::TOTAL_DELIVERIES)->subDay();
+    }
+
+    public function hasPeriodEnded(): bool
+    {
+        return now('Asia/Jerusalem')->toDateString() > $this->periodEndDate()->toDateString();
+    }
+
+    /**
+     * Ends every active subscription whose 10 months are over, even when not
+     * every month was marked supplied (the business owner's 2026-10-16
+     * decision — before this a subscription only ended on its 10th marked
+     * delivery, so one unmarked month kept it active, and its subscriber
+     * discount, forever). The deal and deliveries are left as history; the
+     * customer leaves the subscribers list (leaveSubscribersList()), same as
+     * ending on the 10th delivery. Run daily by `subscriptions:end-expired`.
+     *
+     * @return int how many subscriptions were ended
+     */
+    public static function endExpired(ActivityLogger $activityLogger): int
+    {
+        $ended = StatusDefinition::firstOrCreate(
+            ['scope' => 'subscription', 'name' => self::ENDED_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 2],
+        );
+
+        $count = 0;
+
+        self::whereHas('status', fn ($q) => $q->where('name', self::ACTIVE_STATUS_NAME))
+            ->with('customer.school')
+            ->get()
+            ->filter(fn (self $subscription) => $subscription->hasPeriodEnded())
+            ->each(function (self $subscription) use ($ended, $activityLogger, &$count) {
+                $subscription->update(['status_id' => $ended->id, 'end_date' => $subscription->periodEndDate()->toDateString()]);
+                $subscription->leaveSubscribersList();
+                $count++;
+
+                $activityLogger->log('subscription.ended', "מנוי #{$subscription->id} של \"{$subscription->customer?->school?->name}\" הסתיים אוטומטית — חודשי המנוי ({$subscription->monthLabel(1)} – {$subscription->monthLabel(self::TOTAL_DELIVERIES)}) הסתיימו", [
+                    'customer_id' => $subscription->customer_id,
+                    'deal_id' => $subscription->deal_id,
+                    'user' => null,
+                ]);
+            });
+
+        return $count;
     }
 
     /** Hebrew month of subscription month $month, e.g. "טבת תשפ״ז". */
@@ -227,7 +278,10 @@ class Subscription extends Model
             && $this->cancelled_from_month !== null
             && ! $this->isDeliveryCancelled($delivery);
 
-        if (! $this->isActive() && ! $suppliableAfterCancel) {
+        // One ended by date (endExpired()) may still have a supplied month recorded late.
+        $suppliableAfterEnd = $this->status?->name === self::ENDED_STATUS_NAME;
+
+        if (! $this->isActive() && ! $suppliableAfterCancel && ! $suppliableAfterEnd) {
             throw new RuntimeException('ניתן לסמן אספקה רק עבור מנוי פעיל.');
         }
 
@@ -241,7 +295,9 @@ class Subscription extends Model
             throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה עבור שורת האספקה.');
         }
 
-        return DB::transaction(function () use ($expectedVersion, $delivery, $program, $user) {
+        $wasActive = $this->isActive();
+
+        $supplied = DB::transaction(function () use ($expectedVersion, $delivery, $program, $user) {
             $affected = self::where('id', $this->id)
                 ->where('version', $expectedVersion)
                 ->update(['version' => DB::raw('version + 1')]);
@@ -270,12 +326,18 @@ class Subscription extends Model
 
             return $delivery->refresh();
         });
+
+        if ($wasActive && $this->refresh()->status?->name === self::ENDED_STATUS_NAME) {
+            $this->leaveSubscribersList();
+        }
+
+        return $supplied;
     }
 
     /**
      * Undoes a delivery row marked supplied by mistake — same optimistic lock
      * as markDeliverySupplied(). A subscription that auto-ended on its 10th
-     * delivery goes back to active.
+     * delivery goes back to active — unless its months are already over.
      *
      * @throws RuntimeException on a version conflict, or when the row isn't supplied.
      */
@@ -287,7 +349,9 @@ class Subscription extends Model
             throw new RuntimeException('שורת אספקה זו אינה מסומנת כסופקה.');
         }
 
-        return DB::transaction(function () use ($expectedVersion, $delivery) {
+        $wasEnded = $this->status?->name === self::ENDED_STATUS_NAME;
+
+        $unsupplied = DB::transaction(function () use ($expectedVersion, $delivery) {
             $affected = self::where('id', $this->id)
                 ->where('version', $expectedVersion)
                 ->update(['version' => DB::raw('version + 1')]);
@@ -298,7 +362,8 @@ class Subscription extends Model
 
             $delivery->update(['program_id' => null, 'is_supplied' => false, 'supplied_at' => null, 'supplied_by' => null]);
 
-            if ($this->status?->name === self::ENDED_STATUS_NAME) {
+            // Only an end caused by the 10th delivery is undone — never one whose months are over.
+            if ($this->status?->name === self::ENDED_STATUS_NAME && ! $this->hasPeriodEnded()) {
                 $active = StatusDefinition::firstOrCreate(
                     ['scope' => 'subscription', 'name' => self::ACTIVE_STATUS_NAME],
                     ['is_active' => true, 'sort_order' => 1],
@@ -310,6 +375,13 @@ class Subscription extends Model
 
             return $delivery->refresh();
         });
+
+        // Reopened — a subscriber again.
+        if ($wasEnded && $this->refresh()->isActive()) {
+            MailingMembership::addCustomer(MailingList::subscribersList(), $this->customer);
+        }
+
+        return $unsupplied;
     }
 
     /**
@@ -390,9 +462,26 @@ class Subscription extends Model
      * Build-plan 12: MailingMembership::removeCustomer() below now also
      * pushes this removal to Smove for real — nothing to change here.
      */
+    /**
+     * An ended or cancelled subscription's customer leaves the subscribers
+     * list — unless another subscription of theirs is still active (a
+     * renewal opened before this one's months ran out).
+     */
+    private function leaveSubscribersList(): void
+    {
+        $stillSubscribed = self::where('customer_id', $this->customer_id)
+            ->whereKeyNot($this->id)
+            ->whereHas('status', fn ($q) => $q->where('name', self::ACTIVE_STATUS_NAME))
+            ->exists();
+
+        if (! $stillSubscribed) {
+            MailingMembership::removeCustomer(MailingList::subscribersList(), $this->customer);
+        }
+    }
+
     private function removeSubscriptionMailingListMemberships(): void
     {
-        MailingMembership::removeCustomer(MailingList::subscribersList(), $this->customer);
+        $this->leaveSubscribersList();
 
         $deliveredProgramIds = $this->deliveries()->where('is_supplied', true)->pluck('program_id')->all();
 
