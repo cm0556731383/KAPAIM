@@ -579,7 +579,8 @@ class extends Component
     #[Computed]
     public function emailTemplates()
     {
-        return EmailTemplate::with('fields')->orderBy('name')->get();
+        // The supplier-invoice-request emails have their own editor on the document-templates page.
+        return EmailTemplate::with('fields')->whereNotIn('template_type', EmailTemplate::SUPPLIER_TYPES)->orderBy('name')->get();
     }
 
     // ----- אינטגרציות חיצוניות -----

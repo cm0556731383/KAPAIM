@@ -2,6 +2,7 @@
 
 namespace App\Services\Integrations;
 
+use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Support\BrandedEmail;
 use Illuminate\Http\Client\PendingRequest;
@@ -220,6 +221,51 @@ class SmoveClient
             BrandedEmail::wrap($body),
             $attachmentUrl ? [$attachmentUrl] : [],
         );
+    }
+
+    /**
+     * A supplier's missing-invoice request (Expense::requestInvoice()). $body
+     * is the business owner's own rendered EmailTemplate text; the upload
+     * button replaces its EmailTemplate::UPLOAD_BUTTON_TOKEN line, or is
+     * appended at the end when the text doesn't place it.
+     */
+    public function sendInvoiceRequestEmail(string $toEmail, string $toName, string $subject, string $body, string $uploadUrl): string
+    {
+        $html = self::textWithBlock($body, EmailTemplate::UPLOAD_BUTTON_TOKEN, BrandedEmail::primaryButton($uploadUrl, 'להעלאת החשבונית'));
+
+        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($html));
+    }
+
+    /**
+     * One email asking a supplier for several missing invoices
+     * (Expense::requestAllMissingInvoices()) — a row per expense, each with
+     * its own upload button, where EmailTemplate::EXPENSE_LIST_TOKEN sits.
+     *
+     * @param  list<array{label: string, url: string}>  $expenses
+     */
+    public function sendInvoicesRequestEmail(string $toEmail, string $toName, string $subject, string $body, array $expenses): string
+    {
+        $rows = collect($expenses)->map(fn (array $expense) => '<tr>'
+            .'<td style="padding:12px 8px; border-bottom:1px solid #DAD7C7; font-family:Heebo, Arial, sans-serif; font-size:15px; color:#20241F;">'.e($expense['label']).'</td>'
+            .'<td style="padding:12px 8px; border-bottom:1px solid #DAD7C7; text-align:left; white-space:nowrap;">'
+            .'<a href="'.e($expense['url']).'" target="_blank" style="display:inline-block; padding:9px 20px; background-color:#286E9A; border-radius:24px; font-family:Heebo, Arial, sans-serif; font-size:14px; font-weight:700; color:#FFFFFF; text-decoration:none;">להעלאת החשבונית</a>'
+            .'</td></tr>')->implode('');
+        $list = '<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin:20px 0; border-collapse:collapse;">'.$rows.'</table>';
+
+        $html = self::textWithBlock($body, EmailTemplate::EXPENSE_LIST_TOKEN, $list);
+
+        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($html));
+    }
+
+    /** Plain text as escaped paragraphs, with $blockHtml where $token sits (or at the end when it doesn't). */
+    private static function textWithBlock(string $body, string $token, string $blockHtml): string
+    {
+        $paragraphs = array_map(
+            fn (string $text) => trim($text) === '' ? '' : '<p>'.nl2br(e(trim($text, "\n"))).'</p>',
+            explode($token, $body),
+        );
+
+        return count($paragraphs) > 1 ? implode($blockHtml, $paragraphs) : $paragraphs[0].$blockHtml;
     }
 
     /** A SUMIT payment page link (PaymentLink::send()) — the payment button is the email's one action. */

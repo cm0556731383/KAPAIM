@@ -6,6 +6,8 @@ use App\Models\ActivityLog;
 use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\Document;
+use App\Models\EmailTemplate;
+use App\Models\ExternalIntegrationSetting;
 use App\Models\DocumentTemplate;
 use App\Models\Expense;
 use App\Models\Lead;
@@ -20,7 +22,9 @@ use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
@@ -305,6 +309,210 @@ class SuppliersExpensesTest extends TestCase
         $this->actingAs($this->owner)->get(route('expenses.invoice', $expense))->assertNotFound();
     }
 
+    // ----- asking the supplier for a missing invoice -----
+
+    public function test_requesting_an_invoice_emails_the_supplier_the_template_text_and_an_upload_link(): void
+    {
+        $this->fakeSmove();
+        EmailTemplate::supplierInvoiceRequest()->update([
+            'subject' => 'חשבונית ל-{{תאריך_התשלום}}',
+            'content' => "שלום {{שם_הספק}},\nשילמנו ₪{{סכום}} (הוצאה {{מספר_הוצאה}}).\n{{כפתור_העלאה}}\nתודה",
+        ]);
+        $supplier = $this->createSupplier();
+        $expense = Expense::createForSupplier($supplier, 1250.5, '2026-09-10');
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->call('requestInvoice', $expense->id)
+            ->assertHasNoErrors();
+
+        $this->assertNotNull($expense->fresh()->invoice_requested_at);
+        $campaign = collect(Http::recorded())->map(fn ($pair) => $pair[0])->first(fn ($request) => str_contains($request->url(), '/Campaigns'));
+        $this->assertSame('חשבונית ל-10/09/2026', $campaign['subject']);
+        $body = $campaign['body'];
+        $this->assertStringContainsString(e($supplier->name), $body);
+        $this->assertStringContainsString('₪1,250.50 (הוצאה '.$expense->id.')', $body);
+        $this->assertStringContainsString('להעלאת החשבונית', $body);
+        $this->assertStringContainsString(e(url('/supplier-invoice/'.$expense->id)), $body);
+        $this->assertStringNotContainsString('כפתור_העלאה', $body);
+        // The button sits where the text placed it — before the sign-off.
+        $this->assertLessThan(strpos($body, 'תודה'), strpos($body, 'להעלאת החשבונית'));
+    }
+
+    public function test_an_invoice_is_not_requested_when_the_supplier_has_no_email_or_it_is_already_uploaded(): void
+    {
+        $this->fakeSmove();
+        $noEmail = Expense::createForSupplier(tap($this->createSupplier())->update(['email' => null]), 100, '2026-09-01');
+        $documented = Expense::createForSupplier($this->createSupplier(), 100, '2026-09-01');
+        $documented->attachInvoice($this->invoiceFile());
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->call('requestInvoice', $noEmail->id)
+            ->call('requestInvoice', $documented->id);
+
+        $this->assertNull($noEmail->fresh()->invoice_requested_at);
+        $this->assertNull($documented->fresh()->invoice_requested_at);
+        Http::assertNothingSent();
+    }
+
+    public function test_a_failed_send_is_not_recorded_as_requested(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(['rest.smoove.io/*' => Http::response(['message' => 'nope'], 500)]);
+        $expense = Expense::createForSupplier($this->createSupplier(), 100, '2026-09-01');
+
+        Livewire::actingAs($this->owner)->test('expenses')->call('requestInvoice', $expense->id);
+
+        $this->assertNull($expense->fresh()->invoice_requested_at);
+        $this->assertDatabaseHas('external_operations', ['expense_id' => $expense->id, 'operation_type' => 'expense_invoice_request', 'status' => 'failed']);
+    }
+
+    public function test_requesting_from_all_suppliers_sends_one_email_per_supplier_with_a_link_per_missing_invoice(): void
+    {
+        $this->fakeSmove();
+        $several = $this->createSupplier();
+        $first = Expense::createForSupplier($several, 1000, '2026-09-03');
+        $second = Expense::createForSupplier($several, 730.5, '2026-09-21');
+        $documented = Expense::createForSupplier($several, 50, '2026-09-25');
+        $documented->attachInvoice($this->invoiceFile());
+        $one = $this->createSupplier();
+        $single = Expense::createForSupplier($one, 200, '2026-09-10');
+        $noEmail = Expense::createForSupplier(tap($this->createSupplier())->update(['email' => null]), 90, '2026-09-11');
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->assertSee('בקשת חשבוניות מכל הספקים (3)')
+            ->call('requestAllMissingInvoices')
+            ->assertHasNoErrors();
+
+        $campaigns = collect(Http::recorded())->map(fn ($pair) => $pair[0])->filter(fn ($request) => str_contains($request->url(), '/Campaigns'))->values();
+        $this->assertCount(2, $campaigns);
+
+        $bulk = $campaigns->first(fn ($request) => str_contains($request['body'], e($several->name)));
+        $this->assertSame('בקשה לחשבוניות עבור 2 תשלומים', $bulk['subject']);
+        $this->assertStringContainsString('(סך הכול ₪1,730.50)', $bulk['body']);
+        $this->assertStringContainsString('תשלום מתאריך 03/09/2026 · ₪1,000', $bulk['body']);
+        $this->assertStringContainsString('תשלום מתאריך 21/09/2026 · ₪730.50', $bulk['body']);
+        $this->assertStringContainsString(e(url('/supplier-invoice/'.$first->id)), $bulk['body']);
+        $this->assertStringContainsString(e(url('/supplier-invoice/'.$second->id)), $bulk['body']);
+        $this->assertStringNotContainsString('/supplier-invoice/'.$documented->id.'?', $bulk['body']);
+        $this->assertStringNotContainsString('רשימת_ההוצאות', $bulk['body']);
+
+        // A supplier missing just one invoice gets the single-expense email.
+        $singleEmail = $campaigns->first(fn ($request) => str_contains($request['body'], e($one->name)));
+        $this->assertSame(EmailTemplate::supplierInvoiceRequest()->render($single->invoiceRequestData())['subject'], $singleEmail['subject']);
+        $this->assertStringContainsString(e(url('/supplier-invoice/'.$single->id)), $singleEmail['body']);
+
+        $this->assertNotNull($first->fresh()->invoice_requested_at);
+        $this->assertNotNull($second->fresh()->invoice_requested_at);
+        $this->assertNotNull($single->fresh()->invoice_requested_at);
+        $this->assertNull($documented->fresh()->invoice_requested_at);
+        $this->assertNull($noEmail->fresh()->invoice_requested_at);
+    }
+
+    public function test_one_suppliers_failed_send_does_not_stop_the_others(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        $failing = $this->createSupplier();
+        Http::fake(fn ($request) => $request->method() === 'GET'
+            ? Http::response([], 200)
+            : (str_contains($request->url(), '/Contacts') && $request['email'] === $failing->email
+                ? Http::response(['message' => 'bad address'], 400)
+                : Http::response(['id' => 123], 200)));
+        $failed = Expense::createForSupplier($failing, 100, '2026-09-01');
+        $sent = Expense::createForSupplier($this->createSupplier(), 100, '2026-09-01');
+
+        Livewire::actingAs($this->owner)->test('expenses')->call('requestAllMissingInvoices');
+
+        $this->assertNull($failed->fresh()->invoice_requested_at);
+        $this->assertNotNull($sent->fresh()->invoice_requested_at);
+    }
+
+    public function test_the_supplier_uploads_the_invoice_from_the_emailed_link_without_logging_in(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 480, '2026-09-03', null, 'הערה פנימית');
+
+        $this->get($expense->invoiceUploadUrl())
+            ->assertOk()
+            ->assertSee('03/09/2026')
+            ->assertSee('480')
+            ->assertDontSee('הערה פנימית');
+
+        Livewire::test('supplier-invoice-upload', ['expense' => $expense])
+            ->set('invoice', $this->invoiceFile('INV-2231.pdf'))
+            ->call('save')
+            ->assertHasNoErrors()
+            ->assertSee('החשבונית התקבלה');
+
+        $expense->refresh();
+        $this->assertTrue($expense->hasInvoiceFile());
+        $this->assertSame('INV-2231.pdf', $expense->invoiceFileName());
+        $this->assertSame(Expense::HAS_INVOICE_STATUS_NAME, $expense->status?->name);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'expense.invoice_uploaded_by_supplier', 'expense_id' => $expense->id]);
+    }
+
+    public function test_the_supplier_upload_page_rejects_a_wrong_file_type_and_a_second_upload(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 480, '2026-09-03');
+
+        Livewire::test('supplier-invoice-upload', ['expense' => $expense])
+            ->set('invoice', UploadedFile::fake()->create('virus.exe', 10, 'application/octet-stream'))
+            ->call('save')
+            ->assertHasErrors('invoice');
+        $this->assertNull($expense->fresh()->document_id);
+
+        $first = $expense->attachInvoice($this->invoiceFile('first.pdf'));
+
+        Livewire::test('supplier-invoice-upload', ['expense' => $expense])
+            ->set('invoice', $this->invoiceFile('second.pdf'))
+            ->call('save');
+        $this->assertSame('first.pdf', $expense->fresh()->invoiceFileName());
+        $this->assertSame($first->file_reference, $expense->fresh()->document->file_reference);
+    }
+
+    public function test_the_supplier_upload_page_needs_a_valid_unexpired_link(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 480, '2026-09-03');
+
+        $this->get('/supplier-invoice/'.$expense->id)->assertForbidden();
+        $this->get($expense->invoiceUploadUrl().'0')->assertForbidden();
+
+        $url = $expense->invoiceUploadUrl();
+        $this->travel(Expense::INVOICE_UPLOAD_LINK_DAYS + 1)->days();
+        $this->get($url)->assertForbidden();
+    }
+
+    public function test_the_invoice_request_wording_is_edited_on_the_document_templates_page(): void
+    {
+        Livewire::actingAs($this->owner)->test('document-templates')
+            ->assertSet('invoiceRequestSubject', EmailTemplate::supplierInvoiceRequest()->subject)
+            ->set('invoiceRequestSubject', 'נושא חדש {{שם_הספק}}')
+            ->set('invoiceRequestContent', 'גוף חדש {{סכום}}')
+            ->assertSee('נושא חדש דפוס הראל')
+            ->call('saveInvoiceRequestTemplate')
+            ->assertHasNoErrors();
+
+        $template = EmailTemplate::supplierInvoiceRequest();
+        $this->assertSame('נושא חדש {{שם_הספק}}', $template->subject);
+        $this->assertSame('גוף חדש {{סכום}}', $template->content);
+        $this->assertSame(1, EmailTemplate::where('template_type', EmailTemplate::SUPPLIER_INVOICE_REQUEST)->count());
+
+        Livewire::actingAs($this->owner)->test('document-templates')
+            ->assertSet('bulkRequestSubject', EmailTemplate::supplierInvoicesRequest()->subject)
+            ->set('bulkRequestSubject', 'חסרות {{מספר_החשבוניות_החסרות}} חשבוניות')
+            ->assertSee('חסרות 2 חשבוניות')
+            ->call('saveBulkRequestTemplate')
+            ->assertHasNoErrors();
+        $this->assertSame('חסרות {{מספר_החשבוניות_החסרות}} חשבוניות', EmailTemplate::supplierInvoicesRequest()->subject);
+
+        Livewire::actingAs($this->owner)->test('settings')->assertDontSee('נושא חדש')->assertDontSee('בקשת כמה חשבוניות מספק');
+    }
+
+    private function fakeSmove(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x']]);
+        // Contact lookup finds nobody, so the contact is created, then the campaign sent.
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 123], 200));
+    }
+
     private function invoiceFile(string $name = 'invoice.pdf', string $mime = 'application/pdf'): UploadedFile
     {
         return UploadedFile::fake()->create($name, 30, $mime);
@@ -382,11 +590,15 @@ class SuppliersExpensesTest extends TestCase
         $expense = Expense::createForSupplier($this->createSupplier(), 500, '2026-08-05');
         Carbon::setTestNow('2026-09-01');
 
+        $this->fakeSmove();
+
         $this->artisan('expenses:process-reminders');
 
         $this->assertTrue(ActivityLog::where('activity_type', 'expense.invoice_reminder_due')->where('expense_id', $expense->id)->exists());
         Mail::assertNothingSent();
         Notification::assertNothingSent();
+        // The supplier is never emailed automatically — only from the expenses page.
+        Http::assertNothingSent();
     }
 
     public function test_reminder_job_never_flags_an_expense_from_the_open_month(): void

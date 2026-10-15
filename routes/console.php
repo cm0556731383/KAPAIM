@@ -19,9 +19,9 @@ Schedule::command('collections:process')->daily();
 // App\Console\Commands\ProcessMaterialReminders.
 Schedule::command('materials:process-reminders')->daily();
 
-// Build-plan 11 (FR-6.7-FR-6.9) — logs a (stubbed) reminder to the supplier
-// for expenses still missing an invoice once their expense_date's calendar
-// month has fully closed. See App\Console\Commands\ProcessExpenseReminders.
+// Build-plan 11 (FR-6.7-FR-6.9) — logs an internal reminder (never emails the
+// supplier) for expenses still missing an invoice once their expense_date's
+// calendar month has fully closed. See App\Console\Commands\ProcessExpenseReminders.
 Schedule::command('expenses:process-reminders')->daily();
 
 // Records payments taken in SUMIT that the app hasn't seen yet (a paid

@@ -89,6 +89,8 @@ class ActivityLog extends Model
         'expense.created' => 'הוצאה חדשה',
         'expense.deleted' => 'מחיקת הוצאה',
         'expense.invoice_attached' => 'צירוף חשבונית להוצאה',
+        'expense.invoice_removed' => 'מחיקת חשבונית מהוצאה',
+        'expense.invoice_uploaded_by_supplier' => 'הספק העלה חשבונית',
         'expense.updated' => 'עדכון הוצאה',
         'external_integration_setting.updated' => 'עדכון הגדרות חיבור',
         'external_integration_setting.toggled' => 'הפעלה/השבתה של חיבור',

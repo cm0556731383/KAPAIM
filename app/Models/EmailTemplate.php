@@ -41,6 +41,52 @@ class EmailTemplate extends Model
         'שם_בית_הספר' => 'school_name',
     ];
 
+    /**
+     * The email asking a supplier for a missing invoice (Expense::requestInvoice()).
+     * Seeded by migration, edited only on the document-templates page — kept
+     * out of TYPE_LABELS so the settings screen neither lists nor creates one.
+     */
+    public const SUPPLIER_INVOICE_REQUEST = 'supplier_invoice_request';
+
+    /** The expense row's details a supplier-invoice-request email can include — Expense::invoiceRequestData(). */
+    public const EXPENSE_PLACEHOLDERS = [
+        'שם_הספק' => 'supplier_name',
+        'תאריך_התשלום' => 'expense_date',
+        'סכום' => 'amount',
+        'תוכנית' => 'program_name',
+        'הערות' => 'notes',
+        'מספר_הוצאה' => 'expense_id',
+    ];
+
+    /** One email asking a supplier for several missing invoices at once — Expense::requestAllMissingInvoices(). Same editing rules as SUPPLIER_INVOICE_REQUEST. */
+    public const SUPPLIER_INVOICES_REQUEST = 'supplier_invoices_request';
+
+    /** The supplier-level details a several-invoices request can include — Expense::requestAllMissingInvoices(). */
+    public const SUPPLIER_PLACEHOLDERS = [
+        'שם_הספק' => 'supplier_name',
+        'מספר_החשבוניות_החסרות' => 'expense_count',
+        'סכום_כולל' => 'total_amount',
+    ];
+
+    /** Where the list of expenses (each with its own upload button) goes in a several-invoices request (appended at the end when absent). */
+    public const EXPENSE_LIST_TOKEN = '{{רשימת_ההוצאות}}';
+
+    /** The supplier-invoice email types — edited on the document-templates page, never in settings. */
+    public const SUPPLIER_TYPES = [self::SUPPLIER_INVOICE_REQUEST, self::SUPPLIER_INVOICES_REQUEST];
+
+    public static function supplierInvoicesRequest(): ?self
+    {
+        return self::where('template_type', self::SUPPLIER_INVOICES_REQUEST)->first();
+    }
+
+    /** Where the "upload the invoice" button goes in a supplier-invoice-request email (appended at the end when absent). */
+    public const UPLOAD_BUTTON_TOKEN = '{{כפתור_העלאה}}';
+
+    public static function supplierInvoiceRequest(): ?self
+    {
+        return self::where('template_type', self::SUPPLIER_INVOICE_REQUEST)->first();
+    }
+
     protected function casts(): array
     {
         return [
@@ -61,7 +107,7 @@ class EmailTemplate extends Model
     {
         $replace = static fn (string $text): string => preg_replace_callback(
             '/\{\{\s*([\p{L}\p{N}_.]+)\s*\}\}/u',
-            fn ($m) => $data[self::PLACEHOLDERS[$m[1]] ?? $m[1]] ?? $m[0],
+            fn ($m) => $data[self::PLACEHOLDERS[$m[1]] ?? self::EXPENSE_PLACEHOLDERS[$m[1]] ?? self::SUPPLIER_PLACEHOLDERS[$m[1]] ?? $m[1]] ?? $m[0],
             $text,
         );
 

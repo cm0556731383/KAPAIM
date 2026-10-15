@@ -5,6 +5,8 @@ use App\Models\Expense;
 use App\Models\Program;
 use App\Models\Supplier;
 use App\Services\ActivityLogger;
+use App\Services\Integrations\ExternalOperationRunner;
+use App\Services\Integrations\SmoveClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -115,6 +117,61 @@ class extends Component
         $this->notifySuccess('החשבונית הועלתה.');
     }
 
+    /**
+     * Emails the supplier a request for this expense's missing invoice, with
+     * a link to upload it straight into the system — Expense::requestInvoice().
+     */
+    public function requestInvoice(int $expenseId, ExternalOperationRunner $runner, SmoveClient $smove): void
+    {
+        $expense = Expense::with(['supplier', 'program', 'document'])->findOrFail($expenseId);
+
+        try {
+            $operation = $expense->requestInvoice($runner, $smove);
+        } catch (\RuntimeException $e) {
+            $this->notifyError($e->getMessage());
+
+            return;
+        }
+
+        unset($this->expenses);
+
+        $operation->succeeded()
+            ? $this->notifySuccess("בקשה לחשבונית נשלחה לספק ({$expense->supplier->email}).")
+            : $this->notifyError('שליחת המייל לספק נכשלה: '.$operation->error_message);
+    }
+
+    /**
+     * "שליחת בקשות לכל הספקים": one email per supplier for every expense
+     * still missing an invoice — Expense::requestAllMissingInvoices().
+     */
+    public function requestAllMissingInvoices(ExternalOperationRunner $runner, SmoveClient $smove): void
+    {
+        try {
+            $result = Expense::requestAllMissingInvoices($runner, $smove);
+        } catch (\RuntimeException $e) {
+            $this->notifyError($e->getMessage());
+
+            return;
+        }
+
+        unset($this->expenses, $this->missingInvoices);
+
+        if ($result['sent']) {
+            $this->notifySuccess('נשלחו בקשות ל-'.count($result['sent']).' ספקים עבור '.$result['expense_count'].' הוצאות.');
+        }
+
+        $problems = [];
+        if ($result['no_email']) {
+            $problems[] = 'לא נשלח לספקים ללא כתובת מייל: '.implode(', ', $result['no_email']).'.';
+        }
+        foreach ($result['failed'] as $supplier => $error) {
+            $problems[] = "השליחה לספק {$supplier} נכשלה: {$error}";
+        }
+        if ($problems) {
+            $this->notifyError(implode(' ', $problems));
+        }
+    }
+
     /** Deletes an expense's invoice file so the right one can be uploaded instead — Expense::removeInvoice(). */
     public function removeInvoice(int $expenseId, ActivityLogger $activityLogger): void
     {
@@ -199,6 +256,13 @@ class extends Component
         return Expense::with(['supplier', 'program', 'status', 'document'])->orderByDesc('expense_date')->orderByDesc('id')->get();
     }
 
+    /** Expenses still without an invoice file — for the "send to all suppliers" button. */
+    #[Computed]
+    public function missingInvoices()
+    {
+        return Expense::withoutInvoiceFile();
+    }
+
     #[Computed]
     public function suppliers()
     {
@@ -219,6 +283,16 @@ class extends Component
             <h1 style="margin-bottom:2px">הוצאות</h1>
         </div>
         <div style="display:flex; gap:var(--sp-sm); align-items:center">
+        @php($missing = $this->missingInvoices)
+        @php($missingSuppliers = $missing->filter(fn ($e) => $e->supplier?->email)->pluck('supplier_id')->unique()->count())
+        @if ($missingSuppliers)
+            <button type="button" wire:click="requestAllMissingInvoices" wire:loading.attr="disabled" wire:target="requestAllMissingInvoices"
+                wire:confirm="לשלוח מייל ל-{{ $missingSuppliers }} ספקים עבור {{ $missing->filter(fn ($e) => $e->supplier?->email)->count() }} הוצאות ללא חשבונית? ספק שחסרות לו כמה חשבוניות יקבל מייל אחד עם קישור לכל אחת."
+                class="btn btn-secondary">
+                <span wire:loading.remove wire:target="requestAllMissingInvoices">בקשת חשבוניות מכל הספקים ({{ $missing->filter(fn ($e) => $e->supplier?->email)->count() }})</span>
+                <span wire:loading wire:target="requestAllMissingInvoices">שולח...</span>
+            </button>
+        @endif
         <a href="{{ route('expenses.export') }}" class="btn btn-secondary">ייצוא לאקסל</a>
         <x-modal trigger-label="+ הוצאה חדשה" title="הוצאה חדשה">
             <form wire:submit="addExpense" class="form-grid">
@@ -336,10 +410,20 @@ class extends Component
                                     <button type="button" wire:click="removeInvoice({{ $expense->id }})" wire:confirm="למחוק את החשבונית? הקובץ יימחק ואפשר יהיה להעלות חשבונית אחרת." class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                                 </div>
                             @else
-                                <label class="btn btn-secondary btn-sm" style="cursor:pointer; margin:0">
-                                    העלאת חשבונית
-                                    <input type="file" wire:model="invoiceFiles.{{ $expense->id }}" accept="application/pdf,image/*" style="display:none">
-                                </label>
+                                <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center">
+                                    <label class="btn btn-secondary btn-sm" style="cursor:pointer; margin:0">
+                                        העלאת חשבונית
+                                        <input type="file" wire:model="invoiceFiles.{{ $expense->id }}" accept="application/pdf,image/*" style="display:none">
+                                    </label>
+                                    @if ($expense->supplier?->email)
+                                        <button type="button" wire:click="requestInvoice({{ $expense->id }})" wire:confirm="לשלוח לספק {{ $expense->supplier->name }} ({{ $expense->supplier->email }}) מייל עם בקשה לחשבונית וקישור להעלאתה?" wire:loading.attr="disabled" wire:target="requestInvoice({{ $expense->id }})" class="btn btn-ghost btn-sm">{{ $expense->invoice_requested_at ? 'שליחה חוזרת לספק' : 'בקשה מהספק במייל' }}</button>
+                                    @else
+                                        <button type="button" class="btn btn-ghost btn-sm" style="opacity:.5; cursor:not-allowed" disabled title="לספק אין כתובת מייל — אפשר להוסיף אותה בכרטיס הספק">בקשה מהספק במייל</button>
+                                    @endif
+                                </div>
+                                @if ($expense->invoice_requested_at)
+                                    <div style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">נשלחה בקשה לספק ב-<span class="ltr-num">{{ $expense->invoice_requested_at->format('d/m/Y') }}</span></div>
+                                @endif
                             @endif
                             <div wire:loading wire:target="invoiceFiles.{{ $expense->id }}" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">מעלה...</div>
                             @error('invoiceFiles.'.$expense->id) <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror

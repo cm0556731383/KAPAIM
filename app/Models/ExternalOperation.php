@@ -39,6 +39,7 @@ class ExternalOperation extends Model
         'materials_send' => 'שליחת חומרי לימוד',
         'material_reminder' => 'תזכורת על חומרי לימוד',
         'expense_invoice_reminder' => 'תזכורת על חשבונית הוצאה',
+        'expense_invoice_request' => 'בקשת חשבונית מספק',
         'lead_confirmation' => 'מייל אישור לליד',
         'mailing_list_join' => 'הצטרפות לרשימת תפוצה',
         'mailing_list_remove' => 'הסרה מרשימת תפוצה',

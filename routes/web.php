@@ -80,6 +80,13 @@ Route::get('/materials/attachments/{attachment}/download', function (
 Route::livewire('/documents/{document}/sign', 'document-sign')->middleware('signed')->name('documents.sign');
 
 /**
+ * Where a supplier uploads a missing invoice, from the request email
+ * (Expense::requestInvoice()/invoiceUploadUrl()). Outside auth, protected by
+ * an expiring `signed` link — same pattern as documents.sign above.
+ */
+Route::livewire('/supplier-invoice/{expense}', 'supplier-invoice-upload')->middleware('signed')->name('supplier-invoice.upload');
+
+/**
  * Build-plan 12 follow-up (FR-4.2) — the real generated PDF embedded in a
  * "PDF" document send (Document::pdfUrl()). Same signed-link pattern; the
  * PDF is generated on the fly from the frozen rendered_content (FR-4.14),
