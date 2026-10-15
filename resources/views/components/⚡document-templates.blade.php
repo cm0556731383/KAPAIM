@@ -308,20 +308,6 @@ class extends Component
         return $field->placeholderToken();
     }
 
-    public function removeField(int $id, ActivityLogger $activityLogger): void
-    {
-        $field = DocumentTemplateField::findOrFail($id);
-        $templateId = $field->document_template_id;
-        $name = $field->name;
-        $field->delete();
-
-        $activityLogger->log('document_template_field.removed', "הוסר שדה \"{$name}\" מתבנית מסמך", [
-            'metadata' => ['document_template_id' => $templateId],
-        ]);
-
-        unset($this->templates);
-    }
-
     #[Computed]
     public function templates()
     {
@@ -539,35 +525,6 @@ class extends Component
             </div>
         </div>
 
-    </section>
-
-    <section class="settings-section">
-        <div class="section-head"><h2>שדות התבניות</h2></div>
-        @foreach ($this->templates as $template)
-            <div class="card" style="margin-bottom:var(--sp-md)">
-                <h3 style="margin-bottom:4px">{{ $template->name }}</h3>
-                <p class="text-text-secondary" style="margin:0 0 var(--sp-sm); font-size:var(--fs-caption)">{{ DocumentTemplate::TYPES[$template->document_type] ?? $template->document_type }}</p>
-                <div class="table-scroll">
-                <table>
-                    <thead><tr><th>שם שדה</th><th>סוג</th><th>שדה מקושר</th><th>חובה</th><th>סדר</th><th></th></tr></thead>
-                    <tbody>
-                        @forelse ($template->fields as $field)
-                            <tr>
-                                <td>{{ $field->name }}</td>
-                                <td><span class="scope-pill">{{ $field->field_type === 'linked' ? 'מקושר' : 'טקסט חופשי' }}</span></td>
-                                <td>{{ $field->linked_field ? (DocumentLinkedFields::OPTIONS[$field->linked_field] ?? '—') : '—' }}</td>
-                                <td>{{ $field->is_required ? 'כן' : 'לא' }}</td>
-                                <td class="ltr-num">{{ $field->sort_order }}</td>
-                                <td><button type="button" wire:click="removeField({{ $field->id }})" class="btn btn-ghost btn-sm">הסרה</button></td>
-                            </tr>
-                        @empty
-                            <tr><td colspan="6" class="text-text-secondary">אין עדיין שדות בתבנית זו.</td></tr>
-                        @endforelse
-                    </tbody>
-                </table>
-                </div>
-            </div>
-        @endforeach
     </section>
 
     @include('partials.supplier-email-editor', [
