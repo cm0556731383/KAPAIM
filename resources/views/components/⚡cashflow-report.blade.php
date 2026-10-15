@@ -323,5 +323,5 @@ class extends Component
         </div>
     </div>
 
-    <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin-top:var(--sp-md)">הכנסה ממנוי שנתי נפרשת על פני 12 חודשי המנוי. הכנסות מסווגות לפי התוכנית או המארז של העסקה, והוצאות לפי הספק. לחיצה על שורה פותחת את הפירוט שלה.</p>
+    <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin-top:var(--sp-md)">הכנסה ממנוי נפרשת שווה בשווה על פני {{ \App\Models\Subscription::TOTAL_DELIVERIES }} חודשי המנוי, ובמנוי שבוטל נספרים רק החודשים שלפני הביטול. הכנסות מסווגות לפי התוכנית או המארז של העסקה, והוצאות לפי הספק. לחיצה על שורה פותחת את הפירוט שלה.</p>
 </div>

@@ -14,6 +14,7 @@ use App\Models\StatusDefinition;
 use App\Models\Subscription;
 use App\Models\Supplier;
 use App\Services\ActivityLogger;
+use App\Services\HebrewCalendar;
 use App\Services\RevenueReport;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -85,7 +86,7 @@ class RevenueReportTest extends TestCase
 
     // ----- FR-6.4: subscription revenue is amortized, never a lump sum -----
 
-    public function test_a_subscription_paid_in_full_in_one_month_is_spread_evenly_across_its_12_months(): void
+    public function test_a_subscription_paid_in_full_in_one_month_is_spread_evenly_across_its_10_months(): void
     {
         Carbon::setTestNow('2026-01-15');
 
@@ -93,18 +94,36 @@ class RevenueReportTest extends TestCase
         $deal = $this->dealWithPaymentMethod(agreedAmount: 4800, bundle: $bundle);
         // Paid in full immediately, in the very same month the subscription starts.
         $deal->recordPayment($deal->version, 4800);
+        $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
 
         $revenue = $this->report->revenueByMonth();
 
-        // 12 equal slices of 400, one per month from January through December —
-        // never a single 4800 lump sum in January.
-        foreach (range(1, 12) as $offset) {
-            $month = Carbon::parse('2026-01-01')->addMonths($offset - 1)->format('Y-m');
-            $this->assertArrayHasKey($month, $revenue, "Expected a revenue slice for {$month}");
-            $this->assertEqualsWithDelta(400.0, $revenue[$month], 0.01, "Expected month {$month} to show the amortized slice, not a lump sum");
+        // 10 equal slices of 480 — one per subscription month, in the Gregorian
+        // month each of its Hebrew months starts — never a 4800 lump sum.
+        $this->assertSame(10, Subscription::TOTAL_DELIVERIES);
+        $expected = [];
+        foreach (range(0, 9) as $offset) {
+            $month = HebrewCalendar::addMonths($subscription->firstMonthDate(), $offset)->format('Y-m');
+            $expected[$month] = ($expected[$month] ?? 0) + 480.0;
         }
-
+        $this->assertEqualsWithDelta($expected, $revenue, 0.01);
         $this->assertEqualsWithDelta(4800.0, array_sum($revenue), 0.01);
+    }
+
+    public function test_subscription_slices_add_up_exactly_when_the_price_does_not_divide_by_10(): void
+    {
+        Carbon::setTestNow('2026-01-15');
+
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1000.05, bundle: $bundle);
+        $deal->recordPayment($deal->version, 1000.05);
+
+        $items = $this->report->statement()['revenue'][0]['items'];
+
+        $this->assertCount(10, $items);
+        $this->assertEqualsWithDelta(1000.05, array_sum(array_column($items, 'amount')), 0.001);
+        $this->assertStringStartsWith('מנוי, חודש 1 מתוך 10 (', $items[0]['description']);
+        $this->assertStringStartsWith('מנוי, חודש 10 מתוך 10 (', $items[9]['description']);
     }
 
     public function test_subscription_revenue_recognition_is_independent_of_actual_payment_amount(): void
@@ -117,12 +136,63 @@ class RevenueReportTest extends TestCase
         $deal->recordPayment($deal->version, 100);
 
         // ...yet recognized revenue is still the full agreed_price spread
-        // over 12 months (FR-6.4 spreads agreed_price, not cash received).
+        // over the subscription's 10 months (FR-6.4 spreads agreed_price, not cash received).
         $revenue = $this->report->revenueByMonth();
         $this->assertEqualsWithDelta(1200.0, array_sum($revenue), 0.01);
 
         $byProgram = $this->report->revenueByProgram();
         $this->assertEqualsWithDelta(1200.0, $byProgram[$bundle->name], 0.01);
+    }
+
+    public function test_a_cancelled_subscription_keeps_only_the_months_before_the_cancellation(): void
+    {
+        Carbon::setTestNow('2026-01-15');
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1000, bundle: $bundle);
+        $deal->recordPayment($deal->version, 1000);
+        $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
+
+        // Cancelled from month 4 with the default credit (7 × ₪100).
+        $subscription->cancel(4);
+
+        $items = $this->report->statement()['revenue'][0]['items'];
+        $this->assertSame(['מנוי, חודש 1', 'מנוי, חודש 2', 'מנוי, חודש 3'], array_map(fn ($item) => explode(' מתוך', $item['description'])[0], $items));
+        $this->assertEqualsWithDelta(300.0, $this->report->statement()['revenue_total'], 0.001);
+        $this->assertEqualsWithDelta(300.0, array_sum($this->report->revenueByMonth()), 0.001);
+    }
+
+    public function test_a_cancellation_with_a_manual_credit_is_balanced_by_one_adjustment_line(): void
+    {
+        Carbon::setTestNow('2026-01-15');
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1000, bundle: $bundle);
+        $deal->recordPayment($deal->version, 1000);
+        $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
+
+        // From month 4, but only ₪500 credited (not the default ₪700).
+        Carbon::setTestNow('2026-02-10');
+        $subscription->cancel(4, 500);
+
+        $statement = $this->report->statement();
+        $items = $statement['revenue'][0]['items'];
+        $this->assertCount(4, $items);
+        $this->assertEqualsWithDelta(500.0, $statement['revenue_total'], 0.001);
+        $adjustment = collect($items)->first(fn ($item) => str_starts_with($item['description'], 'התאמה לסכום הזיכוי'));
+        $this->assertSame('10/02/2026', $adjustment['date']);
+        $this->assertEqualsWithDelta(200.0, $adjustment['amount'], 0.001);
+    }
+
+    public function test_a_subscription_cancelled_from_its_first_month_with_a_full_credit_recognizes_nothing(): void
+    {
+        Carbon::setTestNow('2026-01-15');
+        $bundle = $this->createSubscriptionBundle();
+        $deal = $this->dealWithPaymentMethod(agreedAmount: 1000, bundle: $bundle);
+        $deal->recordPayment($deal->version, 1000);
+
+        Subscription::where('deal_id', $deal->id)->firstOrFail()->cancel(1);
+
+        $this->assertSame([], $this->report->statement()['revenue']);
+        $this->assertSame(0.0, $this->report->statement()['revenue_total']);
     }
 
     // ----- profit = revenue minus program-attributed expenses -----
@@ -213,9 +283,13 @@ class RevenueReportTest extends TestCase
         $deal = $this->dealWithPaymentMethod(agreedAmount: 1200, bundle: $bundle);
         $deal->recordPayment($deal->version, 1200);
 
-        $march = $this->report->statement(years: [2026], months: [3]);
-        $this->assertEqualsWithDelta(100.0, $march['revenue_total'], 0.01);
-        $this->assertSame($bundle->name, $march['revenue'][0]['label']);
+        $subscription = Subscription::where('deal_id', $deal->id)->firstOrFail();
+        $third = HebrewCalendar::addMonths($subscription->firstMonthDate(), 2);
+
+        // The Gregorian month the subscription's 3rd month starts in holds (at least) one tenth.
+        $month = $this->report->statement(years: [(int) $third->format('Y')], months: [(int) $third->format('n')]);
+        $this->assertGreaterThanOrEqual(120.0 - 0.01, $month['revenue_total']);
+        $this->assertSame($bundle->name, $month['revenue'][0]['label']);
 
         $this->assertEqualsWithDelta(1200.0, $this->report->statement(sources: ["bundle:{$bundle->id}"])['revenue_total'], 0.01);
         $this->assertContains(2026, $this->report->availableYears());

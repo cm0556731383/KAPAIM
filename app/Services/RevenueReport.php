@@ -24,13 +24,14 @@ use Illuminate\Support\Collection;
  * does NOT recognize its revenue in the month(s) its Payment rows actually
  * landed. Every such deal has exactly one Subscription row
  * (Deal::openSubscriptionIfApplicable(), build-plan 09) — that
- * subscription's agreed_price is instead spread evenly
- * (agreed_price / 12) across the 12 calendar months starting at
- * Subscription.start_date, independent of the deal's real payment history.
- * This is deliberately independent of whether the subscription was later
- * cancelled too — recognized revenue reflects the ORIGINAL sale schedule,
- * the same way Subscription::cancel() never rewrites deal/payment history
- * either (this stage's judgment call — see this stage's report).
+ * subscription's agreed_price is instead spread evenly over the
+ * subscription's own months (Subscription::TOTAL_DELIVERIES, 10 Hebrew
+ * months from Subscription::firstMonthDate()) — each tenth recognized in the
+ * Gregorian month that Hebrew month starts in — independent of the deal's
+ * real payment history. A cancelled subscription recognizes only its
+ * months before the cancellation, net of the credit actually given — see
+ * subscriptionMonthlySlices() (the business owner's 2026-10-16 decision;
+ * it used to keep the original full schedule).
  *
  * revenueByProgram()/profitByProgram() bucket every bundle-deal's revenue
  * under the synthetic BUNDLE_BUCKET_LABEL (a bundle is never a catalog
@@ -179,12 +180,14 @@ class RevenueReport
         ] + $this->revenueSource($payment->deal));
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$entries) {
-            foreach ($this->subscriptionMonthlySlices($subscription) as $month => $amount) {
+            foreach ($this->subscriptionMonthlySlices($subscription) as $slice) {
                 $entries->push([
-                    'month' => $month,
-                    'date' => "{$month}-01",
-                    'amount' => $amount,
-                    'description' => "חלק חודשי של מנוי · {$this->customerName($subscription->deal)}",
+                    'month' => $slice['date']->format('Y-m'),
+                    'date' => $slice['date']->toDateString(),
+                    'amount' => $slice['amount'],
+                    'description' => ($slice['number']
+                        ? "מנוי, חודש {$slice['number']} מתוך ".Subscription::TOTAL_DELIVERIES." ({$slice['label']})"
+                        : 'התאמה לסכום הזיכוי בביטול המנוי').' · '.$this->customerName($subscription->deal),
                 ] + $this->revenueSource($subscription->deal));
             }
         });
@@ -246,8 +249,9 @@ class RevenueReport
         });
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$revenue) {
-            foreach ($this->subscriptionMonthlySlices($subscription) as $month => $amount) {
-                $revenue[$month] = ($revenue[$month] ?? 0) + $amount;
+            foreach ($this->subscriptionMonthlySlices($subscription) as $slice) {
+                $month = $slice['date']->format('Y-m');
+                $revenue[$month] = ($revenue[$month] ?? 0) + $slice['amount'];
             }
         });
 
@@ -268,7 +272,7 @@ class RevenueReport
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$revenue) {
             $label = $subscription->deal->program?->name ?? $subscription->deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL;
-            $revenue[$label] = ($revenue[$label] ?? 0) + (float) $subscription->agreed_price;
+            $revenue[$label] = ($revenue[$label] ?? 0) + array_sum(array_column($this->subscriptionMonthlySlices($subscription), 'amount'));
         });
 
         return $revenue;
@@ -345,18 +349,53 @@ class RevenueReport
         return Subscription::with('deal.program', 'deal.bundle', 'deal.customer.school')->get();
     }
 
-    /** @return array<string, float> 'Y-m' => agreed_price/12 for each of the 12 months starting at start_date (FR-6.4) */
+    /**
+     * FR-6.4: agreed_price split evenly over the subscription's months
+     * (Subscription::TOTAL_DELIVERIES), each dated at the start of its Hebrew
+     * month — the same months the subscription itself counts
+     * (Subscription::monthLabel()). The last slice absorbs any rounding
+     * remainder so the slices always add up to the exact price.
+     *
+     * A cancelled subscription keeps only the months before
+     * cancelled_from_month. Its credit can be set by hand on cancellation, so
+     * whatever the kept months don't account for — price minus the actual
+     * credit, minus the kept slices — is one adjustment slice (number null)
+     * on the cancellation date, so recognized revenue always equals the
+     * price less the credit note.
+     *
+     * @return list<array{number: ?int, date: CarbonImmutable, label: string, amount: float}>
+     */
     private function subscriptionMonthlySlices(Subscription $subscription): array
     {
-        $monthly = round((float) $subscription->agreed_price / 12, 2);
-        $start = CarbonImmutable::parse($subscription->start_date)->startOfMonth();
+        $months = Subscription::TOTAL_DELIVERIES;
+        $price = (float) $subscription->agreed_price;
+        $monthly = round($price / $months, 2);
+        $first = $subscription->firstMonthDate();
 
         $slices = [];
-        for ($i = 0; $i < 12; $i++) {
-            $slices[$start->addMonths($i)->format('Y-m')] = $monthly;
+        for ($i = 0; $i < $months; $i++) {
+            $date = HebrewCalendar::addMonths($first, $i);
+            $slices[] = [
+                'number' => $i + 1,
+                'date' => $date,
+                'label' => HebrewCalendar::monthLabel($date),
+                'amount' => $i === $months - 1 ? round($price - $monthly * ($months - 1), 2) : $monthly,
+            ];
         }
 
-        return $slices;
+        if ($subscription->cancelled_from_month === null) {
+            return $slices;
+        }
+
+        $kept = array_values(array_filter($slices, fn (array $slice) => $slice['number'] < $subscription->cancelled_from_month));
+        $adjustment = round($price - (float) $subscription->cancellation_credit - array_sum(array_column($kept, 'amount')), 2);
+
+        if (abs($adjustment) > 0.005) {
+            $date = CarbonImmutable::parse(($subscription->cancelled_at ?? now())->toDateString());
+            $kept[] = ['number' => null, 'date' => $date, 'label' => HebrewCalendar::monthLabel($date), 'amount' => $adjustment];
+        }
+
+        return $kept;
     }
 
     private function programLabelForDeal(Deal $deal): string
