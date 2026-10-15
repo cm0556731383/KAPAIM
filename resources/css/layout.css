@@ -494,3 +494,18 @@ td.mono { display: table-cell; }
 
   .home-hero-mark { width: 140px; height: 140px; inset-inline-end: -14px; top: -32px; }
 }
+
+/* App confirmation dialog (resources/js/confirm-dialog.js) — replaces the
+   browser's native confirm() box behind every wire:confirm. */
+.confirm-overlay { z-index: 200; animation: confirm-fade 140ms ease-out; }
+.confirm-overlay.is-leaving { opacity: 0; transition: opacity 120ms ease-in; }
+.confirm-panel { max-width: 420px; text-align: center; padding: var(--sp-xl) var(--sp-lg) var(--sp-lg); animation: confirm-pop 160ms cubic-bezier(.2, .9, .3, 1.2); }
+.confirm-icon { width: 52px; height: 52px; margin: 0 auto var(--sp-md); border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--color-primary-lighter); color: var(--color-primary); }
+.confirm-icon.is-destructive { background: var(--color-error-bg); color: var(--color-error); }
+.confirm-icon svg { width: 28px; height: 28px; }
+.confirm-message { margin: 0 0 var(--sp-lg); font-size: var(--fs-body); line-height: 1.7; color: var(--color-text-primary); white-space: pre-line; }
+.confirm-actions { display: flex; gap: var(--sp-sm); justify-content: center; }
+.confirm-actions .btn { min-width: 110px; }
+@keyframes confirm-fade { from { opacity: 0; } }
+@keyframes confirm-pop { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { .confirm-overlay, .confirm-panel { animation: none; } }

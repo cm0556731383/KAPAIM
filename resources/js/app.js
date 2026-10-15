@@ -1,1 +1,1 @@
-//
+import './confirm-dialog';
