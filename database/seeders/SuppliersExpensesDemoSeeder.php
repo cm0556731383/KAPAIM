@@ -38,7 +38,7 @@ class SuppliersExpensesDemoSeeder extends Seeder
             $program,
             'הדפסת 400 חוברות',
         );
-        $invoicedExpense->attachInvoice();
+        $invoicedExpense->attachInvoice(\Illuminate\Http\UploadedFile::fake()->create('invoice.pdf', 20, 'application/pdf'));
 
         // Still missing an invoice, from last (closed) month — a real,
         // non-zero row for ProcessExpenseReminders/the "missing invoice"

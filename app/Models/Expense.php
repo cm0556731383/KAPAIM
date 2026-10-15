@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
 /**
@@ -30,6 +33,9 @@ class Expense extends Model
     public const MISSING_INVOICE_STATUS_NAME = 'ממתינה לחשבונית';
 
     public const HAS_INVOICE_STATUS_NAME = 'תועדה';
+
+    /** Where uploaded supplier invoices live on the private 'local' disk. */
+    public const INVOICE_DIRECTORY = 'expense-invoices';
 
     protected function casts(): array
     {
@@ -96,20 +102,6 @@ class Expense extends Model
     }
 
     /**
-     * FR-6.6/FR-6.10: the only place an invoice Document is ever attached to
-     * an expense. Reuses Document::generateFor()'s Expense branch (this is a
-     * manual "record the invoice the supplier already sent us" step, not a
-     * digital-form-fill flow like the sales document chain — see that
-     * method's docblock) with the sole active 'expense_invoice' template,
-     * the same "sole active template of that type" convention
-     * ⚡deal-detail.blade.php's generateDocument() uses. Flips this expense's
-     * status to HAS_INVOICE_STATUS_NAME automatically (FR-6.10).
-     *
-     * @throws RuntimeException when this expense already has an invoice
-     *                          attached, or no active 'expense_invoice'
-     *                          template exists yet.
-     */
-    /**
      * Once an invoice document is attached the expense is documented
      * bookkeeping, so it stays; before that it's just a mistaken entry.
      *
@@ -124,13 +116,25 @@ class Expense extends Model
         $this->delete();
     }
 
-    public function attachInvoice(): Document
+    /**
+     * FR-6.6/FR-6.10: the only place an invoice is ever attached to an
+     * expense. Stores the supplier's actual invoice file (PDF or image) on
+     * the private 'local' disk and records it on an 'expense_invoice'
+     * Document (Document::generateFor()'s Expense branch) — file_reference
+     * holds the stored path, field_values the original file name. Flips
+     * this expense's status to HAS_INVOICE_STATUS_NAME (FR-6.10).
+     *
+     * A wrong file is fixed by removeInvoice() and uploading again.
+     */
+    public function attachInvoice(UploadedFile $file): Document
     {
-        if ($this->document_id) {
-            throw new RuntimeException('להוצאה זו כבר מצורפת חשבונית.');
-        }
+        $document = $this->document ?? Document::generateFor($this, 'expense_invoice');
 
-        $document = Document::generateFor($this, 'expense_invoice');
+        $document->update([
+            'file_reference' => $file->store(self::INVOICE_DIRECTORY, 'local'),
+            'field_values' => ['file_name' => $file->getClientOriginalName()],
+            'received_at' => now(),
+        ]);
 
         $hasInvoiceStatus = StatusDefinition::firstOrCreate(
             ['scope' => 'expense', 'name' => self::HAS_INVOICE_STATUS_NAME],
@@ -140,6 +144,52 @@ class Expense extends Model
         $this->update(['document_id' => $document->id, 'status_id' => $hasInvoiceStatus->id]);
 
         return $document;
+    }
+
+    /**
+     * Removes the attached invoice entirely — the stored file and its
+     * 'expense_invoice' Document row (nothing else ever references one) —
+     * and returns the expense to MISSING_INVOICE_STATUS_NAME, so a wrong
+     * file is fixed by deleting it and uploading the right one.
+     */
+    public function removeInvoice(): void
+    {
+        $document = $this->document;
+
+        if (! $document) {
+            return;
+        }
+
+        $missingStatus = StatusDefinition::firstOrCreate(
+            ['scope' => 'expense', 'name' => self::MISSING_INVOICE_STATUS_NAME],
+            ['is_active' => true, 'sort_order' => 1],
+        );
+
+        DB::transaction(function () use ($document, $missingStatus) {
+            $this->update(['document_id' => null, 'status_id' => $missingStatus->id]);
+            $document->delete();
+        });
+
+        if ($document->file_reference) {
+            Storage::disk('local')->delete($document->file_reference);
+        }
+
+        $this->unsetRelation('document');
+    }
+
+    /** Whether an actual invoice file is on hand (an older invoice row may have none). */
+    public function hasInvoiceFile(): bool
+    {
+        return (bool) $this->document?->file_reference
+            && Storage::disk('local')->exists($this->document->file_reference);
+    }
+
+    /** The name the invoice file downloads under — the original upload name. */
+    public function invoiceFileName(): string
+    {
+        $extension = pathinfo((string) $this->document?->file_reference, PATHINFO_EXTENSION);
+
+        return $this->document?->field_values['file_name'] ?? "invoice-{$this->id}.{$extension}";
     }
 
     /**

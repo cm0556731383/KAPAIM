@@ -19,6 +19,8 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
@@ -35,6 +37,7 @@ class SuppliersExpensesTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Storage::fake('local');
 
         $fullAccess = Role::create(['name' => 'גישה מלאה', 'is_active' => true]);
         $fullAccess->permissions()->create(['resource' => '*', 'action' => '*', 'is_allowed' => true]);
@@ -61,7 +64,7 @@ class SuppliersExpensesTest extends TestCase
         $supplier = $this->createSupplier();
         $expense = Expense::createForSupplier($supplier, 100, '2026-09-01');
         $documented = Expense::createForSupplier($supplier, 200, '2026-09-02');
-        $documented->attachInvoice();
+        $documented->attachInvoice($this->invoiceFile());
 
         Livewire::actingAs($this->owner)->test('expenses')
             ->call('editExpense', $expense->id)
@@ -200,7 +203,7 @@ class SuppliersExpensesTest extends TestCase
     {
         $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
 
-        $document = $expense->attachInvoice();
+        $document = $expense->attachInvoice($this->invoiceFile());
 
         $expense->refresh();
         $this->assertSame($document->id, $expense->document_id);
@@ -210,13 +213,101 @@ class SuppliersExpensesTest extends TestCase
         $this->assertNull($document->business_entity_id);
     }
 
-    public function test_attaching_an_invoice_twice_is_blocked(): void
+    public function test_deleting_an_invoice_removes_the_file_and_lets_a_new_one_be_uploaded(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 500, '2026-08-05');
+        $first = $expense->attachInvoice($this->invoiceFile('wrong.pdf'));
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->call('removeInvoice', $expense->id)
+            ->assertHasNoErrors();
+
+        $expense->refresh();
+        $this->assertNull($expense->document_id);
+        $this->assertSame(Expense::MISSING_INVOICE_STATUS_NAME, $expense->status?->name);
+        $this->assertNull(Document::find($first->id));
+        Storage::disk('local')->assertMissing($first->file_reference);
+        $this->assertSame(1, Expense::missingInvoiceForClosedMonth()->where('id', $expense->id)->count());
+
+        $second = $expense->attachInvoice($this->invoiceFile('right.jpg', 'image/jpeg'));
+
+        $this->assertSame('right.jpg', $expense->fresh()->invoiceFileName());
+        Storage::disk('local')->assertExists($second->file_reference);
+    }
+
+    public function test_the_expenses_excel_export_lists_every_expense_with_its_details(): void
+    {
+        $supplier = $this->createSupplier();
+        $withInvoice = Expense::createForSupplier($supplier, 1250.5, '2026-09-10', null, 'הדפסת חוברות');
+        $withInvoice->attachInvoice($this->invoiceFile('חשבונית 17.pdf'));
+        Expense::createForSupplier($supplier, 300, '2026-09-12');
+        Expense::createForSupplier($supplier, 999, '2026-09-13')->deleteIfNoInvoice();
+
+        $response = $this->actingAs($this->owner)->get(route('expenses.export'))->assertOk();
+        $this->assertStringContainsString('spreadsheetml', $response->headers->get('content-type'));
+
+        $path = tempnam(sys_get_temp_dir(), 'xlsx');
+        file_put_contents($path, $response->getContent());
+        $sheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path)->getActiveSheet();
+        unlink($path);
+
+        $this->assertTrue($sheet->getRightToLeft());
+        $this->assertSame('ספק', $sheet->getCell('C1')->getValue());
+        // Newest first; the deleted expense is left out.
+        $this->assertSame('12/09/2026', $sheet->getCell('B2')->getFormattedValue());
+        $this->assertSame('חסרה', $sheet->getCell('K2')->getValue());
+        $this->assertSame($supplier->name, $sheet->getCell('C3')->getValue());
+        $this->assertEquals(1250.5, $sheet->getCell('I3')->getValue());
+        $this->assertSame('יש', $sheet->getCell('K3')->getValue());
+        $this->assertSame('חשבונית 17.pdf', $sheet->getCell('L3')->getValue());
+        $this->assertSame('הדפסת חוברות', $sheet->getCell('N3')->getValue());
+        $this->assertNull($sheet->getCell('A4')->getValue());
+        $this->assertEquals(1550.5, $sheet->getCell('I5')->getCalculatedValue());
+    }
+
+    public function test_an_invoice_uploaded_on_the_expenses_page_can_be_viewed_and_downloaded(): void
     {
         $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
-        $expense->attachInvoice();
 
-        $this->expectException(RuntimeException::class);
-        $expense->fresh()->attachInvoice();
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->set("invoiceFiles.{$expense->id}", $this->invoiceFile('חשבונית ספק.pdf'))
+            ->assertHasNoErrors();
+
+        $expense->refresh();
+        $this->assertTrue($expense->hasInvoiceFile());
+        $this->assertSame(Expense::HAS_INVOICE_STATUS_NAME, $expense->status?->name);
+
+        $this->actingAs($this->owner)->get(route('expenses.invoice', $expense))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->actingAs($this->owner)->get(route('expenses.invoice', [$expense, 'download' => 1]))
+            ->assertOk()
+            // Browsers take the UTF-8 name (filename*) — the plain filename= is only an ASCII fallback.
+            ->assertHeader('content-disposition', "attachment; filename=invoice-{$expense->id}.pdf; filename*=utf-8''".rawurlencode('חשבונית ספק.pdf'));
+    }
+
+    public function test_an_invoice_upload_rejects_a_file_that_is_not_a_pdf_or_an_image(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
+
+        Livewire::actingAs($this->owner)->test('expenses')
+            ->set("invoiceFiles.{$expense->id}", UploadedFile::fake()->create('notes.docx', 10, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
+            ->assertHasErrors("invoiceFiles.{$expense->id}");
+
+        $this->assertNull($expense->fresh()->document_id);
+    }
+
+    public function test_an_expense_without_an_invoice_file_has_no_download(): void
+    {
+        $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
+
+        $this->actingAs($this->owner)->get(route('expenses.invoice', $expense))->assertNotFound();
+    }
+
+    private function invoiceFile(string $name = 'invoice.pdf', string $mime = 'application/pdf'): UploadedFile
+    {
+        return UploadedFile::fake()->create($name, 30, $mime);
     }
 
     /** An expense invoice is the supplier's own document — attaching one needs no template (DocumentTemplate::SYSTEM_TYPES). */
@@ -225,7 +316,7 @@ class SuppliersExpensesTest extends TestCase
         DocumentTemplate::where('document_type', 'expense_invoice')->delete();
         $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
 
-        $document = $expense->attachInvoice();
+        $document = $expense->attachInvoice($this->invoiceFile());
 
         $this->assertNull($document->document_template_id);
         $this->assertSame('expense_invoice', $document->document_type);
@@ -240,7 +331,7 @@ class SuppliersExpensesTest extends TestCase
     {
         $deal = $this->dealWithQuote();
         $expense = Expense::createForSupplier($this->createSupplier(), 500, now()->toDateString());
-        $expenseInvoice = $expense->attachInvoice();
+        $expenseInvoice = $expense->attachInvoice($this->invoiceFile());
 
         $dealDocument = $deal->documents()->where('document_type', 'quote')->firstOrFail();
 
@@ -275,7 +366,7 @@ class SuppliersExpensesTest extends TestCase
     {
         Carbon::setTestNow('2026-08-15');
         $expense = Expense::createForSupplier($this->createSupplier(), 500, '2026-08-05');
-        $expense->attachInvoice();
+        $expense->attachInvoice($this->invoiceFile());
 
         Carbon::setTestNow('2026-09-01');
 

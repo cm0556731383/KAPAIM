@@ -8,13 +8,16 @@ use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use Livewire\WithFileUploads;
 
 /**
  * Build-plan 11 — מסך הוצאות (US-016/US-017, FR-6.5-FR-6.10). Manual expense
- * entry + a per-row "צירוף חשבונית" action that generates an
- * 'expense_invoice' Document via Expense::attachInvoice() — the manual
- * "record the invoice the supplier already sent us" flow, not a
- * digital-form-fill flow like the sales document chain (build-plan 07).
+ * entry + a per-row invoice upload (PDF or image) — choosing a file uploads
+ * it straight away and records it via Expense::attachInvoice(); the file is
+ * then viewed/downloaded through the 'expenses.invoice' route, or deleted
+ * (Expense::removeInvoice()) to upload a different one. "ייצוא לאקסל"
+ * downloads every expense via the 'expenses.export' route
+ * (App\Services\ExpensesSpreadsheet).
  * Rows are editable inline; one is deletable (logically) only while no
  * invoice is attached — Expense::deleteIfNoInvoice().
  */
@@ -23,6 +26,7 @@ new
 class extends Component
 {
     use Notifies;
+    use WithFileUploads;
 
     public string $supplierId = '';
     public string $programId = '';
@@ -37,8 +41,11 @@ class extends Component
     public string $editExpenseDate = '';
     public string $editNotes = '';
 
-    /** Business-rule error from Expense::createForSupplier()/attachInvoice(). */
+    /** Business-rule error from Expense::createForSupplier()/deleteIfNoInvoice(). */
     public ?string $expenseError = null;
+
+    /** Invoice files being uploaded, keyed by expense id — one file input per row. */
+    public array $invoiceFiles = [];
 
     public function mount(): void
     {
@@ -81,29 +88,44 @@ class extends Component
     }
 
     /**
-     * FR-6.6/FR-6.10: attaches the sole active 'expense_invoice' template as
-     * this expense's invoice document — see Expense::attachInvoice().
+     * FR-6.6/FR-6.10: a file chosen in a row's invoice input is attached as
+     * soon as its upload finishes — see Expense::attachInvoice().
      */
-    public function attachInvoice(int $expenseId, ActivityLogger $activityLogger): void
+    public function updatedInvoiceFiles($file, $expenseId): void
     {
         $this->expenseError = null;
 
+        $this->validate(
+            ["invoiceFiles.{$expenseId}" => ['required', 'file', 'mimes:pdf,jpg,jpeg,png,webp,heic,heif', 'max:10240']],
+            [
+                "invoiceFiles.{$expenseId}.mimes" => 'ניתן להעלות חשבונית בקובץ PDF או תמונה (JPG, PNG, WEBP, HEIC) בלבד.',
+                "invoiceFiles.{$expenseId}.max" => 'הקובץ גדול מדי — עד 10MB.',
+            ],
+        );
+
         $expense = Expense::findOrFail($expenseId);
+        $document = $expense->attachInvoice($file);
 
-        try {
-            $document = $expense->attachInvoice();
-        } catch (\RuntimeException $e) {
-            $this->expenseError = $e->getMessage();
-
-            return;
-        }
-
-        $activityLogger->log('expense.invoice_attached', "צורפה חשבונית להוצאה #{$expense->id}", [
+        app(ActivityLogger::class)->log('expense.invoice_attached', "צורפה חשבונית להוצאה #{$expense->id}", [
             'expense_id' => $expense->id,
             'document_id' => $document->id,
         ]);
 
+        unset($this->invoiceFiles[$expenseId], $this->expenses);
+        $this->notifySuccess('החשבונית הועלתה.');
+    }
+
+    /** Deletes an expense's invoice file so the right one can be uploaded instead — Expense::removeInvoice(). */
+    public function removeInvoice(int $expenseId, ActivityLogger $activityLogger): void
+    {
+        $expense = Expense::findOrFail($expenseId);
+        $fileName = $expense->invoiceFileName();
+        $expense->removeInvoice();
+
+        $activityLogger->log('expense.invoice_removed', "נמחקה החשבונית \"{$fileName}\" מהוצאה #{$expense->id}", ['expense_id' => $expense->id]);
+
         unset($this->expenses);
+        $this->notifySuccess('החשבונית נמחקה.');
     }
 
     public function editExpense(int $id): void
@@ -174,7 +196,7 @@ class extends Component
     #[Computed]
     public function expenses()
     {
-        return Expense::with(['supplier', 'program', 'status'])->orderByDesc('expense_date')->orderByDesc('id')->get();
+        return Expense::with(['supplier', 'program', 'status', 'document'])->orderByDesc('expense_date')->orderByDesc('id')->get();
     }
 
     #[Computed]
@@ -196,6 +218,8 @@ class extends Component
         <div>
             <h1 style="margin-bottom:2px">הוצאות</h1>
         </div>
+        <div style="display:flex; gap:var(--sp-sm); align-items:center">
+        <a href="{{ route('expenses.export') }}" class="btn btn-secondary">ייצוא לאקסל</a>
         <x-modal trigger-label="+ הוצאה חדשה" title="הוצאה חדשה">
             <form wire:submit="addExpense" class="form-grid">
                 <div>
@@ -236,6 +260,7 @@ class extends Component
                 </div>
             </form>
         </x-modal>
+        </div>
     </div>
 
     <div class="tabs">
@@ -304,20 +329,24 @@ class extends Component
                         <td>{{ $expense->program?->name ?? '—' }}</td>
                         <td class="ltr-num">₪{{ number_format((float) $expense->amount, 0) }}</td>
                         <td>
-                            @if ($expense->document_id)
-                                <span class="badge badge-success">יש חשבונית</span>
+                            @if ($expense->hasInvoiceFile())
+                                <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center">
+                                    <a href="{{ route('expenses.invoice', $expense) }}" target="_blank" class="btn btn-ghost btn-sm" title="{{ $expense->invoiceFileName() }}">צפייה</a>
+                                    <a href="{{ route('expenses.invoice', [$expense, 'download' => 1]) }}" class="btn btn-ghost btn-sm">הורדה</a>
+                                    <button type="button" wire:click="removeInvoice({{ $expense->id }})" wire:confirm="למחוק את החשבונית? הקובץ יימחק ואפשר יהיה להעלות חשבונית אחרת." class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
+                                </div>
                             @else
-                                <span class="badge badge-error">חסרה חשבונית</span>
+                                <label class="btn btn-secondary btn-sm" style="cursor:pointer; margin:0">
+                                    העלאת חשבונית
+                                    <input type="file" wire:model="invoiceFiles.{{ $expense->id }}" accept="application/pdf,image/*" style="display:none">
+                                </label>
                             @endif
+                            <div wire:loading wire:target="invoiceFiles.{{ $expense->id }}" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">מעלה...</div>
+                            @error('invoiceFiles.'.$expense->id) <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </td>
                         <td style="color:var(--color-text-secondary)">{{ $expense->notes ?: '—' }}</td>
                         <td>
                             <div style="display:flex; gap:4px; flex-wrap:wrap">
-                                @if ($expense->document_id)
-                                    <a href="{{ route('document-view', $expense->document_id) }}" class="btn btn-ghost">צפייה</a>
-                                @else
-                                    <button type="button" wire:click="attachInvoice({{ $expense->id }})" class="btn btn-secondary" style="padding:6px 12px; font-size:var(--fs-caption)">צירוף חשבונית</button>
-                                @endif
                                 <button type="button" wire:click="editExpense({{ $expense->id }})" class="btn btn-ghost">עריכה</button>
                                 @unless ($expense->document_id)
                                     <button type="button" wire:click="deleteExpense({{ $expense->id }})" wire:confirm="למחוק את ההוצאה? (מחיקה לוגית)" class="btn btn-ghost" style="color:var(--color-error)">מחיקה</button>

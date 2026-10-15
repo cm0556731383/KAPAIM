@@ -11,6 +11,7 @@ use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -26,6 +27,7 @@ class PageSmokeTest extends TestCase
     public function test_every_screen_and_record_page_renders(): void
     {
         Http::fake();
+        Storage::fake('local');
         $this->seed(DatabaseSeeder::class);
         $owner = User::where('email', 'dana@kapaim.co.il')->firstOrFail();
         $this->actingAs($owner);
@@ -72,6 +74,7 @@ class PageSmokeTest extends TestCase
     public function test_a_user_without_permissions_and_a_guest_are_refused_cleanly(): void
     {
         Http::fake();
+        Storage::fake('local');
         $this->seed(DatabaseSeeder::class);
         $role = Role::create(['name' => 'ללא הרשאות', 'is_active' => true]);
         $nobody = User::create(['name' => 'ללא הרשאות', 'email' => 'nobody@example.com', 'password' => 'password', 'role_id' => $role->id, 'is_active' => true]);

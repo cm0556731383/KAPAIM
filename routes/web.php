@@ -255,6 +255,34 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/mailing-lists', 'mailing-lists')->name('mailing-lists');
     Route::livewire('/suppliers', 'suppliers')->name('suppliers');
     Route::livewire('/expenses', 'expenses')->name('expenses');
+    Route::get('/expenses/export', function (\App\Services\ExpensesSpreadsheet $spreadsheet) {
+        abort_unless(auth()->user()->can('expenses.manage'), 403);
+
+        $xlsx = $spreadsheet->render();
+
+        return response($xlsx, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Length' => strlen($xlsx),
+            'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+                'attachment', 'הוצאות '.now()->format('d-m-Y').'.xlsx', 'expenses-'.now()->format('Y-m-d').'.xlsx',
+            ),
+        ]);
+    })->name('expenses.export');
+    // The supplier's invoice file attached to an expense — opens in the browser (PDF/image), or downloads with ?download=1.
+    Route::get('/expenses/{expense}/invoice', function (\App\Models\Expense $expense) {
+        abort_unless(auth()->user()->can('expenses.manage'), 403);
+        abort_unless($expense->hasInvoiceFile(), 404);
+
+        $path = $expense->document->file_reference;
+        // The Hebrew original name goes in filename*; old clients get an ASCII "invoice-{id}.ext".
+        $disposition = \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+            request()->boolean('download') ? 'attachment' : 'inline',
+            $expense->invoiceFileName(),
+            "invoice-{$expense->id}.".pathinfo($path, PATHINFO_EXTENSION),
+        );
+
+        return \Illuminate\Support\Facades\Storage::disk('local')->response($path, null, ['Content-Disposition' => $disposition]);
+    })->name('expenses.invoice');
     Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
     Route::livewire('/document-templates', 'document-templates')->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
