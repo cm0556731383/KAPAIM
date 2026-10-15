@@ -26,15 +26,6 @@
         .st-amount { text-align: left; white-space: nowrap; width: 30%; }
         .st-muted { color: #5C6B5F; font-size: 10px; }
 
-        .st-subtitle { font-weight: bold; font-size: 14px; color: #286E9A; margin: 26px 0 8px; }
-        .st-months { width: 100%; border-collapse: collapse; font-size: 11px; }
-        .st-months th { background: #EFEEE5; text-align: right; padding: 6px 10px; border-bottom: 1.5px solid #20241F; }
-        .st-months th.st-amount { text-align: left; }
-        .st-months td { padding: 5px 10px; border-bottom: 1px solid #E6E3D6; }
-        .st-months-total td { font-weight: bold; border-top: 1.5px solid #20241F; border-bottom: none; }
-        .st-months .st-amount { width: 22%; }
-        .st-pos { color: #166534; }
-        .st-neg { color: #B91C1C; }
         .st-note { color: #5C6B5F; font-size: 9.5px; margin-top: 22px; }
     </style>
 </head>

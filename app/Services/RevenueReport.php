@@ -60,8 +60,7 @@ class RevenueReport
 
     /**
      * The income statement on ⚡cashflow-report.blade.php and its PDF: income
-     * by program/bundle on top, expenses by supplier below, net profit, and a
-     * month-by-month breakdown — over the same recognized-revenue rules as
+     * by program/bundle on top, expenses by supplier below, and net profit — over the same recognized-revenue rules as
      * the rest of this class (FR-6.4 subscription spreading included).
      *
      * Each filter is optional and they combine: $years (e.g. [2026]), $months
@@ -70,7 +69,10 @@ class RevenueReport
      * 'bundle:{id}', or NO_PROGRAM_SOURCE for expenses not tied to a program).
      * An empty filter means "all".
      *
-     * @return array{revenue: list<array{label: string, amount: float}>, revenue_total: float, expenses: list<array{label: string, amount: float, count: int}>, expense_total: float, profit: float, months: list<array{label: string, revenue: float, expense: float, profit: float}>, period: string}
+     * Each income/expense line also carries its count and its items (date,
+     * description, amount) — the drill-down rows on the screen.
+     *
+     * @return array{revenue: list<array{label: string, amount: float, count: int, items: list<array>}>, revenue_total: float, expenses: list<array{label: string, amount: float, count: int, items: list<array>}>, expense_total: float, profit: float, period: string}
      */
     public function statement(array $years = [], array $months = [], array $sources = []): array
     {
@@ -85,20 +87,18 @@ class RevenueReport
         $revenue = $this->revenueEntries()->filter($matches);
         $expenses = $this->expenseEntries()->filter($matches);
 
+        $items = fn (Collection $rows) => $rows->sortBy('date')->map(fn (array $row) => [
+            'date' => CarbonImmutable::parse($row['date'])->format('d/m/Y'),
+            'description' => $row['description'],
+            'amount' => round($row['amount'], 2),
+        ])->values()->all();
+
         $revenueLines = $revenue->groupBy('label')
-            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2)])
+            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2), 'count' => $rows->count(), 'items' => $items($rows)])
             ->sortByDesc('amount')->values()->all();
         $expenseLines = $expenses->groupBy('label')
-            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2), 'count' => $rows->count()])
+            ->map(fn (Collection $rows, string $label) => ['label' => $label, 'amount' => round($rows->sum('amount'), 2), 'count' => $rows->count(), 'items' => $items($rows)])
             ->sortByDesc('amount')->values()->all();
-
-        $monthRows = $revenue->pluck('month')->merge($expenses->pluck('month'))->unique()->sort()->values()
-            ->map(function (string $month) use ($revenue, $expenses) {
-                $in = round($revenue->where('month', $month)->sum('amount'), 2);
-                $out = round($expenses->where('month', $month)->sum('amount'), 2);
-
-                return ['label' => $this->monthLabel($month), 'revenue' => $in, 'expense' => $out, 'profit' => round($in - $out, 2)];
-            })->all();
 
         $revenueTotal = round($revenue->sum('amount'), 2);
         $expenseTotal = round($expenses->sum('amount'), 2);
@@ -109,7 +109,6 @@ class RevenueReport
             'expenses' => $expenseLines,
             'expense_total' => $expenseTotal,
             'profit' => round($revenueTotal - $expenseTotal, 2),
-            'months' => $monthRows,
             'period' => $this->periodDescription($years, $months, $sources),
         ];
     }
@@ -160,24 +159,24 @@ class RevenueReport
             ->unique()->sortDesc()->values()->all();
     }
 
-    public function monthLabel(string $month): string
-    {
-        [$year, $number] = array_map('intval', explode('-', $month));
-
-        return self::MONTH_NAMES[$number].' '.$year;
-    }
-
     /** @return Collection<int, array{month: string, amount: float, source: string, label: string}> one row per non-subscription payment and per subscription month-slice */
     private function revenueEntries(): Collection
     {
         $entries = $this->nonSubscriptionPayments()->toBase()->map(fn (Payment $payment) => [
             'month' => CarbonImmutable::parse($payment->payment_date)->format('Y-m'),
+            'date' => CarbonImmutable::parse($payment->payment_date)->toDateString(),
             'amount' => (float) $payment->amount,
+            'description' => "תשלום · {$this->customerName($payment->deal)}",
         ] + $this->revenueSource($payment->deal));
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$entries) {
             foreach ($this->subscriptionMonthlySlices($subscription) as $month => $amount) {
-                $entries->push(['month' => $month, 'amount' => $amount] + $this->revenueSource($subscription->deal));
+                $entries->push([
+                    'month' => $month,
+                    'date' => "{$month}-01",
+                    'amount' => $amount,
+                    'description' => "חלק חודשי של מנוי · {$this->customerName($subscription->deal)}",
+                ] + $this->revenueSource($subscription->deal));
             }
         });
 
@@ -189,10 +188,17 @@ class RevenueReport
     {
         return Expense::with('supplier')->get()->toBase()->map(fn (Expense $expense) => [
             'month' => CarbonImmutable::parse($expense->expense_date)->format('Y-m'),
+            'date' => CarbonImmutable::parse($expense->expense_date)->toDateString(),
             'amount' => (float) $expense->amount,
+            'description' => $expense->notes ?: 'הוצאה #'.$expense->id,
             'source' => $expense->program_id ? "program:{$expense->program_id}" : self::NO_PROGRAM_SOURCE,
             'label' => $expense->supplier?->name ?? 'ספק לא ידוע',
         ]);
+    }
+
+    private function customerName(?Deal $deal): string
+    {
+        return $deal?->customer?->school?->name ?? 'עסקה #'.$deal?->id;
     }
 
     /** @return array{source: string, label: string} what a deal's income is filed under — its program, else its bundle. */
@@ -321,13 +327,13 @@ class RevenueReport
     /** Every real Payment whose deal is NOT against the subscription-type bundle — those are handled by subscriptionMonthlySlices() instead. */
     private function nonSubscriptionPayments(): Collection
     {
-        return Payment::with('deal.bundle', 'deal.program')->get()
+        return Payment::with('deal.bundle', 'deal.program', 'deal.customer.school')->get()
             ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type);
     }
 
     private function subscriptions(): Collection
     {
-        return Subscription::with('deal.program', 'deal.bundle')->get();
+        return Subscription::with('deal.program', 'deal.bundle', 'deal.customer.school')->get();
     }
 
     /** @return array<string, float> 'Y-m' => agreed_price/12 for each of the 12 months starting at start_date (FR-6.4) */

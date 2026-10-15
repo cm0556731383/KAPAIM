@@ -164,15 +164,15 @@ class RevenueReportTest extends TestCase
 
         $statement = $this->report->statement();
 
-        $this->assertSame([
-            ['label' => $programA->name, 'amount' => 1500.0],
-            ['label' => $programB->name, 'amount' => 800.0],
-        ], $statement['revenue']);
+        $this->assertSame([[$programA->name, 1500.0, 2], [$programB->name, 800.0, 1]], array_map(fn ($line) => [$line['label'], $line['amount'], $line['count']], $statement['revenue']));
         $this->assertSame(2300.0, $statement['revenue_total']);
-        $this->assertSame([['label' => $supplier->name, 'amount' => 650.0, 'count' => 3]], $statement['expenses']);
+        $this->assertSame([[$supplier->name, 650.0, 3]], array_map(fn ($line) => [$line['label'], $line['amount'], $line['count']], $statement['expenses']));
+        // Each line opens to its own items, oldest first.
+        $this->assertSame(['10/09/2025', '10/09/2026'], array_column($statement['revenue'][0]['items'], 'date'));
+        $this->assertStringStartsWith('תשלום · ', $statement['revenue'][0]['items'][0]['description']);
+        $this->assertSame([200.0, 350.0, 100.0], array_column($statement['expenses'][0]['items'], 'amount'));
         $this->assertSame(650.0, $statement['expense_total']);
         $this->assertSame(1650.0, $statement['profit']);
-        $this->assertSame(['ספטמבר 2025', 'מרץ 2026', 'ספטמבר 2026'], array_column($statement['months'], 'label'));
         $this->assertSame('כל השנים', $statement['period']);
     }
 
@@ -187,7 +187,6 @@ class RevenueReportTest extends TestCase
         // September of both years.
         $september = $this->report->statement(months: [9]);
         $this->assertSame(1500.0, $september['revenue_total']);
-        $this->assertSame(['ספטמבר 2025', 'ספטמבר 2026'], array_column($september['months'], 'label'));
 
         // Program A only: its income and its own expenses — never another program's or a program-less one.
         $onlyA = $this->report->statement(sources: ["program:{$programA->id}"]);

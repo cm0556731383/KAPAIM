@@ -8,8 +8,11 @@ use Livewire\Component;
 
 /**
  * Build-plan 11 — דוח הכנסות והוצאות (US-016, FR-6.1-FR-6.4/FR-6.11-FR-6.13),
- * laid out as an income statement: income by program/bundle on top,
- * expenses by supplier below, net profit, then a month-by-month breakdown.
+ * an income statement in the app's own look: summary cards, then one table
+ * that opens collapsed — an income row and an expenses row — each
+ * expandable to its programs/suppliers and from there to the individual
+ * payments/expenses (client-side, Alpine). The printable PDF keeps its own document layout
+ * (reports/statement-pdf.blade.php).
  * Every number comes from RevenueReport::statement(); the filters (years,
  * months, programs — any combination, empty = all) live in the URL, so the
  * "PDF" button (cashflow-report.pdf) prints exactly what's on screen.
@@ -32,6 +35,17 @@ class extends Component
     public function mount(): void
     {
         abort_unless(auth()->user()->can('expenses.manage'), 403);
+    }
+
+    /** A filter chip's click — adds or removes $value from years/months/sources. */
+    public function toggleFilter(string $filter, string $value): void
+    {
+        abort_unless(in_array($filter, ['years', 'months', 'sources'], true), 404);
+
+        $current = array_map('strval', $this->{$filter});
+        $this->{$filter} = in_array($value, $current, true)
+            ? array_values(array_diff($current, [$value]))
+            : [...$current, $value];
     }
 
     public function clearFilters(): void
@@ -68,53 +82,39 @@ class extends Component
 };
 ?>
 
+@php
+    $statement = $this->statement;
+    $money = fn (float $amount) => ($amount < 0 ? '-' : '').'₪'.number_format(abs($amount), floor(abs($amount)) == abs($amount) ? 0 : 2);
+    $countOf = fn (int $n, string $plural) => $n === 1
+        ? ['תוכניות' => 'תוכנית אחת', 'ספקים' => 'ספק אחד', 'תשלומים' => 'תשלום אחד', 'הוצאות' => 'הוצאה אחת'][$plural]
+        : "{$n} {$plural}";
+    $isOn = fn (string $filter, $value) => in_array((string) $value, array_map('strval', $this->{$filter}), true);
+@endphp
+
 <div>
     <style>
-        .rf-card { background:var(--color-surface, #fff); border:1px solid var(--color-border); border-radius:12px; padding:var(--sp-md) var(--sp-lg); margin-bottom:var(--sp-lg); }
-        .rf-row { display:flex; gap:var(--sp-md); align-items:flex-start; padding:8px 0; }
-        .rf-row + .rf-row { border-top:1px dashed var(--color-border); }
-        .rf-label { flex:0 0 72px; font-weight:600; font-size:var(--fs-small); padding-top:5px; }
-        .rf-chips { display:flex; flex-wrap:wrap; gap:6px; }
-        .rf-chip { display:inline-flex; align-items:center; margin:0; padding:4px 12px; border:1px solid var(--color-border); border-radius:999px; font-size:var(--fs-small); cursor:pointer; user-select:none; background:#fff; transition:background .15s, border-color .15s; }
-        .rf-chip input { display:none; }
-        .rf-chip:hover { border-color:var(--color-primary); }
-        .rf-chip:has(input:checked) { background:var(--color-primary); border-color:var(--color-primary); color:#fff; }
-        .rf-foot { display:flex; justify-content:space-between; align-items:center; gap:var(--sp-sm); flex-wrap:wrap; padding-top:10px; border-top:1px dashed var(--color-border); font-size:var(--fs-caption); color:var(--color-text-secondary); }
-
-        .st-sheet { background:#fff; border:1px solid var(--color-border); border-radius:14px; padding:36px 40px; max-width:900px; box-shadow:0 18px 40px -18px rgb(28 35 31 / .18); }
-        .st-head { display:flex; justify-content:space-between; align-items:flex-end; gap:var(--sp-md); padding-bottom:16px; border-bottom:3px solid var(--color-primary); margin-bottom:20px; }
-        .st-head h2 { margin:0; font-size:24px; color:var(--color-primary); }
-        .st-head .meta { color:var(--color-text-secondary); font-size:var(--fs-small); margin-top:4px; }
-        .st-head img { height:52px; }
-        .st-table, .st-months { width:100%; border-collapse:collapse; }
-        .st-table td { padding:9px 14px; }
-        .st-section td { background:var(--color-primary); color:#fff; font-weight:700; letter-spacing:.2px; }
-        .st-section td:first-child { border-radius:0 8px 8px 0; } .st-section td:last-child { border-radius:8px 0 0 8px; }
-        .st-line td { border-bottom:1px solid var(--color-border); }
-        .st-empty td { color:var(--color-text-secondary); font-style:italic; }
-        .st-total td { font-weight:700; background:var(--color-background); border-top:2px solid var(--color-text-primary); }
-        .st-gap td { height:14px; padding:0; }
-        .st-net td { font-weight:800; font-size:20px; padding:14px; }
-        .st-profit td { background:#DCFCE7; color:#166534; } .st-loss td { background:#FEE2E2; color:#B91C1C; }
-        .st-net td:first-child { border-radius:0 10px 10px 0; } .st-net td:last-child { border-radius:10px 0 0 10px; }
-        .st-amount { text-align:left; white-space:nowrap; width:30%; }
-        .st-muted { color:var(--color-text-secondary); font-size:var(--fs-caption); }
-        .st-subtitle { font-weight:700; color:var(--color-primary); margin:32px 0 10px; font-size:17px; }
-        .st-months th { text-align:right; background:var(--color-background); padding:8px 12px; font-size:var(--fs-small); border-bottom:2px solid var(--color-text-primary); }
-        .st-months th.st-amount { text-align:left; }
-        .st-months td { padding:7px 12px; border-bottom:1px solid var(--color-border); font-size:var(--fs-small); }
-        .st-months .st-amount { width:20%; }
-        .st-scroll { overflow-x:auto; }
-        .st-months-total td { font-weight:700; border-top:2px solid var(--color-text-primary); border-bottom:none; }
-        .st-pos { color:#166534; } .st-neg { color:#B91C1C; }
-        .st-note { color:var(--color-text-secondary); font-size:var(--fs-caption); margin:24px 0 0; }
+        .rp-filters { display:grid; grid-template-columns:auto 1fr; gap:10px var(--sp-md); align-items:center; }
+        .rp-filters .filters { margin:0; gap:6px; }
+        .rp-filters .rp-label { font-size:var(--fs-small); font-weight:600; color:var(--color-text-secondary); }
+        .rp-table td, .rp-table th { padding:12px 16px; }
+        .rp-table .num { text-align:left; white-space:nowrap; }
+        .rp-toggle { cursor:pointer; user-select:none; }
+        .rp-toggle:hover { background:var(--color-primary-lighter); }
+        .rp-chevron { display:inline-block; width:16px; height:16px; vertical-align:-3px; margin-inline-end:6px; transition:transform .15s; color:var(--color-text-secondary); }
+        .rp-open > :is(td, th) .rp-chevron { transform:rotate(-90deg); }
+        .rp-l0 td { font-weight:700; font-size:16px; }
+        .rp-l1 td { background:var(--color-background); }
+        .rp-l1 td:first-child { padding-inline-start:40px; }
+        .rp-l2 td { font-size:var(--fs-small); color:var(--color-text-secondary); background:var(--color-surface); }
+        .rp-l2 td:first-child { padding-inline-start:68px; }
+        .rp-count { font-weight:400; font-size:var(--fs-caption); color:var(--color-text-secondary); margin-inline-start:6px; }
+        .rp-net td { font-weight:800; font-size:18px; border-top:2px solid var(--color-text-primary); }
+        .rp-pos { color:var(--color-success); } .rp-neg { color:var(--color-error); }
         @media (max-width: 640px) {
-            .st-sheet { padding:20px 16px; }
-            .st-head { flex-direction:column-reverse; align-items:flex-start; }
-            .rf-row { flex-direction:column; gap:6px; }
-            .rf-label { flex-basis:auto; padding-top:0; }
-            .st-months th, .st-months td { padding:7px 6px; }
-            .st-months td:first-child { white-space:nowrap; }
+            .rp-filters { grid-template-columns:1fr; }
+            .rp-table td, .rp-table th { padding:10px 8px; }
+            .rp-l1 td:first-child { padding-inline-start:24px; }
+            .rp-l2 td:first-child { padding-inline-start:36px; }
         }
     </style>
 
@@ -131,48 +131,92 @@ class extends Component
         <a href="{{ route('cashflow-report') }}" class="active">דוח הכנסות והוצאות</a>
     </div>
 
-    <div class="rf-card">
-        <div class="rf-row">
-            <div class="rf-label">שנים</div>
-            <div class="rf-chips">
+    <div class="card" style="margin-bottom:var(--sp-lg)">
+        <div class="rp-filters">
+            <span class="rp-label">שנים</span>
+            <div class="filters">
                 @foreach ($this->availableYears as $year)
-                    <label class="rf-chip"><input type="checkbox" wire:model.live="years" value="{{ $year }}">{{ $year }}</label>
+                    <button type="button" wire:click="toggleFilter('years', '{{ $year }}')" class="chip {{ $isOn('years', $year) ? 'active' : '' }}">{{ $year }}</button>
                 @endforeach
             </div>
-        </div>
-        <div class="rf-row">
-            <div class="rf-label">חודשים</div>
-            <div class="rf-chips">
+            <span class="rp-label">חודשים</span>
+            <div class="filters">
                 @foreach (RevenueReport::MONTH_NAMES as $number => $name)
-                    <label class="rf-chip"><input type="checkbox" wire:model.live="months" value="{{ $number }}">{{ $name }}</label>
+                    <button type="button" wire:click="toggleFilter('months', '{{ $number }}')" class="chip {{ $isOn('months', $number) ? 'active' : '' }}">{{ $name }}</button>
                 @endforeach
             </div>
-        </div>
-        <div class="rf-row">
-            <div class="rf-label">תוכניות</div>
-            <div class="rf-chips">
+            <span class="rp-label">תוכניות</span>
+            <div class="filters">
                 @foreach ($this->sourceOptions as $key => $label)
-                    <label class="rf-chip"><input type="checkbox" wire:model.live="sources" value="{{ $key }}">{{ $label }}</label>
+                    <button type="button" wire:click="toggleFilter('sources', '{{ $key }}')" class="chip {{ $isOn('sources', $key) ? 'active' : '' }}">{{ $label }}</button>
                 @endforeach
             </div>
         </div>
-        <div class="rf-foot">
-            <span>אפשר לשלב: למשל ספטמבר–דצמבר של 2025 ו-2026 בתוכנית אחת. בלי בחירה — הכול נכלל.</span>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--sp-sm); flex-wrap:wrap; margin-top:var(--sp-md); font-size:var(--fs-caption); color:var(--color-text-secondary)">
+            <span>{{ $statement['period'] }}</span>
             @if ($years || $months || $sources)
                 <button type="button" wire:click="clearFilters" class="btn btn-ghost btn-sm">ניקוי הסינון</button>
             @endif
         </div>
     </div>
 
-    <div class="st-sheet" wire:loading.class="opacity-60">
-        <div class="st-head">
-            <div>
-                <h2>דוח הכנסות והוצאות</h2>
-                <div class="meta">{{ $this->statement['period'] }}</div>
-            </div>
-            <img src="{{ asset('images/logo.png') }}" alt="כפיים">
+    <div class="kpis" wire:loading.class="opacity-60">
+        <div class="card kpi tone-teal">
+            <div class="kpi-head"><span class="label">הכנסות</span><span class="icon-chip tone-primary"><svg><use href="#icon-payments"></use></svg></span></div>
+            <div class="num ltr-num">{{ $money($statement['revenue_total']) }}</div>
         </div>
-
-        @include('reports.statement-body', ['statement' => $this->statement])
+        <div class="card kpi tone-pink">
+            <div class="kpi-head"><span class="label">הוצאות</span><span class="icon-chip tone-secondary"><svg><use href="#icon-suppliers"></use></svg></span></div>
+            <div class="num ltr-num">{{ $money($statement['expense_total']) }}</div>
+        </div>
+        <div class="card kpi {{ $statement['profit'] < 0 ? 'tone-pink' : 'tone-blue' }}">
+            <div class="kpi-head"><span class="label">{{ $statement['profit'] < 0 ? 'הפסד' : 'רווח נקי' }}</span><span class="icon-chip tone-accent"><svg><use href="#icon-dashboard"></use></svg></span></div>
+            <div class="num ltr-num {{ $statement['profit'] < 0 ? 'rp-neg' : 'rp-pos' }}">{{ $money($statement['profit']) }}</div>
+        </div>
     </div>
+
+    {{-- Collapsed by default; open state lives in Alpine, so it survives filtering. --}}
+    <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-lg)" x-data="{ open: {}, toggle(key) { this.open[key] = ! this.open[key] } }">
+        <div class="table-scroll">
+        <table class="rp-table">
+            <thead><tr><th>סעיף</th><th class="num">סכום</th></tr></thead>
+            <tbody>
+                @foreach ([['key' => 'rev', 'title' => 'הכנסות', 'lines' => $statement['revenue'], 'total' => $statement['revenue_total'], 'unit' => 'תוכניות', 'item' => 'תשלומים', 'empty' => 'אין הכנסות בתקופה שנבחרה'],
+                           ['key' => 'exp', 'title' => 'הוצאות', 'lines' => $statement['expenses'], 'total' => $statement['expense_total'], 'unit' => 'ספקים', 'item' => 'הוצאות', 'empty' => 'אין הוצאות בתקופה שנבחרה']] as $section)
+                    <tr class="rp-l0 rp-toggle" x-on:click="toggle('{{ $section['key'] }}')" :class="open['{{ $section['key'] }}'] && 'rp-open'">
+                        <td>
+                            <svg class="rp-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4 6 8l4 4"/></svg>{{ $section['title'] }}
+                            <span class="rp-count">{{ $countOf(count($section['lines']), $section['unit']) }}</span>
+                        </td>
+                        <td class="num ltr-num">{{ $money($section['total']) }}</td>
+                    </tr>
+                    @forelse ($section['lines'] as $i => $line)
+                        @php($lineKey = $section['key'].'-'.$i)
+                        <tr class="rp-l1 rp-toggle" x-show="open['{{ $section['key'] }}']" x-cloak x-on:click="toggle('{{ $lineKey }}')" :class="open['{{ $lineKey }}'] && 'rp-open'" wire:key="{{ $lineKey }}-{{ md5($line['label']) }}">
+                            <td>
+                                <svg class="rp-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4 6 8l4 4"/></svg>{{ $line['label'] }}
+                                <span class="rp-count">{{ $countOf($line['count'], $section['item']) }}</span>
+                            </td>
+                            <td class="num ltr-num">{{ $money($line['amount']) }}</td>
+                        </tr>
+                        @foreach ($line['items'] as $item)
+                            <tr class="rp-l2" x-show="open['{{ $section['key'] }}'] && open['{{ $lineKey }}']" x-cloak>
+                                <td><span class="ltr-num">{{ $item['date'] }}</span> · {{ $item['description'] }}</td>
+                                <td class="num ltr-num">{{ $money($item['amount']) }}</td>
+                            </tr>
+                        @endforeach
+                    @empty
+                        <tr class="rp-l1" x-show="open['{{ $section['key'] }}']" x-cloak><td colspan="2" style="color:var(--color-text-secondary)">{{ $section['empty'] }}</td></tr>
+                    @endforelse
+                @endforeach
+                <tr class="rp-net">
+                    <td>{{ $statement['profit'] < 0 ? 'הפסד' : 'רווח נקי' }}</td>
+                    <td class="num ltr-num {{ $statement['profit'] < 0 ? 'rp-neg' : 'rp-pos' }}">{{ $money($statement['profit']) }}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <p style="color:var(--color-text-secondary); font-size:var(--fs-caption); margin-top:var(--sp-md)">הכנסה ממנוי שנתי נפרשת על פני 12 חודשי המנוי. הכנסות מסווגות לפי התוכנית או המארז של העסקה, והוצאות לפי הספק. לחיצה על שורה פותחת את הפירוט שלה.</p>
 </div>
