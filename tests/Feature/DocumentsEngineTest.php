@@ -759,15 +759,6 @@ class DocumentsEngineTest extends TestCase
         $this->assertDatabaseHas('document_templates', ['id' => $template->id, 'is_active' => false]);
     }
 
-    public function test_editing_a_template_also_targets_it_for_adding_fields(): void
-    {
-        $template = $this->createTemplate('quote');
-
-        Livewire::actingAs($this->owner)->test('document-templates')
-            ->call('editTemplate', $template->id)
-            ->assertSet('fieldTemplateId', $template->id);
-    }
-
     public function test_ensuring_a_linked_field_creates_it_and_returns_its_token(): void
     {
         $template = $this->createTemplate('order_form');

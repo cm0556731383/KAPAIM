@@ -45,12 +45,6 @@ class extends Component
 
     public ?int $previewTemplateId = null;
 
-    public ?int $fieldTemplateId = null;
-    public string $fieldName = '';
-    public string $fieldType = 'free_text';
-    public string $fieldLinkedField = '';
-    public bool $fieldIsRequired = false;
-
     /** The supplier missing-invoice email (EmailTemplate::SUPPLIER_INVOICE_REQUEST) — see saveInvoiceRequestTemplate(). */
     public string $invoiceRequestSubject = '';
     public string $invoiceRequestContent = '';
@@ -185,12 +179,6 @@ class extends Component
         $this->editorVersion++;
         $this->previewTemplateId = null;
 
-        // Previously the "הוספת שדה" panel required re-picking the template
-        // from its own dropdown even while already editing it here — this
-        // keeps the two in sync so managing a template's fields is part of
-        // editing it, not a separate disconnected step.
-        $this->fieldTemplateId = $template->id;
-
         $this->dispatch('open-modal', name: 'template');
     }
 
@@ -221,45 +209,6 @@ class extends Component
     public function togglePreview(int $id): void
     {
         $this->previewTemplateId = $this->previewTemplateId === $id ? null : $id;
-    }
-
-    /**
-     * Adds a field row (FR-4.10/FR-4.11). Fields can be freely added/removed
-     * while a template evolves — same "not yet snapshotted anywhere" logic
-     * ⚡settings.blade.php's addEmailTemplateField() documents — because a
-     * generated document snapshots the field *values* it captured
-     * (Document::field_values), not a live reference to the field row.
-     */
-    public function addField(ActivityLogger $activityLogger): void
-    {
-        $data = $this->validate([
-            'fieldTemplateId' => ['required', 'exists:document_templates,id'],
-            'fieldName' => ['required', 'string', 'max:255'],
-            'fieldType' => ['required', 'in:free_text,linked'],
-            'fieldLinkedField' => ['required_if:fieldType,linked', 'nullable', 'in:'.implode(',', array_keys(DocumentLinkedFields::OPTIONS))],
-            'fieldIsRequired' => ['boolean'],
-        ], [], ['fieldName' => 'שם השדה', 'fieldLinkedField' => 'שדה מקושר']);
-
-        $nextSort = (int) DocumentTemplateField::where('document_template_id', $data['fieldTemplateId'])->max('sort_order') + 1;
-
-        $field = DocumentTemplateField::create([
-            'document_template_id' => $data['fieldTemplateId'],
-            'name' => $data['fieldName'],
-            'field_type' => $data['fieldType'],
-            'linked_field' => $data['fieldType'] === 'linked' ? $data['fieldLinkedField'] : null,
-            'is_required' => (bool) $data['fieldIsRequired'],
-            'sort_order' => $nextSort,
-        ]);
-
-        $activityLogger->log('document_template_field.created', "נוסף שדה \"{$field->name}\" לתבנית מסמך", [
-            'metadata' => ['document_template_id' => $field->document_template_id],
-        ]);
-
-        $this->reset(['fieldName', 'fieldLinkedField', 'fieldIsRequired']);
-        $this->fieldType = 'free_text';
-        unset($this->templates);
-
-        $this->dispatch('close-modals');
     }
 
     /**
@@ -317,11 +266,6 @@ class extends Component
     public function documentTypes(): array
     {
         return DocumentTemplate::TYPES;
-    }
-
-    public function linkedFieldOptions(): array
-    {
-        return DocumentLinkedFields::OPTIONS;
     }
 
     /** The quick-insert search box's results — customer-card fields only, filtered by $linkedFieldSearch. */
@@ -441,49 +385,6 @@ class extends Component
                                 <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול עריכה</button>
                             @endif
                         </div>
-                    </form>
-                </x-modal>
-                <x-modal trigger-label="+ הוספת שדה לתבנית" trigger-class="btn btn-secondary" title="הוספת שדה לתבנית">
-                    <form wire:submit="addField" class="form-grid">
-                        <div class="full">
-                            <label for="fieldTemplateId">תבנית</label>
-                            <select id="fieldTemplateId" wire:model="fieldTemplateId">
-                                <option value="">בחרו תבנית</option>
-                                @foreach ($this->templates as $template)
-                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
-                                @endforeach
-                            </select>
-                            @error('fieldTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                        <div>
-                            <label for="fieldName">שם השדה</label>
-                            <input type="text" id="fieldName" wire:model="fieldName">
-                            @error('fieldName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                        <div>
-                            <label for="fieldType">סוג שדה</label>
-                            <select id="fieldType" wire:model.live="fieldType">
-                                <option value="free_text">טקסט חופשי</option>
-                                <option value="linked">מקושר למידע קיים</option>
-                            </select>
-                        </div>
-                        @if ($fieldType === 'linked')
-                            <div class="full">
-                                <label for="fieldLinkedField">שדה מקושר</label>
-                                <select id="fieldLinkedField" wire:model="fieldLinkedField">
-                                    <option value="">בחרו שדה מקושר</option>
-                                    @foreach ($this->linkedFieldOptions() as $value => $label)
-                                        <option value="{{ $value }}">{{ $label }}</option>
-                                    @endforeach
-                                </select>
-                                @error('fieldLinkedField') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                            </div>
-                        @endif
-                        <div class="full checkbox-row">
-                            <input type="checkbox" id="fieldIsRequired" wire:model="fieldIsRequired">
-                            <label for="fieldIsRequired" style="margin:0">שדה חובה</label>
-                        </div>
-                        <div class="full"><button type="submit" class="btn btn-primary">הוספת שדה</button></div>
                     </form>
                 </x-modal>
             </div>
