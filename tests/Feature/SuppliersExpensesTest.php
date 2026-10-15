@@ -554,10 +554,36 @@ class SuppliersExpensesTest extends TestCase
         $component->set('months', ['9', '10'])->assertSee('ספטמבר, אוקטובר')
             ->call('selectAll', 'months')->assertSet('months', []);
 
-        // Unticking the last selected one isn't "nothing" — it falls back to all.
-        $component->set('months', ['9'])->call('toggleFilter', 'months', '9')->assertSet('months', []);
+        // "הכל" again unticks everything — the report is empty and can't be printed...
+        $component->call('selectAll', 'months')->assertSet('months', ['none'])
+            ->assertSee('לא נבחר')
+            ->assertSee('לא נבחר אף פריט')
+            ->assertSet('years', [])
+            ->assertDontSee(e(route('cashflow-report.pdf', ['months' => ['none'], 'detail' => 'full'])), false);
+        $this->assertSame(0.0, $component->instance()->statement()['expense_total']);
+
+        // ...until a single month is picked.
+        $component->call('toggleFilter', 'months', '9')->assertSet('months', ['9'])->assertSee('ספטמבר')->assertDontSee('לא נבחר אף פריט');
+
+        // Unticking that last one leaves nothing ticked again.
+        $component->call('toggleFilter', 'months', '9')->assertSet('months', ['none']);
 
         $component->call('toggleFilter', 'months', '13')->assertStatus(404);
+    }
+
+    public function test_picking_a_single_month_after_clearing_reports_only_that_month(): void
+    {
+        $supplier = $this->createSupplier();
+        Expense::createForSupplier($supplier, 300, '2026-09-10');
+        Expense::createForSupplier($supplier, 120, '2026-02-10');
+
+        Livewire::actingAs($this->owner)->test('cashflow-report')
+            ->assertSee('₪420')
+            ->call('selectAll', 'months')
+            ->call('toggleFilter', 'months', '2')
+            ->assertSee('₪120')
+            ->assertDontSee('₪420')
+            ->assertSee(e(route('cashflow-report.pdf', ['months' => ['2'], 'detail' => 'full'])), false);
     }
 
     public function test_the_short_pdf_has_totals_only_and_the_detailed_one_every_expense(): void

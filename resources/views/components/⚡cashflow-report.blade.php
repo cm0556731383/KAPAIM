@@ -39,7 +39,7 @@ class extends Component
 
     /**
      * Every choice each filter offers, value => label. An empty filter means
-     * "all of them" — so "הכל" is simply the empty selection.
+     * "all of them"; [NONE] means nothing is ticked.
      *
      * @return array<string, array<string, string>>
      */
@@ -52,31 +52,50 @@ class extends Component
         ];
     }
 
-    /**
-     * One option's checkbox. From "all" (empty), unticking an option keeps
-     * every other one selected; ticking the last missing one returns to
-     * "all".
-     */
+    /** A filter with nothing ticked (after "הכל" is unticked) — stored as this one value, since an empty filter means "all". */
+    public const NONE = 'none';
+
+    /** The ticked values of a filter: every option for "all", none for NONE. */
+    public function selectedValues(string $filter): array
+    {
+        $options = array_map('strval', array_keys($this->filterOptions()[$filter]));
+
+        return match (true) {
+            $this->{$filter} === [] => $options,
+            $this->{$filter} === [self::NONE] => [],
+            default => array_values(array_intersect($options, array_map('strval', $this->{$filter}))),
+        };
+    }
+
+    public function isNone(string $filter): bool
+    {
+        return $this->{$filter} === [self::NONE];
+    }
+
+    /** One option's checkbox — ticks/unticks just that option. Everything ticked is stored as "all", nothing as NONE. */
     public function toggleFilter(string $filter, string $value): void
     {
         $options = array_map('strval', array_keys($this->filterOptions()[$filter] ?? abort(404)));
         abort_unless(in_array($value, $options, true), 404);
 
-        $selected = $this->{$filter} ? array_map('strval', $this->{$filter}) : $options;
+        $selected = $this->selectedValues($filter);
         $selected = in_array($value, $selected, true)
             ? array_values(array_diff($selected, [$value]))
             : array_values(array_intersect($options, [...$selected, $value]));
 
-        // Nothing ticked can't mean anything useful; everything ticked is just "all".
-        $this->{$filter} = ($selected === [] || count($selected) === count($options)) ? [] : $selected;
+        $this->{$filter} = match (true) {
+            $selected === [] => [self::NONE],
+            count($selected) === count($options) => [],
+            default => $selected,
+        };
     }
 
-    /** The "הכל" checkbox. */
+    /** The "הכל" checkbox: ticks every option, or — when they're all ticked already — unticks them all, so a single one can be picked. */
     public function selectAll(string $filter): void
     {
         abort_unless(in_array($filter, ['years', 'months', 'sources'], true), 404);
 
-        $this->{$filter} = [];
+        $this->{$filter} = $this->{$filter} === [] ? [self::NONE] : [];
     }
 
     public function clearFilters(): void
@@ -90,10 +109,12 @@ class extends Component
         if (! $this->{$filter}) {
             return $allLabel;
         }
+        if ($this->isNone($filter)) {
+            return 'לא נבחר';
+        }
 
         $options = $this->filterOptions()[$filter];
-        $labels = collect(array_keys($options))->filter(fn ($key) => in_array((string) $key, array_map('strval', $this->{$filter}), true))
-            ->map(fn ($key) => $options[$key])->values();
+        $labels = collect($this->selectedValues($filter))->map(fn ($key) => $options[$key])->values();
 
         return $labels->count() <= 2 ? $labels->implode(', ') : $labels->count().' '.$plural;
     }
@@ -101,7 +122,17 @@ class extends Component
     #[Computed]
     public function statement(): array
     {
+        if ($this->hasEmptyFilter()) {
+            return ['revenue' => [], 'revenue_total' => 0.0, 'expenses' => [], 'expense_total' => 0.0, 'profit' => 0.0, 'period' => ''];
+        }
+
         return app(RevenueReport::class)->statement($this->years, $this->months, $this->sources);
+    }
+
+    /** Some filter has nothing ticked — there's nothing to report (or print) until something is. */
+    public function hasEmptyFilter(): bool
+    {
+        return $this->isNone('years') || $this->isNone('months') || $this->isNone('sources');
     }
 
     #[Computed]
@@ -134,7 +165,7 @@ class extends Component
     $countOf = fn (int $n, string $plural) => $n === 1
         ? ['תוכניות' => 'תוכנית אחת', 'ספקים' => 'ספק אחד', 'תשלומים' => 'תשלום אחד', 'הוצאות' => 'הוצאה אחת'][$plural]
         : "{$n} {$plural}";
-    $isOn = fn (string $filter, $value) => ! $this->{$filter} || in_array((string) $value, array_map('strval', $this->{$filter}), true);
+    $isOn = fn (string $filter, $value) => in_array((string) $value, $this->selectedValues($filter), true);
 @endphp
 
 <div>
@@ -183,8 +214,13 @@ class extends Component
             <h1 style="margin-bottom:2px">דוח הכנסות והוצאות</h1>
         </div>
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-            <a href="{{ $this->pdfUrl('summary') }}" target="_blank" class="btn btn-secondary" title="הכנסות, הוצאות ורווח — סכומים כוללים בלבד">PDF מקוצר</a>
-            <a href="{{ $this->pdfUrl('full') }}" target="_blank" class="btn btn-primary" title="כל תוכנית וספק, וכל תשלום והוצאה">PDF מפורט</a>
+            @if ($this->hasEmptyFilter())
+                <button type="button" class="btn btn-secondary" disabled style="opacity:.5; cursor:not-allowed" title="יש לבחור לפחות פריט אחד בכל סינון">PDF מקוצר</button>
+                <button type="button" class="btn btn-primary" disabled style="opacity:.5; cursor:not-allowed" title="יש לבחור לפחות פריט אחד בכל סינון">PDF מפורט</button>
+            @else
+                <a href="{{ $this->pdfUrl('summary') }}" target="_blank" class="btn btn-secondary" title="הכנסות, הוצאות ורווח — סכומים כוללים בלבד">PDF מקוצר</a>
+                <a href="{{ $this->pdfUrl('full') }}" target="_blank" class="btn btn-primary" title="כל תוכנית וספק, וכל תשלום והוצאה">PDF מפורט</a>
+            @endif
         </div>
     </div>
 
@@ -222,6 +258,12 @@ class extends Component
             <button type="button" wire:click="clearFilters" class="btn btn-ghost btn-sm">ניקוי</button>
         @endif
     </div>
+
+    @if ($this->hasEmptyFilter())
+        <div class="card" style="margin-bottom:var(--sp-lg); border-color:var(--color-warning); background:var(--color-warning-bg); font-size:var(--fs-small)">
+            באחד הסינונים לא נבחר אף פריט, לכן הדוח ריק. יש לבחור לפחות פריט אחד, או "הכל".
+        </div>
+    @endif
 
     <div class="kpis" wire:loading.class="opacity-60">
         <div class="card kpi tone-teal">
