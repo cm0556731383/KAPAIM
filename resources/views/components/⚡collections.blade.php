@@ -25,7 +25,7 @@ class extends Component
 {
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('payments.manage'), 403);
+        abort_unless(auth()->user()->can('payments.view'), 403);
     }
 
     /** Deals sent an invoice or a payment link that still have a balance, oldest request first. */

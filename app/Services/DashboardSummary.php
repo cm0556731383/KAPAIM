@@ -97,7 +97,7 @@ class DashboardSummary
      */
     public function openCollectionsTotal(User $user): array
     {
-        if (! $user->hasPermission('payments', 'manage')) {
+        if (! $user->hasPermission('payments', 'view')) {
             return ['amount' => 0.0, 'customerCount' => 0];
         }
 
@@ -117,7 +117,7 @@ class DashboardSummary
      */
     public function checksToDeposit(User $user): array
     {
-        if (! $user->hasPermission('payments', 'manage')) {
+        if (! $user->hasPermission('payments', 'view')) {
             return ['count' => 0, 'amount' => 0.0];
         }
 
@@ -154,7 +154,7 @@ class DashboardSummary
      * FR-2.16/US-019's last acceptance criterion: which schools bought the
      * most-recently-added catalog program vs. only expressed interest in it.
      * Each half is independently gated (customers.manage for "purchased",
-     * leads.manage/leads.view for "interested", scoped to the user's own
+     * leads.view (leads-all.view = unscoped) for "interested", scoped to the user's own
      * leads for a view-only holder) — null when the user can see neither
      * half at all.
      *
@@ -162,7 +162,7 @@ class DashboardSummary
      */
     public function latestProgramSummary(User $user): ?array
     {
-        $canSeeCustomers = $user->hasPermission('customers', 'manage');
+        $canSeeCustomers = $user->hasPermission('customers', 'view');
         $canSeeAnyLeads = $this->canSeeAnyLeads($user);
 
         if (! $canSeeCustomers && ! $canSeeAnyLeads) {
@@ -271,7 +271,7 @@ class DashboardSummary
     /** Overdue collection TASK rows (task_type='collection') — payments.manage gated. */
     private function overdueCollectionItems(User $user): Collection
     {
-        if (! $user->hasPermission('payments', 'manage')) {
+        if (! $user->hasPermission('payments', 'view')) {
             return collect();
         }
 
@@ -295,7 +295,7 @@ class DashboardSummary
     /** A fully-paid deal whose invoice has no Receipt yet — payments.manage gated. */
     private function awaitingReceiptItems(User $user): Collection
     {
-        if (! $user->hasPermission('payments', 'manage')) {
+        if (! $user->hasPermission('payments', 'view')) {
             return collect();
         }
 
@@ -324,7 +324,7 @@ class DashboardSummary
      */
     private function materialsNotSentItems(User $user): Collection
     {
-        if (! $user->hasPermission('materials', 'manage')) {
+        if (! $user->hasPermission('materials', 'view')) {
             return collect();
         }
 
@@ -356,7 +356,7 @@ class DashboardSummary
      */
     private function failedIntegrationItems(User $user): Collection
     {
-        if (! $user->hasPermission('settings', 'manage')) {
+        if (! $user->hasPermission('settings', 'view')) {
             return collect();
         }
 
@@ -380,14 +380,14 @@ class DashboardSummary
 
     private function canSeeAnyLeads(User $user): bool
     {
-        return $user->hasPermission('leads', 'manage') || $user->hasPermission('leads', 'view');
+        return $user->hasPermission('leads', 'view');
     }
 
     /** Build-plan 13 scoping (FR-7.2/FR-7.4) — identical to ⚡leads.blade.php's leads(). */
     private function scopeLeadsToUser(Builder $query, User $user): Builder
     {
         return $query->when(
-            ! $user->hasPermission('leads', 'manage'),
+            ! $user->hasPermission('leads-all', 'view'),
             fn (Builder $q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'),
         );
     }
@@ -395,7 +395,7 @@ class DashboardSummary
     private function scopeFollowUpsToUser(Builder $query, User $user): Builder
     {
         return $query->when(
-            ! $user->hasPermission('leads', 'manage'),
+            ! $user->hasPermission('leads-all', 'view'),
             fn (Builder $q) => $q->whereHas(
                 'lead', fn (Builder $lq) => $lq->where('assigned_user_id', $user->id)->whereNull('converted_at'),
             ),

@@ -155,6 +155,7 @@ class CoreAuthRolesActivityLogTest extends TestCase
 
         // Grant one specific resource+action — only that exact permission opens up.
         $limited->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
+        $limitedUser->refresh(); // the role's permissions are read once per request and cached on the model
         $this->assertTrue($limitedUser->hasPermission('leads', 'view'));
         $this->assertFalse($limitedUser->hasPermission('leads', 'edit'));
         $this->assertFalse($limitedUser->hasPermission('customers', 'view'));

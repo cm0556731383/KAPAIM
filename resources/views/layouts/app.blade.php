@@ -169,20 +169,45 @@
 
         <div class="sidebar-scroll">
             <nav>
+                @can('dashboard.view')
                 <a href="{{ url('/') }}" class="{{ request()->is('/') ? 'active' : '' }}"><svg><use href="#icon-dashboard"></use></svg>מסך עבודה</a>
+                @endcan
+                @can('leads.view')
                 <a href="{{ route('leads') }}" class="{{ request()->routeIs('leads') || request()->routeIs('lead-detail') ? 'active' : '' }}"><svg><use href="#icon-leads"></use></svg>לידים</a>
+                @endcan
+                @can('customers.view')
                 <a href="{{ route('customers') }}" class="{{ request()->routeIs('customers') || request()->routeIs('customer-detail') ? 'active' : '' }}"><svg><use href="#icon-customers"></use></svg>לקוחות</a>
+                @endcan
+                @can('payments.view')
                 <a href="{{ route('collections') }}" class="{{ request()->routeIs('collections') ? 'active' : '' }}"><svg><use href="#icon-payments"></use></svg>גבייה ותשלומים</a>
+                @endcan
+                @can('mailing-lists.view')
                 <a href="{{ route('mailing-lists') }}" class="{{ request()->routeIs('mailing-lists') ? 'active' : '' }}"><svg><use href="#icon-mailing"></use></svg>רשימות תפוצה</a>
-                <a href="{{ route('suppliers') }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
+                @endcan
+                @php($financeUrl = collect(['suppliers' => 'suppliers', 'expenses' => 'expenses', 'cashflow-report' => 'cashflow-report'])->filter(fn ($route, $page) => auth()->user()?->can($page.'.view'))->map(fn ($route) => route($route))->first())
+                @if ($financeUrl)
+                <a href="{{ $financeUrl }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
+                @endif
             </nav>
             <nav>
+                @can('catalog.view')
                 <a href="{{ route('programs-catalog') }}" class="{{ request()->routeIs('programs-catalog') ? 'active' : '' }}"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
+                @endcan
+                @can('document-templates.view')
                 <a href="{{ route('document-templates') }}" class="{{ request()->routeIs('document-templates') ? 'active' : '' }}"><svg><use href="#icon-documents"></use></svg>תבניות מסמכים</a>
+                @endcan
+                @can('settings.view')
                 <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
+                @endcan
+                @can('users.view')
                 <a href="{{ route('users-roles') }}" class="{{ request()->routeIs('users-roles') ? 'active' : '' }}"><svg><use href="#icon-users"></use></svg>משתמשות והרשאות</a>
+                @endcan
+                @can('activity-log.view')
                 <a href="{{ route('activity-log') }}" class="{{ request()->routeIs('activity-log') ? 'active' : '' }}"><svg><use href="#icon-activity"></use></svg>יומן פעילות</a>
+                @endcan
+                @can('search.view')
                 <a href="{{ route('search') }}" class="{{ request()->routeIs('search') ? 'active' : '' }}"><svg><use href="#icon-search"></use></svg>חיפוש גלובלי</a>
+                @endcan
             </nav>
         </div>
     </aside>

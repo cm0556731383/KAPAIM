@@ -99,7 +99,7 @@ class extends Component
 
     public function mount(Deal $deal): void
     {
-        abort_unless(auth()->user()->can('deals.manage'), 403);
+        abort_unless(auth()->user()->can('deals.view'), 403);
 
         $this->deal = $deal->load(['customer.school', 'program', 'bundle', 'status', 'paymentMethod']);
         $this->syncFields();

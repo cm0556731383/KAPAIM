@@ -25,18 +25,31 @@ class extends Component
 {
     use Notifies;
 
+    /** Without the dashboard's view permission, land on the first page this user may open. */
+    public function mount()
+    {
+        $user = auth()->user();
+
+        if (! $user->can('dashboard.view')) {
+            $url = \App\Support\PagePermissions::firstViewableUrl($user);
+            abort_unless($url, 403);
+
+            return $this->redirect($url);
+        }
+    }
+
     #[Computed]
     public function canSeeLeadItems(): bool
     {
         $user = auth()->user();
 
-        return $user->can('leads.manage') || $user->can('leads.view');
+        return $user->can('leads.view');
     }
 
     #[Computed]
     public function canSeeFinancials(): bool
     {
-        return auth()->user()->can('payments.manage');
+        return auth()->user()->can('payments.view');
     }
 
     /** Checks whose due date has come and that aren't marked cleared yet — the "issue its receipt?" reminder. */

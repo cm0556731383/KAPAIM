@@ -263,7 +263,7 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/suppliers', 'suppliers')->name('suppliers');
     Route::livewire('/expenses', 'expenses')->name('expenses');
     Route::get('/expenses/export', function (\App\Services\ExpensesSpreadsheet $spreadsheet) {
-        abort_unless(auth()->user()->can('expenses.manage'), 403);
+        abort_unless(auth()->user()->can('expenses.view'), 403);
 
         $xlsx = $spreadsheet->render();
 
@@ -277,7 +277,7 @@ Route::middleware('auth')->group(function () {
     })->name('expenses.export');
     // The supplier's invoice file attached to an expense — opens in the browser (PDF/image), or downloads with ?download=1.
     Route::get('/expenses/{expense}/invoice', function (\App\Models\Expense $expense) {
-        abort_unless(auth()->user()->can('expenses.manage'), 403);
+        abort_unless(auth()->user()->can('expenses.view'), 403);
         abort_unless($expense->hasInvoiceFile(), 404);
 
         $path = $expense->document->file_reference;
@@ -293,7 +293,7 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
     // The income statement as a PDF, with the same filters as the page (years[], months[], sources[]) — detail=summary|full.
     Route::get('/cashflow-report/pdf', function (\Illuminate\Http\Request $request, \App\Services\RevenueReport $report) {
-        abort_unless(auth()->user()->can('expenses.manage'), 403);
+        abort_unless(auth()->user()->can('cashflow-report.view'), 403);
 
         $filters = $request->validate([
             'years' => ['array'], 'years.*' => ['integer', 'between:2000,2100'],
@@ -315,7 +315,7 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/document-templates', 'document-templates')->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {
-        abort_unless(auth()->user()->can('documents.manage'), 403);
+        abort_unless(auth()->user()->can('documents.view'), 403);
 
         $document->load(['deal.customer.school', 'businessEntity', 'lines']);
 

@@ -4,6 +4,7 @@ use App\Concerns\Notifies;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Support\PagePermissions;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -43,7 +44,7 @@ class extends Component
      */
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('users.manage'), 403);
+        abort_unless(auth()->user()->can('users.view'), 403);
 
         $this->roleId = Role::where('is_active', true)->value('id');
     }
@@ -118,7 +119,7 @@ class extends Component
         ], [], ['editName' => 'שם', 'editEmail' => 'אימייל מערכת', 'editPersonalEmail' => 'אימייל אישי', 'editRoleId' => 'תפקיד']);
 
         // Never lock yourself out: no deactivating, or moving off this screen's permission, your own account.
-        if ($user->is($this->currentUser()) && (! $data['editIsActive'] || ! Role::find($data['editRoleId'])?->hasPermission('users', 'manage'))) {
+        if ($user->is($this->currentUser()) && (! $data['editIsActive'] || ! Role::find($data['editRoleId'])?->hasPermission('users', 'edit'))) {
             $this->userError = 'לא ניתן להשבית את המשתמשת שלך או להסיר ממנה את ההרשאה לניהול משתמשות.';
 
             return;
@@ -169,13 +170,47 @@ class extends Component
     #[Computed]
     public function roles()
     {
-        return Role::orderBy('id')->get();
+        return Role::with('permissions')->orderBy('id')->get();
     }
 
-    /** Resources shown in the per-role permission preview table. */
-    public function previewResources(): array
+    /**
+     * One cell of the per-page permission matrix (App\Support\PagePermissions).
+     * Edit implies view: turning edit on turns view on, turning view off turns
+     * edit off. Saved as exact rows, so a full-access ('*') role keeps every
+     * page not touched here, including pages added later.
+     */
+    public function togglePermission(int $roleId, string $page, string $action, ActivityLogger $activityLogger): void
     {
-        return ['leads', 'customers', 'deals', 'documents', 'payments'];
+        abort_unless(auth()->user()->can('users.edit'), 403);
+        abort_unless(isset(PagePermissions::PAGES[$page]) && ($action === 'view' || ($action === 'edit' && PagePermissions::hasEdit($page))), 404);
+
+        $role = Role::findOrFail($roleId);
+        $allowed = ! $role->hasPermission($page, $action);
+
+        // Never lock yourself out of this screen.
+        if (! $allowed && $page === 'users' && $role->id === $this->currentUser()->role_id) {
+            $this->notifyError('לא ניתן להסיר מהתפקיד שלך את ההרשאה לדף משתמשות והרשאות.');
+
+            return;
+        }
+
+        $role->setPermission($page, $action, $allowed);
+
+        if ($action === 'edit' && $allowed) {
+            $role->setPermission($page, 'view', true);
+        } elseif ($action === 'view' && ! $allowed && PagePermissions::hasEdit($page)) {
+            $role->setPermission($page, 'edit', false);
+        }
+
+        $activityLogger->log('role.permission_updated', sprintf(
+            'הרשאת %s לדף "%s" %s לתפקיד "%s"',
+            $action === 'edit' ? 'עריכה' : 'צפייה',
+            PagePermissions::label($page),
+            $allowed ? 'ניתנה' : 'הוסרה',
+            $role->name,
+        ), ['metadata' => ['role_id' => $role->id, 'resource' => $page, 'action' => $action, 'is_allowed' => $allowed]]);
+
+        unset($this->roles);
     }
 };
 ?>
@@ -266,19 +301,31 @@ class extends Component
         <div class="section-head">
             <h2>תפקידים והרשאות</h2>
         </div>
+        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">צפייה — הדף נפתח ומופיע בתפריט. עריכה — אפשר גם לשמור ולשנות בו. בלי עריכה, הדף פתוח לצפייה בלבד. השינויים נשמרים מיד.</p>
+        @php($canEditRoles = auth()->user()->can('users.edit'))
         <div class="cols2">
             @foreach ($this->roles as $role)
                 <div class="card">
                     <h3>{{ $role->name }}</h3>
                     <div class="table-scroll">
                     <table class="perm-table">
-                        <thead><tr><th>משאב</th><th>צפייה</th><th>עריכה</th></tr></thead>
+                        <thead><tr><th>דף</th><th>צפייה</th><th>עריכה</th></tr></thead>
                         <tbody>
-                            @foreach ($this->previewResources() as $resource)
-                                <tr>
-                                    <td>{{ ['leads' => 'לידים', 'customers' => 'לקוחות', 'deals' => 'עסקאות', 'documents' => 'מסמכים', 'payments' => 'תשלומים'][$resource] ?? $resource }}</td>
-                                    <td class="{{ $role->hasPermission($resource, 'view') ? 'perm-cell-yes' : 'perm-cell-no' }}">{{ $role->hasPermission($resource, 'view') ? 'כן' : '—' }}</td>
-                                    <td class="{{ $role->hasPermission($resource, 'edit') ? 'perm-cell-yes' : 'perm-cell-no' }}">{{ $role->hasPermission($resource, 'edit') ? 'כן' : '—' }}</td>
+                            @foreach (PagePermissions::PAGES as $page => [$label, $hasEdit])
+                                <tr wire:key="perm-{{ $role->id }}-{{ $page }}">
+                                    <td>{{ $label }}</td>
+                                    @php($canView = $role->hasPermission($page, 'view'))
+                                    <td class="{{ $canView ? 'perm-cell-yes' : 'perm-cell-no' }}">
+                                        <label class="checkbox-row" style="margin:0"><input type="checkbox" @checked($canView) @disabled(! $canEditRoles) wire:click="togglePermission({{ $role->id }}, '{{ $page }}', 'view')" aria-label="צפייה — {{ $label }}">{{ $canView ? 'כן' : 'לא' }}</label>
+                                    </td>
+                                    @if ($hasEdit)
+                                        @php($canEdit = $role->hasPermission($page, 'edit'))
+                                        <td class="{{ $canEdit ? 'perm-cell-yes' : 'perm-cell-no' }}">
+                                            <label class="checkbox-row" style="margin:0"><input type="checkbox" @checked($canEdit) @disabled(! $canEditRoles) wire:click="togglePermission({{ $role->id }}, '{{ $page }}', 'edit')" aria-label="עריכה — {{ $label }}">{{ $canEdit ? 'כן' : 'לא' }}</label>
+                                        </td>
+                                    @else
+                                        <td class="perm-cell-no" title="דף לצפייה בלבד — אין בו עריכה">—</td>
+                                    @endif
                                 </tr>
                             @endforeach
                         </tbody>

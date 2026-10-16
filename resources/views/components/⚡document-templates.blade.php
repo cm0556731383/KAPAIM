@@ -55,7 +55,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('document-templates.manage'), 403);
+        abort_unless(auth()->user()->can('document-templates.view'), 403);
 
         $template = EmailTemplate::supplierInvoiceRequest();
         $this->invoiceRequestSubject = (string) $template?->subject;

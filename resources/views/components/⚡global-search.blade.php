@@ -16,7 +16,7 @@ use Livewire\Component;
  * control already happens per-entity inside results() below by re-running
  * the exact same record-level scoping as the list screens themselves:
  *   - leads half: identical to ⚡leads.blade.php's leads() computed
- *     (build-plan 13, FR-7.2-7.4) — a leads.manage holder finds every lead;
+ *     (build-plan 13, FR-7.2-7.4) — a leads-all.view holder finds every lead;
  *     a leads.view-only holder (future "עובדת מכירות") only finds leads
  *     assigned to them that have not yet converted.
  *   - customers half: gated on customers.manage, mirroring
@@ -33,6 +33,11 @@ class extends Component
     private const MIN_LENGTH = 2;
 
     private const MAX_RESULTS = 20;
+
+    public function mount(): void
+    {
+        abort_unless(auth()->user()->can('search.view'), 403);
+    }
 
     #[Computed]
     public function results()
@@ -54,10 +59,10 @@ class extends Component
         $results = collect();
 
         // ===== Leads =====
-        if ($user->can('leads.manage') || $user->can('leads.view')) {
+        if ($user->can('leads.view')) {
             Lead::query()
                 ->with(['school.contacts'])
-                ->when(! $user->can('leads.manage'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
+                ->when(! $user->can('leads-all.view'), fn ($q) => $q->where('assigned_user_id', $user->id)->whereNull('converted_at'))
                 ->get()
                 ->each(function (Lead $lead) use (&$results, $normalizedTerm, $phoneDigits) {
                     if (! $this->leadMatches($lead, $normalizedTerm, $phoneDigits)) {
@@ -110,7 +115,7 @@ class extends Component
     /**
      * FR-7.14: school name/phone, the school's contacts (name/phone/email —
      * still keyed by school_id per build-plan 04, even for an
-     * already-converted lead a leads.manage holder can still see), and the
+     * already-converted lead a leads-all.view holder can still see), and the
      * lead's own phone/email.
      */
     private function leadMatches(Lead $lead, string $term, ?string $phoneDigits): bool

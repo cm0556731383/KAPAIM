@@ -38,7 +38,7 @@ class extends Component
     public string $leadSourceId = '';
     public string $leadNotes = '';
 
-    // ===== שיוך ליד (FR-7.5 — הקצאה ידנית, leads.manage בלבד) =====
+    // ===== שיוך ליד (FR-7.5 — הקצאה ידנית, leads-all.edit בלבד) =====
     public string $assignedUserId = '';
 
     /** @see Lead::findFuzzyDuplicateSchool() */
@@ -99,14 +99,14 @@ class extends Component
 
     public function mount(Lead $lead): void
     {
-        // Build-plan 13: resource-level gate first (leads.manage OR
-        // leads.view — a future "עובדת מכירות" holds only the latter), then
+        // Build-plan 13: resource-level gate first (leads.view — a
+        // "עובדת מכירות" has it without leads-all.view), then
         // the record-level LeadPolicy::view() check (a non-dotted ability,
         // so it falls through Gate::before to the actual Policy) — this is
         // what enforces "own assigned, not-yet-converted leads only" for a
-        // leads.view-only user, and revokes access the instant FR-7.4 fires.
+        // user without leads-all.view, and revokes access the instant FR-7.4 fires.
         $user = auth()->user();
-        abort_unless($user->can('leads.manage') || $user->can('leads.view'), 403);
+        abort_unless($user->can('leads.view'), 403);
         abort_unless($user->can('view', $lead), 403);
 
         $this->lead = $lead->load('school');
@@ -232,13 +232,13 @@ class extends Component
 
     /**
      * Manual half of FR-7.5 (the landing-page-automatic half is stage 12's
-     * territory). Gated on leads.manage only — a "עובדת מכירות" holding just
-     * leads.view has no route to this method at all (no control rendered
+     * territory). Gated on leads-all.edit only — a "עובדת מכירות" without
+     * leads-all.edit has no route to this method at all (no control rendered
      * for her, and this check re-verifies it server-side regardless).
      */
     public function assignUser(ActivityLogger $activityLogger): void
     {
-        abort_unless(auth()->user()->can('leads.manage'), 403);
+        abort_unless(auth()->user()->can('leads-all.edit'), 403);
 
         $data = $this->validate(['assignedUserId' => ['nullable', 'exists:users,id']]);
 
@@ -951,7 +951,7 @@ class extends Component
                     <div class="full"><button type="submit" class="btn btn-secondary">שמירת פרטי הפנייה</button></div>
                 </form>
 
-                @can('leads.manage')
+                @can('leads-all.edit')
                     {{-- FR-7.5 — הקצאה ידנית של ליד; רק בעלת גישה מלאה יכולה
                     לשייך/לשנות שיוך, לא עובדת מכירות עצמה. --}}
                     <form wire:submit="assignUser" class="form-grid" style="margin-top:var(--sp-lg)">

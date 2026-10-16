@@ -32,7 +32,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('suppliers.manage'), 403);
+        abort_unless(auth()->user()->can('suppliers.view'), 403);
     }
 
     public function saveSupplier(ActivityLogger $activityLogger): void
@@ -189,9 +189,9 @@ class extends Component
     </div>
 
     <div class="tabs">
-        <a href="{{ route('suppliers') }}" class="active">ספקים</a>
-        <a href="{{ route('expenses') }}">הוצאות</a>
-        <a href="{{ route('cashflow-report') }}">דוח הכנסות והוצאות</a>
+        @can('suppliers.view')<a href="{{ route('suppliers') }}" class="active">ספקים</a>@endcan
+        @can('expenses.view')<a href="{{ route('expenses') }}">הוצאות</a>@endcan
+        @can('cashflow-report.view')<a href="{{ route('cashflow-report') }}">דוח הכנסות והוצאות</a>@endcan
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-xl)">

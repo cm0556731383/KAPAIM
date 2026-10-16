@@ -44,6 +44,9 @@ class GlobalSearchTest extends TestCase
 
         $salesRep = Role::create(['name' => 'עובדת מכירות', 'is_active' => true]);
         $salesRep->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
+        foreach ([['leads', 'edit'], ['dashboard', 'view'], ['search', 'view']] as [$resource, $action]) {
+            $salesRep->permissions()->create(['resource' => $resource, 'action' => $action, 'is_allowed' => true]);
+        }
 
         $this->repA = User::create([
             'name' => 'שרית לוי', 'email' => 'sarit@kapaim.test', 'password' => 'password',

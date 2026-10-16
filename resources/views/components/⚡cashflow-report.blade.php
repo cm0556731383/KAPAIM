@@ -34,7 +34,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('expenses.manage'), 403);
+        abort_unless(auth()->user()->can('cashflow-report.view'), 403);
     }
 
     /**
@@ -225,9 +225,9 @@ class extends Component
     </div>
 
     <div class="tabs">
-        <a href="{{ route('suppliers') }}">ספקים</a>
-        <a href="{{ route('expenses') }}">הוצאות</a>
-        <a href="{{ route('cashflow-report') }}" class="active">דוח הכנסות והוצאות</a>
+        @can('suppliers.view')<a href="{{ route('suppliers') }}">ספקים</a>@endcan
+        @can('expenses.view')<a href="{{ route('expenses') }}">הוצאות</a>@endcan
+        @can('cashflow-report.view')<a href="{{ route('cashflow-report') }}" class="active">דוח הכנסות והוצאות</a>@endcan
     </div>
 
     <div class="rp-filterbar">

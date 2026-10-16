@@ -56,7 +56,7 @@ class extends Component
 
     public function mount(Document $document): void
     {
-        abort_unless(auth()->user()->can('documents.manage'), 403);
+        abort_unless(auth()->user()->can('documents.view'), 403);
 
         $this->document = $document->load(['deal.customer.school', 'expense.supplier', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
 

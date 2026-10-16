@@ -32,7 +32,7 @@ class extends Component
      */
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('activity-log.manage'), 403);
+        abort_unless(auth()->user()->can('activity-log.view'), 403);
     }
 
     public function updatedUserFilter(): void

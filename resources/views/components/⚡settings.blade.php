@@ -111,7 +111,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('settings.manage'), 403);
+        abort_unless(auth()->user()->can('settings.view'), 403);
 
         $this->subscriptionStartMonth = (string) HebrewCalendar::startMonth();
 

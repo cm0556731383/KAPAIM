@@ -887,7 +887,8 @@ class SubscriptionsTest extends TestCase
     private function userWithOnlyCustomersPermission(): User
     {
         $limited = Role::create(['name' => 'עובדת מכירות מוגבלת '.random_int(1, 999999), 'is_active' => true]);
-        $limited->permissions()->create(['resource' => 'customers', 'action' => 'manage', 'is_allowed' => true]);
+        // Subscriptions live on the customer card, so they follow the customers page's edit permission.
+        $limited->permissions()->create(['resource' => 'customers', 'action' => 'view', 'is_allowed' => true]);
 
         return User::create([
             'name' => 'שרית לוי', 'email' => 'sarit'.random_int(1, 999999).'@kapaim.test', 'password' => 'password',

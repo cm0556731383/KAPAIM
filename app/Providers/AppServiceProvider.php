@@ -2,9 +2,15 @@
 
 namespace App\Providers;
 
+use App\Exceptions\EditNotAllowedException;
 use App\Models\User;
+use App\Support\PagePermissions;
+use App\Support\ReadOnlyGuard;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Livewire\Component;
+use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -44,6 +50,43 @@ class AppServiceProvider extends ServiceProvider
             [$resource, $action] = explode('.', $ability, 2);
 
             return $user->hasPermission($resource, $action);
+        });
+
+        $this->registerReadOnlyPages();
+    }
+
+    /**
+     * Per-page "view only" (App\Support\PagePermissions): while a Livewire
+     * request on a page applies property updates and runs actions, a user
+     * without that page's edit permission has every database write blocked
+     * (ReadOnlyGuard); the blocked action shows a message instead of an error
+     * page. Rendering runs outside the guard. The first render (mount) is not a
+     * Livewire update, so it is unaffected — opening the page is gated by
+     * each page's own view check.
+     */
+    private function registerReadOnlyPages(): void
+    {
+        // A fresh app starts unguarded (the flag is static, so it would otherwise outlive the app between tests).
+        ReadOnlyGuard::disable();
+
+        DB::beforeExecuting(fn (string $query) => ReadOnlyGuard::check($query));
+
+        Livewire::listen('hydrate', function (Component $component) {
+            $page = PagePermissions::COMPONENT_PAGES[$component->getName()] ?? null;
+
+            if ($page && PagePermissions::hasEdit($page) && ! auth()->user()?->hasPermission($page, 'edit')) {
+                ReadOnlyGuard::enable($page);
+            }
+        });
+        Livewire::listen('render', fn () => ReadOnlyGuard::disable());
+        Livewire::listen('dehydrate', fn () => ReadOnlyGuard::disable());
+
+        Livewire::listen('exception', function (Component $component, \Throwable $e, callable $stopPropagation) {
+            if ($e instanceof EditNotAllowedException) {
+                ReadOnlyGuard::disable();
+                $component->dispatch('notify', type: 'error', message: $e->getMessage(), sticky: true);
+                $stopPropagation();
+            }
         });
     }
 }

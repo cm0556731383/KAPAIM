@@ -46,7 +46,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('catalog.manage'), 403);
+        abort_unless(auth()->user()->can('catalog.view'), 403);
     }
 
     // ----- תוכניות -----

@@ -28,7 +28,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('customers.manage'), 403);
+        abort_unless(auth()->user()->can('customers.view'), 403);
     }
 
     #[Computed]

@@ -53,7 +53,7 @@ class extends Component
 
     public function mount(): void
     {
-        abort_unless(auth()->user()->can('mailing-lists.manage'), 403);
+        abort_unless(auth()->user()->can('mailing-lists.view'), 403);
 
         // Every catalog program has its list, even before anyone joined it.
         Program::where('is_active', true)->get()->each(fn (Program $program) => MailingList::forProgram($program));

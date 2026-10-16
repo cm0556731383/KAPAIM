@@ -7,7 +7,7 @@ use App\Models\User;
 
 /**
  * Build-plan 13 (FR-7.2–FR-7.4): record-level access on top of the
- * resource-level `leads.manage`/`leads.view` check already answered by
+ * resource-level `leads-all.view`/`leads.view` check already answered by
  * AppServiceProvider's Gate::before for dotted abilities. This policy is
  * reached through non-dotted abilities only (e.g. `can('view', $lead)`),
  * which the Gate::before callback deliberately lets fall through — see its
@@ -20,7 +20,7 @@ use App\Models\User;
 class LeadPolicy
 {
     /**
-     * Full-access roles (owner/secretary, `leads`/`manage`) always see every
+     * Full-access roles (owner/secretary, `leads-all`/`view`) always see every
      * lead, unfiltered. A `leads`/`view`-only role (a future "עובדת מכירות")
      * may only view a lead it is assigned to, and only while it is still a
      * lead — FR-7.4: once converted to a customer, `converted_at` is set and
@@ -28,7 +28,7 @@ class LeadPolicy
      */
     public function view(User $user, Lead $lead): bool
     {
-        if ($user->hasPermission('leads', 'manage')) {
+        if ($user->hasPermission('leads-all', 'view')) {
             return true;
         }
 

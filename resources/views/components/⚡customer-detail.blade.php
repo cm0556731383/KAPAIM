@@ -184,7 +184,7 @@ class extends Component
 
     public function mount(Customer $customer): void
     {
-        abort_unless(auth()->user()->can('customers.manage'), 403);
+        abort_unless(auth()->user()->can('customers.view'), 403);
 
         $this->customer = $customer->load(['school', 'lead']);
         $this->syncSchoolFields();
