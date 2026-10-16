@@ -191,6 +191,8 @@ class extends Component
                 'company_id' => (string) $entity->sumit_company_id,
                 'api_key' => '',
                 'has_key' => filled($entity->sumit_api_key),
+                // Only the last 4 characters ever reach the page, so the user can see which key is saved.
+                'key_hint' => filled($entity->sumit_api_key) ? '••••••••'.mb_substr(trim($entity->sumit_api_key), -4) : '',
             ]])
             ->all();
     }
@@ -1158,7 +1160,12 @@ class extends Component
                         </div>
                         <div>
                             <label for="sumitApiKey{{ $entityId }}">מפתח API (פרטי)</label>
-                            <input type="password" id="sumitApiKey{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.api_key" class="ltr-num" dir="ltr" placeholder="{{ $company['has_key'] ? '•••••• מפתח שמור — להחלפה הקלידו חדש' : '' }}" autocomplete="new-password">
+                            <input type="password" id="sumitApiKey{{ $entityId }}" wire:model="sumitCompanies.{{ $entityId }}.api_key" class="ltr-num" dir="ltr" placeholder="{{ $company['has_key'] ? $company['key_hint'] : '' }}" autocomplete="new-password">
+                            @if ($company['has_key'])
+                                <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">✓ מפתח שמור: <span dir="ltr">{{ $company['key_hint'] }}</span> — להחלפה הקלידו מפתח חדש</div>
+                            @else
+                                <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">לא נשמר מפתח</div>
+                            @endif
                         </div>
                         <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                             <button type="submit" class="btn btn-primary">שמירה</button>
