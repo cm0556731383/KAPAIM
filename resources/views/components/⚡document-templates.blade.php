@@ -2,7 +2,6 @@
 
 use App\Concerns\Notifies;
 use App\Models\DocumentTemplate;
-use App\Models\EmailTemplate;
 use App\Models\DocumentTemplateField;
 use App\Services\ActivityLogger;
 use App\Services\DocumentLinkedFields;
@@ -45,94 +44,9 @@ class extends Component
 
     public ?int $previewTemplateId = null;
 
-    /** The supplier missing-invoice email (EmailTemplate::SUPPLIER_INVOICE_REQUEST) — see saveInvoiceRequestTemplate(). */
-    public string $invoiceRequestSubject = '';
-    public string $invoiceRequestContent = '';
-
-    /** The several-invoices supplier email (EmailTemplate::SUPPLIER_INVOICES_REQUEST) — see saveBulkRequestTemplate(). */
-    public string $bulkRequestSubject = '';
-    public string $bulkRequestContent = '';
-
     public function mount(): void
     {
         abort_unless(auth()->user()->can('document-templates.view'), 403);
-
-        $template = EmailTemplate::supplierInvoiceRequest();
-        $this->invoiceRequestSubject = (string) $template?->subject;
-        $this->invoiceRequestContent = (string) $template?->content;
-
-        $bulk = EmailTemplate::supplierInvoicesRequest();
-        $this->bulkRequestSubject = (string) $bulk?->subject;
-        $this->bulkRequestContent = (string) $bulk?->content;
-    }
-
-    /**
-     * The wording of the email the expenses page's "בקשה מהספק במייל" sends
-     * (Expense::requestInvoice()) — {{...}} fields are filled from that
-     * expense row; EmailTemplate::UPLOAD_BUTTON_TOKEN marks where the upload
-     * button goes.
-     */
-    public function saveInvoiceRequestTemplate(ActivityLogger $activityLogger): void
-    {
-        $data = $this->validate([
-            'invoiceRequestSubject' => ['required', 'string', 'max:255'],
-            'invoiceRequestContent' => ['required', 'string'],
-        ], [], ['invoiceRequestSubject' => 'נושא המייל', 'invoiceRequestContent' => 'גוף המייל']);
-
-        $template = EmailTemplate::updateOrCreate(
-            ['template_type' => EmailTemplate::SUPPLIER_INVOICE_REQUEST],
-            ['name' => 'בקשת חשבונית מספק', 'subject' => $data['invoiceRequestSubject'], 'content' => $data['invoiceRequestContent'], 'is_active' => true],
-        );
-
-        $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
-        $this->notifySuccess('נוסח המייל נשמר.');
-    }
-
-    /**
-     * The wording of the one email a supplier missing several invoices gets
-     * from the expenses page's "בקשת חשבוניות מכל הספקים"
-     * (Expense::requestAllMissingInvoices()) — EmailTemplate::EXPENSE_LIST_TOKEN
-     * marks where the list of expenses, each with its upload button, goes.
-     */
-    public function saveBulkRequestTemplate(ActivityLogger $activityLogger): void
-    {
-        $data = $this->validate([
-            'bulkRequestSubject' => ['required', 'string', 'max:255'],
-            'bulkRequestContent' => ['required', 'string'],
-        ], [], ['bulkRequestSubject' => 'נושא המייל', 'bulkRequestContent' => 'גוף המייל']);
-
-        $template = EmailTemplate::updateOrCreate(
-            ['template_type' => EmailTemplate::SUPPLIER_INVOICES_REQUEST],
-            ['name' => 'בקשת כמה חשבוניות מספק', 'subject' => $data['bulkRequestSubject'], 'content' => $data['bulkRequestContent'], 'is_active' => true],
-        );
-
-        $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
-        $this->notifySuccess('נוסח המייל נשמר.');
-    }
-
-    /** The several-invoices email filled with example values. */
-    public function bulkRequestPreview(): array
-    {
-        return (new EmailTemplate(['subject' => $this->bulkRequestSubject, 'content' => $this->bulkRequestContent]))->render([
-            'supplier_name' => 'דפוס הראל בע"מ',
-            'expense_count' => '2',
-            'total_amount' => '1,730',
-        ]);
-    }
-
-    /** The email as a supplier would see it, filled with example values. */
-    public function invoiceRequestPreview(): array
-    {
-        $template = new EmailTemplate(['subject' => $this->invoiceRequestSubject, 'content' => $this->invoiceRequestContent]);
-
-        return $template->render([
-            'supplier_name' => 'דפוס הראל בע"מ',
-            'expense_date' => now()->subDays(12)->format('d/m/Y'),
-            'amount' => '1,250',
-            'program_name' => 'תוכנית לדוגמה',
-            'notes' => 'הדפסת 400 חוברות',
-            'expense_id' => '42',
-        ]);
     }
 
     public function saveTemplate(ActivityLogger $activityLogger): void
@@ -427,32 +341,4 @@ class extends Component
         </div>
 
     </section>
-
-    @include('partials.supplier-email-editor', [
-        'title' => 'מייל בקשת חשבונית מספק',
-        'intro' => 'המייל שנשלח לספק עבור הוצאה אחת שאין לה חשבונית: בלחיצה על "בקשה מהספק במייל" בדף ההוצאות, או בשליחה לכל הספקים כשחסרה לספק חשבונית אחת. השדות בסוגריים המסולסלים יתמלאו בפרטי ההוצאה, והספק יקבל כפתור להעלאת החשבונית ישירות למערכת.',
-        'subjectModel' => 'invoiceRequestSubject',
-        'contentModel' => 'invoiceRequestContent',
-        'fields' => ['שם_הספק' => 'שם הספק', 'תאריך_התשלום' => 'תאריך התשלום', 'סכום' => 'סכום', 'תוכנית' => 'תוכנית', 'הערות' => 'הערות'],
-        'blockToken' => EmailTemplate::UPLOAD_BUTTON_TOKEN,
-        'blockLabel' => 'כפתור העלאת החשבונית',
-        'blockHint' => 'אם הכפתור לא מופיע בטקסט, הוא יתווסף בסוף המייל.',
-        'blockPreviewHtml' => '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">להעלאת החשבונית</span>',
-        'preview' => $this->invoiceRequestPreview(),
-        'saveAction' => 'saveInvoiceRequestTemplate',
-    ])
-
-    @include('partials.supplier-email-editor', [
-        'title' => 'מייל בקשת כמה חשבוניות מספק',
-        'intro' => 'המייל שנשלח בלחיצה על "בקשת חשבוניות מכל הספקים" בדף ההוצאות לספק שחסרות לו כמה חשבוניות — מייל אחד עם רשימת ההוצאות, ולכל הוצאה כפתור משלה להעלאת החשבונית.',
-        'subjectModel' => 'bulkRequestSubject',
-        'contentModel' => 'bulkRequestContent',
-        'fields' => ['שם_הספק' => 'שם הספק', 'מספר_החשבוניות_החסרות' => 'מספר החשבוניות החסרות', 'סכום_כולל' => 'סכום כולל'],
-        'blockToken' => EmailTemplate::EXPENSE_LIST_TOKEN,
-        'blockLabel' => 'רשימת ההוצאות עם כפתורי ההעלאה',
-        'blockHint' => 'אם הרשימה לא מופיעה בטקסט, היא תתווסף בסוף המייל.',
-        'blockPreviewHtml' => collect(['תשלום מתאריך 03/09/2026 · ₪1,250', 'תשלום מתאריך 21/09/2026 · ₪480'])->map(fn ($row) => '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--color-border)"><span>'.$row.'</span><span style="display:inline-block; background:#286E9A; color:#fff; border-radius:24px; padding:6px 16px; font-weight:700; font-size:var(--fs-caption)">להעלאת החשבונית</span></div>')->implode(''),
-        'preview' => $this->bulkRequestPreview(),
-        'saveAction' => 'saveBulkRequestTemplate',
-    ])
 </div>

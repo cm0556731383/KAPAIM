@@ -71,7 +71,7 @@ class EmailTemplate extends Model
     /** Where the list of expenses (each with its own upload button) goes in a several-invoices request (appended at the end when absent). */
     public const EXPENSE_LIST_TOKEN = '{{רשימת_ההוצאות}}';
 
-    /** The supplier-invoice email types — edited on the document-templates page, never in settings. */
+    /** The supplier-invoice email types — the expenses page looks them up by type, so settings never lets them change it. */
     public const SUPPLIER_TYPES = [self::SUPPLIER_INVOICE_REQUEST, self::SUPPLIER_INVOICES_REQUEST];
 
     public static function supplierInvoicesRequest(): ?self

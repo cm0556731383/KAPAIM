@@ -30,26 +30,6 @@ class ReferenceDataSettingsTest extends TestCase
         ]);
     }
 
-    public function test_a_custom_status_can_be_renamed_but_a_system_status_keeps_its_name(): void
-    {
-        $custom = StatusDefinition::create(['scope' => 'lead', 'name' => 'ממתין', 'is_active' => true, 'sort_order' => 5]);
-        $system = StatusDefinition::create(['scope' => 'deal', 'name' => 'מבוטלת', 'is_active' => true, 'sort_order' => 4]);
-
-        Livewire::actingAs($this->owner)->test('settings')
-            ->call('editRecord', 'status', $custom->id)
-            ->set('editForm.name', 'בהמתנה')
-            ->call('saveRecord')
-            ->assertHasNoErrors()
-            ->call('editRecord', 'status', $system->id)
-            ->set('editForm.name', 'שם אחר')
-            ->set('editForm.sort_order', '9')
-            ->call('saveRecord');
-
-        $this->assertSame('בהמתנה', $custom->fresh()->name);
-        $this->assertSame('מבוטלת', $system->fresh()->name);
-        $this->assertSame(9, $system->fresh()->sort_order);
-    }
-
     public function test_lead_source_payment_method_and_email_template_can_be_edited(): void
     {
         $source = \App\Models\LeadSource::create(['name' => 'פייסבוק', 'is_active' => true]);
@@ -59,7 +39,7 @@ class ReferenceDataSettingsTest extends TestCase
         Livewire::actingAs($this->owner)->test('settings')
             ->call('editRecord', 'lead_source', $source->id)->set('editForm.name', 'אינסטגרם')->call('saveRecord')->assertHasNoErrors()
             ->call('editRecord', 'payment_method', $method->id)->set('editForm.name', 'העברה בנקאית')->call('saveRecord')->assertHasNoErrors()
-            ->call('editRecord', 'email_template', $template->id)->set('editForm.subject', 'תודה על פנייתך')->set('editForm.content', 'שלום {{name}}')->call('saveRecord')->assertHasNoErrors();
+            ->call('selectEmailTemplate', $template->id)->set('emailTemplateSubject', 'תודה על פנייתך')->set('emailTemplateContent', 'שלום {{name}}')->call('saveEmailTemplate')->assertHasNoErrors();
 
         $this->assertSame('אינסטגרם', $source->fresh()->name);
         $this->assertSame('העברה בנקאית', $method->fresh()->name);
@@ -76,35 +56,18 @@ class ReferenceDataSettingsTest extends TestCase
         $this->assertFalse($source->fresh()->is_active);
     }
 
+    public function test_the_settings_page_no_longer_manages_statuses(): void
+    {
+        $this->actingAs($this->owner)->get('/settings')->assertOk()->assertDontSee('סטטוס חדש');
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->call('editRecord', 'status', StatusDefinition::create(['scope' => 'lead', 'name' => 'חדש', 'is_active' => true, 'sort_order' => 1])->id)
+            ->assertNotFound();
+    }
+
     public function test_settings_page_requires_auth(): void
     {
         $this->get('/settings')->assertRedirect('/login');
-    }
-
-    public function test_owner_can_create_a_status_definition(): void
-    {
-        Livewire::actingAs($this->owner)->test('settings')
-            ->set('statusScope', 'lead')
-            ->set('statusName', 'סטטוס בדיקה')
-            ->call('addStatus');
-
-        $this->assertDatabaseHas('status_definitions', [
-            'scope' => 'lead', 'name' => 'סטטוס בדיקה', 'is_active' => true,
-        ]);
-    }
-
-    public function test_toggling_a_status_flips_is_active_without_deleting_it(): void
-    {
-        $status = StatusDefinition::create(['scope' => 'lead', 'name' => 'חדש', 'is_active' => true, 'sort_order' => 1]);
-        $before = StatusDefinition::count();
-
-        Livewire::actingAs($this->owner)->test('settings')->call('toggleStatus', $status->id);
-
-        $this->assertSame($before, StatusDefinition::count());
-        $this->assertFalse($status->fresh()->is_active);
-
-        Livewire::actingAs($this->owner)->test('settings')->call('toggleStatus', $status->id);
-        $this->assertTrue($status->fresh()->is_active);
     }
 
     public function test_owner_can_create_a_payment_method(): void
@@ -140,27 +103,33 @@ class ReferenceDataSettingsTest extends TestCase
         ]);
     }
 
-    public function test_email_template_merge_fields_can_be_added(): void
+    public function test_a_new_email_template_is_created_from_the_editor(): void
     {
         Livewire::actingAs($this->owner)->test('settings')
+            ->call('selectEmailTemplate', 0)
             ->set('emailTemplateName', 'תבנית בדיקה')
             ->set('emailTemplateType', 'general')
             ->set('emailTemplateSubject', 'נושא בדיקה')
             ->set('emailTemplateContent', 'תוכן בדיקה')
-            ->call('addEmailTemplate');
+            ->call('saveEmailTemplate')
+            ->assertHasNoErrors();
 
-        $template = EmailTemplate::where('name', 'תבנית בדיקה')->firstOrFail();
+        $this->assertDatabaseHas('email_templates', ['name' => 'תבנית בדיקה', 'template_type' => 'general', 'is_active' => true]);
+    }
+
+    public function test_the_email_templates_tab_lists_every_template_and_opens_the_chosen_one_with_a_preview(): void
+    {
+        $lead = EmailTemplate::create(['name' => 'אישור קליטת ליד', 'template_type' => 'lead_confirmation', 'subject' => 'שלום {{שם_איש_הקשר}}', 'content' => 'תודה, {{שם_בית_הספר}}', 'is_active' => true]);
 
         Livewire::actingAs($this->owner)->test('settings')
-            ->set('fieldTemplateId', $template->id)
-            ->set('fieldName', 'שם ליד')
-            ->set('fieldType', 'linked')
-            ->set('fieldLinkedField', 'lead.contact_name')
-            ->call('addEmailTemplateField');
-
-        $this->assertDatabaseHas('email_template_fields', [
-            'email_template_id' => $template->id, 'name' => 'שם ליד', 'field_type' => 'linked',
-        ]);
+            ->set('activeTab', 'email-templates')
+            ->assertSee('אישור קליטת ליד')
+            ->assertDontSee('תצוגה מקדימה')
+            ->assertDontSee('שדה מיזוג')
+            ->call('selectEmailTemplate', $lead->id)
+            ->assertSee('תצוגה מקדימה')
+            ->assertSee('שלום רחל כהן')
+            ->assertSee('+ שם בית הספר');
     }
 
     public function test_settings_page_renders_real_seeded_reference_data(): void

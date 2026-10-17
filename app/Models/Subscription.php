@@ -168,6 +168,44 @@ class Subscription extends Model
     }
 
     /**
+     * A cancelled subscription's programs for its months before the
+     * cancellation, supplied or not — materials may still be sent for them
+     * (business owner's call, 2026-10-17). A supplied month's program is the
+     * one marked on its row; an unsupplied month's is the subscription
+     * bundle's program named after that month (e.g. "אלול תשפ"ו"), since
+     * programs carry no month of their own.
+     *
+     * @return \Illuminate\Support\Collection<int, int> program IDs
+     */
+    public function programIdsBeforeCancellation(): \Illuminate\Support\Collection
+    {
+        if ($this->cancelled_from_month === null) {
+            return collect();
+        }
+
+        $deliveries = $this->deliveries->where('sequence_number', '<', $this->cancelled_from_month);
+        $unsuppliedMonths = $deliveries->filter(fn ($delivery) => ! $delivery->is_supplied || ! $delivery->program_id)
+            ->map(fn ($delivery) => self::normalizedMonthName($this->monthLabel($delivery->sequence_number)));
+        $bundlePrograms = $this->deal?->bundle?->programs ?? collect();
+
+        return $deliveries->pluck('program_id')->filter()
+            ->merge($bundlePrograms->filter(fn (Program $program) => $unsuppliedMonths->contains(
+                fn ($month) => str_contains(self::normalizedMonthName($program->name), $month),
+            ))->pluck('id'))
+            ->unique()
+            ->values();
+    }
+
+    /** Compares month names typed by hand with HebrewCalendar's: no quote marks, and "חשוון"/"חשון" alike. */
+    private static function normalizedMonthName(string $name): string
+    {
+        $name = str_replace(['"', "'", '״', '׳', '”', '“'], '', $name);
+        $name = str_replace(['וו', 'יי'], ['ו', 'י'], $name);
+
+        return trim(preg_replace('/\s+/u', ' ', $name));
+    }
+
+    /**
      * Earliest month a cancellation may start from: the month after the last
      * delivery row already marked supplied — a supplied program is never
      * credited back.

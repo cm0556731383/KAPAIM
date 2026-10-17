@@ -480,30 +480,36 @@ class SuppliersExpensesTest extends TestCase
         $this->get($url)->assertForbidden();
     }
 
-    public function test_the_invoice_request_wording_is_edited_on_the_document_templates_page(): void
+    public function test_the_invoice_request_wording_is_edited_on_the_settings_email_templates_tab(): void
     {
-        Livewire::actingAs($this->owner)->test('document-templates')
-            ->assertSet('invoiceRequestSubject', EmailTemplate::supplierInvoiceRequest()->subject)
-            ->set('invoiceRequestSubject', 'נושא חדש {{שם_הספק}}')
-            ->set('invoiceRequestContent', 'גוף חדש {{סכום}}')
+        $single = EmailTemplate::supplierInvoiceRequest();
+        $bulk = EmailTemplate::supplierInvoicesRequest();
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'email-templates')
+            ->assertSee($single->name)->assertSee($bulk->name)
+            ->call('selectEmailTemplate', $single->id)
+            ->assertSet('emailTemplateSubject', $single->subject)
+            ->set('emailTemplateSubject', 'נושא חדש {{שם_הספק}}')
+            ->set('emailTemplateContent', 'גוף חדש {{סכום}}')
             ->assertSee('נושא חדש דפוס הראל')
-            ->call('saveInvoiceRequestTemplate')
-            ->assertHasNoErrors();
-
-        $template = EmailTemplate::supplierInvoiceRequest();
-        $this->assertSame('נושא חדש {{שם_הספק}}', $template->subject);
-        $this->assertSame('גוף חדש {{סכום}}', $template->content);
-        $this->assertSame(1, EmailTemplate::where('template_type', EmailTemplate::SUPPLIER_INVOICE_REQUEST)->count());
-
-        Livewire::actingAs($this->owner)->test('document-templates')
-            ->assertSet('bulkRequestSubject', EmailTemplate::supplierInvoicesRequest()->subject)
-            ->set('bulkRequestSubject', 'חסרות {{מספר_החשבוניות_החסרות}} חשבוניות')
+            ->assertSee('כפתור העלאת החשבונית')
+            ->call('saveEmailTemplate')
+            ->assertHasNoErrors()
+            ->call('selectEmailTemplate', $bulk->id)
+            ->set('emailTemplateSubject', 'חסרות {{מספר_החשבוניות_החסרות}} חשבוניות')
             ->assertSee('חסרות 2 חשבוניות')
-            ->call('saveBulkRequestTemplate')
+            ->call('saveEmailTemplate')
             ->assertHasNoErrors();
-        $this->assertSame('חסרות {{מספר_החשבוניות_החסרות}} חשבוניות', EmailTemplate::supplierInvoicesRequest()->subject);
 
-        Livewire::actingAs($this->owner)->test('settings')->assertDontSee('נושא חדש')->assertDontSee('בקשת כמה חשבוניות מספק');
+        $this->assertSame('נושא חדש {{שם_הספק}}', $single->fresh()->subject);
+        $this->assertSame('גוף חדש {{סכום}}', $single->fresh()->content);
+        $this->assertSame('חסרות {{מספר_החשבוניות_החסרות}} חשבוניות', $bulk->fresh()->subject);
+        // The expenses page finds them by type — saving never changes it.
+        $this->assertSame(EmailTemplate::SUPPLIER_INVOICE_REQUEST, $single->fresh()->template_type);
+        $this->assertSame(EmailTemplate::SUPPLIER_INVOICES_REQUEST, $bulk->fresh()->template_type);
+
+        Livewire::actingAs($this->owner)->test('document-templates')->assertDontSee($single->name);
     }
 
     // ----- income statement page -----

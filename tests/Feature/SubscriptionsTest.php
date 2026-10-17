@@ -106,6 +106,31 @@ class SubscriptionsTest extends TestCase
         $this->assertEquals(750.0, (float) $deal->agreed_amount);
     }
 
+    public function test_the_new_deal_window_fills_the_agreed_amount_with_the_subscriber_discount_and_a_note(): void
+    {
+        $customer = $this->createCustomer();
+        Deal::createForCustomer($customer, null, $this->createSubscriptionBundle());
+        $premiumProgram = $this->createProgram(price: 1000, isPremium: true);
+        $regularProgram = $this->createProgram(price: 500);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'deals')
+            ->set('dealItem', "program:{$premiumProgram->id}")
+            ->assertSet('dealAgreedAmount', '900')
+            ->assertSee('הנחת מנוי של 10%');
+
+        $component->set('dealItem', "program:{$regularProgram->id}")
+            ->assertSet('dealAgreedAmount', '500')
+            ->assertSet('dealDiscountNote', null);
+
+        // The filled-in amount stays editable.
+        $component->set('dealItem', "program:{$premiumProgram->id}")
+            ->set('dealAgreedAmount', '850')
+            ->call('createDeal');
+
+        $this->assertEquals(850.0, (float) Deal::where('program_id', $premiumProgram->id)->value('agreed_amount'));
+    }
+
     public function test_premium_discount_does_not_apply_once_the_subscription_is_cancelled(): void
     {
         $customer = $this->createCustomer();
@@ -590,6 +615,7 @@ class SubscriptionsTest extends TestCase
     public function test_settings_page_saves_the_subscription_start_month(): void
     {
         Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'leads')
             ->assertDontSee('חודש תחילת מנוי')
             ->set('activeTab', 'subscriptions')
             ->assertSee('חודש תחילת מנוי')

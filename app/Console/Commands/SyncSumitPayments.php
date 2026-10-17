@@ -19,8 +19,8 @@ use Throwable;
  * customer paid but never returned from (PaymentLink), and each month a
  * standing order collects (Deal::registerStandingOrderWithSummit() — matched
  * by its recurring item IDs). SUMIT has no webhook for payments, so this
- * polling is how they arrive; it runs every few
- * minutes (routes/console.php) and is safe to repeat: a SUMIT payment is
+ * polling is how they arrive; it runs twice a day
+ * (routes/console.php) and is safe to repeat: a SUMIT payment is
  * recorded once (payments.sumit_payment_id).
  *
  * A failure to read a company is recorded as a failed scheduled_job

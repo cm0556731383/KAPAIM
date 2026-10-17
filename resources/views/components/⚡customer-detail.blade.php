@@ -105,6 +105,9 @@ class extends Component
 
     public string $dealAgreedAmount = '';
 
+    /** Shown under the amount when it was filled in with the subscriber discount. */
+    public ?string $dealDiscountNote = null;
+
     public string $dealSpecialRequest = '';
 
     public string $dealStudentsCount = '';
@@ -132,6 +135,29 @@ class extends Component
     public array $cancelReasons = [];
 
     /** Choosing the month fills in its computed credit — still editable after. */
+    /** Fills the agreed amount with the chosen item's price (FR-3.11 discount included) — still editable. */
+    public function updatedDealItem(): void
+    {
+        [$type, $id] = array_pad(explode(':', $this->dealItem, 2), 2, null);
+        $program = $type === 'program' ? Program::find($id) : null;
+        $bundle = $type === 'bundle' ? Bundle::find($id) : null;
+
+        $this->dealDiscountNote = null;
+
+        if (! $program && ! $bundle) {
+            $this->dealAgreedAmount = '';
+
+            return;
+        }
+
+        $amount = Deal::defaultAgreedAmount($this->customer, $program, $bundle);
+        $this->dealAgreedAmount = rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
+
+        if (Deal::hasSubscriberDiscount($this->customer, $program)) {
+            $this->dealDiscountNote = 'הלקוחה מנויה, ולכן חלה הנחת מנוי של 10% על תוכנית הפרימיום (מחיר המחירון: ₪'.number_format((float) $program->price, 0).').';
+        }
+    }
+
     public function updatedCancelFromMonths($value, $subscriptionId): void
     {
         $subscription = Subscription::where('customer_id', $this->customer->id)->find($subscriptionId);
@@ -510,11 +536,14 @@ class extends Component
         }
 
         $itemName = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot;
-        $activityLogger->log('deal.created', "נוצרה עסקה חדשה #{$deal->id} עבור לקוחה \"{$this->customer->school?->name}\": {$itemName}", [
+        $discount = Deal::hasSubscriberDiscount($this->customer, $program)
+            && abs((float) $deal->agreed_amount - Deal::defaultAgreedAmount($this->customer, $program, $bundle)) < 0.005
+            ? ' (כולל הנחת מנוי של 10%)' : '';
+        $activityLogger->log('deal.created', "נוצרה עסקה חדשה #{$deal->id} עבור לקוחה \"{$this->customer->school?->name}\": {$itemName}{$discount}", [
             'deal_id' => $deal->id, 'customer_id' => $this->customer->id,
         ]);
 
-        $this->reset(['dealItem', 'dealAgreedAmount', 'dealSpecialRequest', 'dealPaymentMethodId', 'dealStudentsCount']);
+        $this->reset(['dealItem', 'dealAgreedAmount', 'dealDiscountNote', 'dealSpecialRequest', 'dealPaymentMethodId', 'dealStudentsCount']);
         unset($this->deals);
 
         $this->redirect(route('deal-detail', $deal), navigate: false);
@@ -804,7 +833,10 @@ class extends Component
     /**
      * Only programs this customer bought — directly, or inside a bundle — on
      * a deal that wasn't cancelled (business owner's call, 2026-10-13;
-     * replaces FR-5.19's "any active catalog program").
+     * replaces FR-5.19's "any active catalog program"). A cancelled
+     * subscription still counts for its months before the cancellation,
+     * supplied or not — Subscription::programIdsBeforeCancellation()
+     * (business owner's call, 2026-10-17).
      */
     #[Computed]
     public function materialsPrograms()
@@ -813,8 +845,15 @@ class extends Component
             ->whereDoesntHave('status', fn ($q) => $q->where('name', Deal::CANCELLED_STATUS_NAME))
             ->get(['id', 'program_id', 'bundle_id']);
 
+        $beforeCancellation = $this->customer->subscriptions()
+            ->whereNotNull('cancelled_from_month')
+            ->with(['deliveries', 'deal.bundle.programs'])
+            ->get()
+            ->flatMap->programIdsBeforeCancellation();
+
         return Program::where(fn ($q) => $q
             ->whereIn('id', $deals->pluck('program_id')->filter())
+            ->orWhereIn('id', $beforeCancellation)
             ->orWhereHas('bundles', fn ($b) => $b->whereIn('bundles.id', $deals->pluck('bundle_id')->filter())))
             ->orderBy('name')
             ->get();
@@ -1557,7 +1596,7 @@ class extends Component
                     <form wire:submit="createDeal" class="form-grid">
                         <div class="full">
                             <label for="dealItem">תוכנית / מארז</label>
-                            <select id="dealItem" wire:model="dealItem">
+                            <select id="dealItem" wire:model.live="dealItem">
                                 <option value="">בחרו תוכנית או מארז</option>
                                 @if ($this->availablePrograms->isNotEmpty())
                                     <optgroup label="תוכניות">
@@ -1577,8 +1616,9 @@ class extends Component
                             @error('dealItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>
-                            <label for="dealAgreedAmount">סכום מוסכם (אופציונלי — ברירת מחדל: מחיר המחירון)</label>
+                            <label for="dealAgreedAmount">סכום מוסכם (ניתן לשינוי)</label>
                             <input type="text" id="dealAgreedAmount" wire:model="dealAgreedAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                            @if ($dealDiscountNote) <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">{{ $dealDiscountNote }}</div> @endif
                             @error('dealAgreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>

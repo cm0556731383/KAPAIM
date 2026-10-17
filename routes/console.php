@@ -30,5 +30,7 @@ Schedule::command('subscriptions:end-expired')->daily();
 
 // Records payments taken in SUMIT that the app hasn't seen yet (a paid
 // payment page whose customer never came back to the return page). SUMIT
-// has no payment webhook, so it's polled. See App\Console\Commands\SyncSumitPayments.
-Schedule::command('sumit:sync-payments')->everyTenMinutes()->withoutOverlapping();
+// has no payment webhook, so it's polled — twice a day, at the business
+// owner's request (each SUMIT API call may be billed). The command reads 3
+// days back, so a missed run is caught up. See App\Console\Commands\SyncSumitPayments.
+Schedule::command('sumit:sync-payments')->twiceDaily(8, 20)->withoutOverlapping();

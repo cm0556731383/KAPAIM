@@ -278,13 +278,7 @@ class Deal extends Model
             ['is_active' => true, 'sort_order' => 1],
         );
 
-        $snapshotPrice = (float) ($program->price ?? $bundle->price);
-
-        $defaultAgreedAmount = $snapshotPrice;
-
-        if ($program && $program->is_premium && self::customerHasActiveSubscription($customer)) {
-            $defaultAgreedAmount = round($snapshotPrice * 0.9, 2);
-        }
+        $defaultAgreedAmount = self::defaultAgreedAmount($customer, $program, $bundle);
 
         $deal = self::create([
             'customer_id' => $customer->id,
@@ -395,6 +389,23 @@ class Deal extends Model
     }
 
     /** FR-3.11's prerequisite: does $customer currently have an active subscription? */
+    /**
+     * FR-3.11: the chosen item's price — 10% off when it's a premium program
+     * bought by a customer with an active subscription. The new-deal window
+     * fills this in (editable) before the deal is created.
+     */
+    public static function defaultAgreedAmount(Customer $customer, ?Program $program, ?Bundle $bundle): float
+    {
+        $price = (float) ($program->price ?? $bundle?->price ?? 0);
+
+        return self::hasSubscriberDiscount($customer, $program) ? round($price * 0.9, 2) : $price;
+    }
+
+    public static function hasSubscriberDiscount(Customer $customer, ?Program $program): bool
+    {
+        return $program !== null && $program->is_premium && self::customerHasActiveSubscription($customer);
+    }
+
     private static function customerHasActiveSubscription(Customer $customer): bool
     {
         return Subscription::where('customer_id', $customer->id)

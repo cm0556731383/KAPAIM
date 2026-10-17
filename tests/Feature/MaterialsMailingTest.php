@@ -245,6 +245,29 @@ class MaterialsMailingTest extends TestCase
         $this->assertNotContains($notBought->id, $ids);
     }
 
+    public function test_a_cancelled_subscription_keeps_every_program_of_its_months_before_the_cancellation(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        $subscription = Deal::createForCustomer($customer, null, $subscriptionBundle)->subscription;
+
+        // Named after their months the way the business owner types them — a plain " not ״.
+        [$first, $second, $third] = collect([1, 2, 3])
+            ->map(fn ($month) => $this->createProgram(str_replace('״', '"', $subscription->monthLabel($month))))
+            ->all();
+        $subscriptionBundle->programs()->attach([$first->id, $second->id, $third->id]);
+
+        $firstMonth = $subscription->deliveries()->where('sequence_number', 1)->first();
+        $subscription->markDeliverySupplied($subscription->version, $firstMonth->id, $first->id, $this->owner);
+        $subscription->refresh()->cancel(3);
+
+        $ids = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->instance()->materialsPrograms->pluck('id')->all();
+
+        // Month 2 was never supplied but is before the cancellation; month 3 is cancelled.
+        $this->assertEqualsCanonicalizing([$first->id, $second->id], $ids);
+    }
+
     public function test_materials_cannot_be_sent_for_a_program_the_customer_did_not_buy(): void
     {
         $customer = $this->createCustomerWithEmailContact();

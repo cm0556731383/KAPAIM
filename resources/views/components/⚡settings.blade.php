@@ -5,12 +5,10 @@ use App\Console\Commands\ProcessMaterialReminders;
 use App\Models\AppSetting;
 use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
-use App\Models\EmailTemplateField;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\ExternalOperation;
 use App\Models\LeadSource;
 use App\Models\PaymentMethod;
-use App\Models\StatusDefinition;
 use App\Services\ActivityLogger;
 use App\Services\HebrewCalendar;
 use App\Services\Integrations\SummitClient;
@@ -25,29 +23,6 @@ new
 class extends Component
 {
     use Notifies;
-
-    // ===== סטטוסים (STATUS_DEFINITION) =====
-    public string $statusScope = 'lead';
-    public string $statusName = '';
-
-    /**
-     * Plain scope names seeded per build-plan 02. NOTE: the PRD also defines a
-     * separate lead "traffic light" (ירוק/צהוב/אדום, FR-1.5) that each lead status
-     * maps to, and a lead sub-status "ממתינה לשיחה חוזרת" nested under צהוב
-     * (FR-1.6). STATUS_DEFINITION per the ERD has no color/parent-substatus
-     * columns, so that mapping is intentionally NOT modeled here — it needs to be
-     * addressed when the Leads module (build-plan stage 4) is actually built.
-     */
-    public array $statusScopes = [
-        'lead' => 'ליד',
-        'customer' => 'לקוחה',
-        'deal' => 'עסקה',
-        'document' => 'מסמך',
-        'payment' => 'תשלום',
-        'subscription' => 'מנוי',
-        'expense' => 'הוצאה',
-        'material_delivery' => 'אספקת חומרים',
-    ];
 
     // ===== מקורות ליד (LEAD_SOURCE) =====
     public string $leadSourceName = '';
@@ -66,16 +41,12 @@ class extends Component
     public array $businessEntityClassifications = ['עוסק פטור', 'עוסק מורשה', 'חברה בעמ'];
 
     // ===== תבניות דואר (EMAIL_TEMPLATE) =====
+    /** The template open in the editor — an id, 0 for a new one, null when none is chosen. */
+    public ?int $selectedEmailTemplateId = null;
     public string $emailTemplateName = '';
-    public string $emailTemplateType = '';
+    public string $emailTemplateType = 'general';
     public string $emailTemplateSubject = '';
     public string $emailTemplateContent = '';
-
-    public ?int $fieldTemplateId = null;
-    public string $fieldName = '';
-    public string $fieldType = 'free_text';
-    public string $fieldLinkedField = '';
-    public bool $fieldIsRequired = false;
 
     // ===== אינטגרציות חיצוניות (EXTERNAL_INTEGRATION_SETTING, build-plan 12) =====
     public string $smoveApiKey = '';
@@ -104,7 +75,7 @@ class extends Component
 
     /** Which settings tab is shown — kept in the URL (?tab=) so a reload stays on it. */
     #[Url(as: 'tab')]
-    public string $activeTab = 'statuses';
+    public string $activeTab = 'subscriptions';
 
     // ===== מנויים =====
     public string $subscriptionStartMonth = '';
@@ -259,11 +230,9 @@ class extends Component
     // ----- עריכת נתוני ייחוס (FR-7.11: never deleted — only renamed/edited or deactivated) -----
 
     private const EDITABLE_RECORDS = [
-        'status' => [StatusDefinition::class, ['name', 'sort_order']],
         'lead_source' => [LeadSource::class, ['name']],
         'payment_method' => [PaymentMethod::class, ['name', 'type']],
         'business_entity' => [BusinessEntity::class, ['name', 'classification', 'company_number', 'email', 'phone']],
-        'email_template' => [EmailTemplate::class, ['name', 'template_type', 'subject', 'content']],
     ];
 
     public function editRecord(string $type, int $id): void
@@ -288,10 +257,6 @@ class extends Component
         $record = $modelClass::findOrFail((int) $id);
 
         $rules = match ($type) {
-            'status' => [
-                'editForm.name' => ['required', 'string', 'max:255'],
-                'editForm.sort_order' => ['required', 'integer', 'min:0'],
-            ],
             'lead_source' => ['editForm.name' => ['required', 'string', 'max:255', "unique:lead_sources,name,{$record->id}"]],
             'payment_method' => [
                 'editForm.name' => ['required', 'string', 'max:255', "unique:payment_methods,name,{$record->id}"],
@@ -305,24 +270,13 @@ class extends Component
                 'editForm.email' => ['required', 'email'],
                 'editForm.phone' => ['required', 'string', 'max:255'],
             ],
-            'email_template' => [
-                'editForm.name' => ['required', 'string', 'max:255'],
-                'editForm.template_type' => ['required', 'string', 'max:255', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), $record->template_type]))],
-                'editForm.subject' => ['required', 'string'],
-                'editForm.content' => ['required', 'string'],
-            ],
         };
 
         $data = $this->validate($rules, [], [
-            'editForm.name' => 'שם', 'editForm.sort_order' => 'סדר', 'editForm.type' => 'סוג',
+            'editForm.name' => 'שם', 'editForm.type' => 'סוג',
             'editForm.classification' => 'סיווג', 'editForm.company_number' => 'ח.פ / ע.מ', 'editForm.email' => 'אימייל',
             'editForm.phone' => 'טלפון', 'editForm.template_type' => 'סוג', 'editForm.subject' => 'נושא', 'editForm.content' => 'תוכן',
         ])['editForm'];
-
-        // A status the code looks up by name keeps its name (StatusDefinition::SYSTEM_NAMES).
-        if ($type === 'status' && $record->isSystem()) {
-            $data['name'] = $record->name;
-        }
 
         // An entity that already issued documents keeps its classification —
         // SUMIT document types (invoice vs. חשבון עסקה, credit invoice vs.
@@ -339,47 +293,11 @@ class extends Component
         $activityLogger->log("{$type}.updated", 'עודכן: '.($record->name ?? "#{$record->id}"), ['metadata' => ['id' => $record->id]]);
 
         $this->cancelRecordEdit();
-        unset($this->statuses, $this->leadSources, $this->paymentMethods, $this->businessEntities, $this->emailTemplates);
+        unset($this->leadSources, $this->paymentMethods, $this->businessEntities);
         if ($type === 'business_entity') {
             $this->loadSumitCompanies();
         }
         $this->notifySuccess('השינויים נשמרו.');
-    }
-
-    // ----- סטטוסים -----
-
-    public function addStatus(ActivityLogger $activityLogger): void
-    {
-        $data = $this->validate([
-            'statusScope' => ['required', 'string'],
-            'statusName' => ['required', 'string', 'max:255'],
-        ], [], ['statusName' => 'שם סטטוס']);
-
-        $nextSort = (int) StatusDefinition::where('scope', $data['statusScope'])->max('sort_order') + 1;
-
-        $status = StatusDefinition::create([
-            'scope' => $data['statusScope'],
-            'name' => $data['statusName'],
-            'is_active' => true,
-            'sort_order' => $nextSort,
-        ]);
-
-        $activityLogger->log('status_definition.created', "נוצר סטטוס חדש: {$status->name} ({$this->statusScopes[$status->scope]})");
-
-        $this->reset(['statusName']);
-        unset($this->statuses);
-    }
-
-    public function toggleStatus(int $id, ActivityLogger $activityLogger): void
-    {
-        $this->toggleActive(StatusDefinition::class, $id, $activityLogger, 'status_definition');
-        unset($this->statuses);
-    }
-
-    #[Computed]
-    public function statuses()
-    {
-        return StatusDefinition::orderBy('scope')->orderBy('sort_order')->get()->groupBy('scope');
     }
 
     // ----- מקורות ליד -----
@@ -491,32 +409,68 @@ class extends Component
 
     // ----- תבניות דואר -----
 
-    public function addEmailTemplate(ActivityLogger $activityLogger): void
+    /** Opens a template in the editor below the list; 0 opens a blank new one. */
+    public function selectEmailTemplate(int $id): void
     {
+        $this->resetErrorBag();
+        $template = $id ? EmailTemplate::findOrFail($id) : null;
+
+        $this->selectedEmailTemplateId = $id;
+        $this->emailTemplateName = (string) $template?->name;
+        $this->emailTemplateType = (string) ($template?->template_type ?? 'general');
+        $this->emailTemplateSubject = (string) $template?->subject;
+        $this->emailTemplateContent = (string) $template?->content;
+    }
+
+    public function closeEmailTemplate(): void
+    {
+        $this->resetErrorBag();
+        $this->reset(['selectedEmailTemplateId', 'emailTemplateName', 'emailTemplateType', 'emailTemplateSubject', 'emailTemplateContent']);
+    }
+
+    /**
+     * Saves the open template. A supplier-invoice email keeps its type — the
+     * expenses page looks it up by it (EmailTemplate::SUPPLIER_TYPES); the
+     * others may switch between TYPE_LABELS' uses.
+     */
+    public function saveEmailTemplate(ActivityLogger $activityLogger): void
+    {
+        $template = $this->selectedEmailTemplateId ? EmailTemplate::findOrFail($this->selectedEmailTemplateId) : null;
+        $isSupplier = in_array($template?->template_type, EmailTemplate::SUPPLIER_TYPES, true);
+
         $data = $this->validate([
             'emailTemplateName' => ['required', 'string', 'max:255'],
-            'emailTemplateType' => ['required', 'in:'.implode(',', array_keys(EmailTemplate::TYPE_LABELS))],
-            'emailTemplateSubject' => ['required', 'string'],
+            'emailTemplateType' => $isSupplier ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template?->template_type]))],
+            'emailTemplateSubject' => ['required', 'string', 'max:255'],
             'emailTemplateContent' => ['required', 'string'],
         ], [], [
             'emailTemplateName' => 'שם התבנית',
-            'emailTemplateType' => 'סוג',
-            'emailTemplateSubject' => 'נושא',
-            'emailTemplateContent' => 'תוכן',
+            'emailTemplateType' => 'שימוש',
+            'emailTemplateSubject' => 'נושא המייל',
+            'emailTemplateContent' => 'גוף המייל',
         ]);
 
-        $template = EmailTemplate::create([
+        $values = [
             'name' => $data['emailTemplateName'],
-            'template_type' => $data['emailTemplateType'],
             'subject' => $data['emailTemplateSubject'],
             'content' => $data['emailTemplateContent'],
-            'is_active' => true,
-        ]);
+        ];
 
-        $activityLogger->log('email_template.created', "נוצרה תבנית דואר חדשה: {$template->name}");
+        if (! $isSupplier) {
+            $values['template_type'] = $data['emailTemplateType'];
+        }
 
-        $this->reset(['emailTemplateName', 'emailTemplateType', 'emailTemplateSubject', 'emailTemplateContent']);
+        if ($template) {
+            $template->update($values);
+            $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
+        } else {
+            $template = EmailTemplate::create($values + ['is_active' => true]);
+            $activityLogger->log('email_template.created', "נוצרה תבנית דואר חדשה: {$template->name}");
+            $this->selectedEmailTemplateId = $template->id;
+        }
+
         unset($this->emailTemplates);
+        $this->notifySuccess('נוסח המייל נשמר.');
     }
 
     public function toggleEmailTemplate(int $id, ActivityLogger $activityLogger): void
@@ -525,64 +479,63 @@ class extends Component
         unset($this->emailTemplates);
     }
 
-    /**
-     * Adds a merge-field row to a template's field editor (FR-7.12). Templates
-     * aren't sent anywhere yet in this stage (real SMTP sending / usage tracking
-     * is a future stage), so unlike the other 6 reference entities there is no
-     * "already used elsewhere" snapshot to protect yet — field rows can be freely
-     * added/removed while the template itself is still just being drafted. This
-     * should be revisited (switch to disable-only) once templates are actually
-     * used to send real emails, per FR-7.11's snapshot principle.
-     */
-    public function addEmailTemplateField(ActivityLogger $activityLogger): void
-    {
-        $data = $this->validate([
-            'fieldTemplateId' => ['required', 'exists:email_templates,id'],
-            'fieldName' => ['required', 'string', 'max:255'],
-            'fieldType' => ['required', 'in:free_text,linked'],
-            'fieldLinkedField' => ['required_if:fieldType,linked', 'nullable', 'in:'.implode(',', array_keys(EmailTemplateField::LINKED_FIELDS))],
-            'fieldIsRequired' => ['boolean'],
-        ], [], ['fieldName' => 'שם השדה', 'fieldLinkedField' => 'שדה מקושר']);
-
-        $nextSort = (int) EmailTemplateField::where('email_template_id', $data['fieldTemplateId'])->max('sort_order') + 1;
-
-        $field = EmailTemplateField::create([
-            'email_template_id' => $data['fieldTemplateId'],
-            'name' => $data['fieldName'],
-            'field_type' => $data['fieldType'],
-            'linked_field' => $data['fieldType'] === 'linked' ? $data['fieldLinkedField'] : null,
-            'is_required' => (bool) $data['fieldIsRequired'],
-            'sort_order' => $nextSort,
-        ]);
-
-        $activityLogger->log('email_template_field.created', "נוסף שדה מיזוג \"{$field->name}\" לתבנית", [
-            'metadata' => ['email_template_id' => $field->email_template_id],
-        ]);
-
-        $this->reset(['fieldName', 'fieldLinkedField', 'fieldIsRequired']);
-        $this->fieldType = 'free_text';
-        unset($this->emailTemplates);
-    }
-
-    public function removeEmailTemplateField(int $id, ActivityLogger $activityLogger): void
-    {
-        $field = EmailTemplateField::findOrFail($id);
-        $templateId = $field->email_template_id;
-        $name = $field->name;
-        $field->delete();
-
-        $activityLogger->log('email_template_field.removed', "הוסר שדה מיזוג \"{$name}\" מתבנית", [
-            'metadata' => ['email_template_id' => $templateId],
-        ]);
-
-        unset($this->emailTemplates);
-    }
-
+    /** Every email template, the lead confirmation and supplier emails included. */
     #[Computed]
     public function emailTemplates()
     {
-        // The supplier-invoice-request emails have their own editor on the document-templates page.
-        return EmailTemplate::with('fields')->whereNotIn('template_type', EmailTemplate::SUPPLIER_TYPES)->orderBy('name')->get();
+        return EmailTemplate::orderBy('name')->get();
+    }
+
+    /** What the open template is for — the shared editor's intro, insertable fields, optional block and example values. */
+    public function emailTemplateSpec(): array
+    {
+        $uploadButton = '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">להעלאת החשבונית</span>';
+
+        return match ($this->emailTemplateType) {
+            EmailTemplate::SUPPLIER_INVOICE_REQUEST => [
+                'usage' => 'בקשת חשבונית מספק',
+                'intro' => 'המייל שנשלח לספק עבור הוצאה אחת שאין לה חשבונית: בלחיצה על "בקשה מהספק במייל" בדף ההוצאות, או בשליחה לכל הספקים כשחסרה לספק חשבונית אחת. השדות בסוגריים המסולסלים יתמלאו בפרטי ההוצאה, והספק יקבל כפתור להעלאת החשבונית ישירות למערכת.',
+                'fields' => ['שם_הספק' => 'שם הספק', 'תאריך_התשלום' => 'תאריך התשלום', 'סכום' => 'סכום', 'תוכנית' => 'תוכנית', 'הערות' => 'הערות'],
+                'blockToken' => EmailTemplate::UPLOAD_BUTTON_TOKEN,
+                'blockLabel' => 'כפתור העלאת החשבונית',
+                'blockHint' => 'אם הכפתור לא מופיע בטקסט, הוא יתווסף בסוף המייל.',
+                'blockPreviewHtml' => $uploadButton,
+                'example' => [
+                    'supplier_name' => 'דפוס הראל בע"מ',
+                    'expense_date' => now()->subDays(12)->format('d/m/Y'),
+                    'amount' => '1,250',
+                    'program_name' => 'תוכנית לדוגמה',
+                    'notes' => 'הדפסת 400 חוברות',
+                    'expense_id' => '42',
+                ],
+            ],
+            EmailTemplate::SUPPLIER_INVOICES_REQUEST => [
+                'usage' => 'בקשת כמה חשבוניות מספק',
+                'intro' => 'המייל שנשלח בלחיצה על "בקשת חשבוניות מכל הספקים" בדף ההוצאות לספק שחסרות לו כמה חשבוניות — מייל אחד עם רשימת ההוצאות, ולכל הוצאה כפתור משלה להעלאת החשבונית.',
+                'fields' => ['שם_הספק' => 'שם הספק', 'מספר_החשבוניות_החסרות' => 'מספר החשבוניות החסרות', 'סכום_כולל' => 'סכום כולל'],
+                'blockToken' => EmailTemplate::EXPENSE_LIST_TOKEN,
+                'blockLabel' => 'רשימת ההוצאות עם כפתורי ההעלאה',
+                'blockHint' => 'אם הרשימה לא מופיעה בטקסט, היא תתווסף בסוף המייל.',
+                'blockPreviewHtml' => collect(['תשלום מתאריך 03/09/2026 · ₪1,250', 'תשלום מתאריך 21/09/2026 · ₪480'])->map(fn ($row) => '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--color-border)"><span>'.$row.'</span><span style="display:inline-block; background:#286E9A; color:#fff; border-radius:24px; padding:6px 16px; font-weight:700; font-size:var(--fs-caption)">להעלאת החשבונית</span></div>')->implode(''),
+                'example' => ['supplier_name' => 'דפוס הראל בע"מ', 'expense_count' => '2', 'total_amount' => '1,730'],
+            ],
+            default => [
+                'usage' => EmailTemplate::TYPE_LABELS[$this->emailTemplateType] ?? 'כללי',
+                'intro' => $this->emailTemplateType === 'lead_confirmation'
+                    ? 'נשלח אוטומטית לאיש הקשר כשנכנס ליד חדש מדף הנחיתה. השדות בסוגריים המסולסלים יתמלאו בפרטי הליד.'
+                    : 'תבנית כללית — המערכת לא שולחת אותה אוטומטית.',
+                'fields' => ['שם_איש_הקשר' => 'שם איש הקשר', 'שם_בית_הספר' => 'שם בית הספר'],
+                'blockToken' => null,
+                'example' => ['contact_name' => 'רחל כהן', 'school_name' => 'בית ספר אורות'],
+            ],
+        };
+    }
+
+    /** The open template filled with the example values. */
+    public function emailTemplatePreview(): array
+    {
+        return (new EmailTemplate(['subject' => $this->emailTemplateSubject, 'content' => $this->emailTemplateContent]))
+            ->render($this->emailTemplateSpec()['example']);
     }
 
     // ----- אינטגרציות חיצוניות -----
@@ -629,7 +582,6 @@ class extends Component
     </div>
 
     <div class="tabs">
-        <span class="{{ $activeTab === 'statuses' ? 'active' : '' }}" wire:click="$set('activeTab', 'statuses')">סטטוסים</span>
         <span class="{{ $activeTab === 'subscriptions' ? 'active' : '' }}" wire:click="$set('activeTab', 'subscriptions')">מנויים</span>
         <span class="{{ $activeTab === 'leads' ? 'active' : '' }}" wire:click="$set('activeTab', 'leads')">לידים</span>
         <span class="{{ $activeTab === 'payment-methods' ? 'active' : '' }}" wire:click="$set('activeTab', 'payment-methods')">אמצעי תשלום</span>
@@ -637,75 +589,6 @@ class extends Component
         <span class="{{ $activeTab === 'email-templates' ? 'active' : '' }}" wire:click="$set('activeTab', 'email-templates')">תבניות דואר</span>
         <span class="{{ $activeTab === 'integrations' ? 'active' : '' }}" wire:click="$set('activeTab', 'integrations')">אינטגרציות</span>
     </div>
-
-    @if ($activeTab === 'statuses')
-    {{-- ===== סטטוסים ===== --}}
-    <section class="settings-section">
-        <div class="section-head">
-            <h2>סטטוסים</h2>
-        </div>
-        @foreach ($this->statuses as $scope => $items)
-            <h3 style="margin-top: var(--sp-lg)">{{ $this->statusScopes[$scope] ?? $scope }}</h3>
-            <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
-                <div class="table-scroll">
-                <table>
-                    <thead><tr><th>שם</th><th>סדר</th><th>סטטוס</th><th></th></tr></thead>
-                    <tbody>
-                        @foreach ($items as $status)
-                            @if ($editingRecord === "status:{$status->id}")
-                                <tr>
-                                    <td>
-                                        @if ($status->isSystem())
-                                            {{ $status->name }} <span class="text-text-secondary" style="font-size:var(--fs-caption)">(סטטוס מערכת — השם קבוע)</span>
-                                        @else
-                                            <input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                                        @endif
-                                    </td>
-                                    <td><input type="number" min="0" wire:model="editForm.sort_order" style="max-width:90px"> @error('editForm.sort_order') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</td>
-                                    <td colspan="2"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></td>
-                                </tr>
-                                @continue
-                            @endif
-                            <tr>
-                                <td>{{ $status->name }}</td>
-                                <td class="ltr-num">{{ $status->sort_order }}</td>
-                                <td>
-                                    @if ($status->is_active)
-                                        <span class="badge badge-success">פעיל</span>
-                                    @else
-                                        <span class="badge badge-neutral">מושבת</span>
-                                    @endif
-                                </td>
-                                <td><button type="button" wire:click="editRecord('status', {{ $status->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleStatus({{ $status->id }})" class="btn btn-ghost">{{ $status->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-                </div>
-            </div>
-        @endforeach
-
-        <div class="card" style="max-width:640px">
-            <h3>סטטוס חדש</h3>
-            <form wire:submit="addStatus" class="form-grid">
-                <div>
-                    <label for="statusScope">סקופ</label>
-                    <select id="statusScope" wire:model="statusScope">
-                        @foreach ($statusScopes as $value => $label)
-                            <option value="{{ $value }}">{{ $label }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label for="statusName">שם הסטטוס</label>
-                    <input type="text" id="statusName" wire:model="statusName">
-                    @error('statusName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">הוספת סטטוס</button></div>
-            </form>
-        </div>
-    </section>
-    @endif
 
     @if ($activeTab === 'subscriptions')
     {{-- ===== מנויים ===== --}}
@@ -926,141 +809,131 @@ class extends Component
     @endif
 
     @if ($activeTab === 'email-templates')
-    {{-- ===== תבניות דואר ===== --}}
+    {{-- ===== תבניות דואר — a list; the chosen template opens in full below it ===== --}}
     <section class="settings-section">
-        <div class="section-head">
-            <h2>תבניות דואר</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מיילים אוטומטיים שהמערכת שולחת בעצמה, כמו אישור קליטת ליד — לא מסמכים עסקיים ולא דיוור לרשימות תפוצה</p>
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap">
+            <div>
+                <h2>תבניות דואר</h2>
+                <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:0">מיילים שהמערכת שולחת בעצמה — לא מסמכים עסקיים ולא דיוור לרשימות תפוצה. בוחרים תבנית כדי לערוך אותה.</p>
+            </div>
+            <button type="button" wire:click="selectEmailTemplate(0)" class="btn btn-secondary">+ תבנית חדשה</button>
         </div>
 
-        @foreach ($this->emailTemplates as $template)
-            <div class="card" style="margin-bottom: var(--sp-md)">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start">
-                    <div>
-                        <h3 style="margin-bottom:2px">{{ $template->name }}</h3>
-                        <p class="text-text-secondary" style="margin:0; font-size:var(--fs-caption)">{{ EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' }} · {{ $template->subject }}</p>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:10px">
-                        @if ($template->is_active)
-                            <span class="badge badge-success">פעיל</span>
-                        @else
-                            <span class="badge badge-neutral">מושבת</span>
-                        @endif
-                        <button type="button" wire:click="editRecord('email_template', {{ $template->id }})" class="btn btn-ghost">עריכה</button>
-                        <button type="button" wire:click="toggleEmailTemplate({{ $template->id }})" class="btn btn-ghost">{{ $template->is_active ? 'השבתה' : 'הפעלה' }}</button>
-                    </div>
-                </div>
-
-                @if ($editingRecord === "email_template:{$template->id}")
-                    <div class="form-grid" style="margin-top:var(--sp-md)">
-                        <div><label>שם התבנית</label><input type="text" wire:model="editForm.name"> @error('editForm.name') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div><label>שימוש</label><select wire:model="editForm.template_type">@foreach (EmailTemplate::TYPE_LABELS as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach @if (! array_key_exists($editForm['template_type'] ?? '', EmailTemplate::TYPE_LABELS))<option value="{{ $editForm['template_type'] }}">כללי</option>@endif</select> @error('editForm.template_type') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div class="full"><label>נושא</label><input type="text" wire:model="editForm.subject"> @error('editForm.subject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div class="full"><label>תוכן</label><textarea wire:model="editForm.content" rows="6"></textarea> <div class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">אפשר לשלב בטקסט: @foreach (array_keys(EmailTemplate::PLACEHOLDERS) as $token)<span dir="rtl" style="unicode-bidi:isolate">{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}</span>@if (! $loop->last), @endif @endforeach</div> @error('editForm.content') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                        <div class="full"><button type="button" wire:click="saveRecord" class="btn btn-primary btn-sm">שמירה</button> <button type="button" wire:click="cancelRecordEdit" class="btn btn-ghost btn-sm">ביטול</button></div>
-                    </div>
-                @endif
-
-                <div class="table-scroll">
-                <table style="margin-top: var(--sp-md)">
-                    <thead><tr><th>שדה מיזוג</th><th>סוג</th><th>שדה מקושר</th><th>חובה</th><th></th></tr></thead>
-                    <tbody>
-                        @forelse ($template->fields as $field)
-                            <tr>
-                                <td>{{ $field->name }}</td>
-                                <td><span class="scope-pill">{{ $field->field_type === 'linked' ? 'מקושר' : 'טקסט חופשי' }}</span></td>
-                                <td>{{ $field->linked_field ? (EmailTemplateField::LINKED_FIELDS[$field->linked_field] ?? '—') : '—' }}</td>
-                                <td>{{ $field->is_required ? 'כן' : 'לא' }}</td>
-                                <td><button type="button" wire:click="removeEmailTemplateField({{ $field->id }})" class="btn btn-ghost">הסרה</button></td>
-                            </tr>
-                        @empty
-                            <tr><td colspan="5" class="text-text-secondary">אין עדיין שדות מיזוג בתבנית זו.</td></tr>
-                        @endforelse
-                    </tbody>
-                </table>
-                </div>
+        <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-md)">
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>שם</th><th>שימוש</th><th>נושא</th><th>סטטוס</th></tr></thead>
+                <tbody>
+                    @foreach ($this->emailTemplates as $template)
+                        <tr wire:key="email-template-{{ $template->id }}" wire:click="selectEmailTemplate({{ $template->id }})" style="cursor:pointer; {{ $selectedEmailTemplateId === $template->id ? 'background:var(--color-background)' : '' }}">
+                            <td style="font-weight:{{ $selectedEmailTemplateId === $template->id ? '700' : '400' }}">{{ $template->name }}</td>
+                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}</td>
+                            <td class="text-text-secondary">{{ \Illuminate\Support\Str::limit($template->subject, 60) }}</td>
+                            <td>
+                                @if ($template->is_active)
+                                    <span class="badge badge-success">פעיל</span>
+                                @else
+                                    <span class="badge badge-neutral">מושבת</span>
+                                @endif
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
             </div>
-        @endforeach
+        </div>
 
-        <div class="cols2">
-            <div class="card">
-                <h3>תבנית חדשה</h3>
-                <form wire:submit="addEmailTemplate" class="form-grid">
-                    <div class="full">
+        @if ($selectedEmailTemplateId !== null)
+            @php($spec = $this->emailTemplateSpec())
+            @php($preview = $this->emailTemplatePreview())
+            @php($openTemplate = $selectedEmailTemplateId ? $this->emailTemplates->firstWhere('id', $selectedEmailTemplateId) : null)
+            @php($isSupplier = in_array($emailTemplateType, EmailTemplate::SUPPLIER_TYPES, true))
+            <div class="card" wire:key="email-template-editor-{{ $selectedEmailTemplateId }}" x-data="{ target: null, insert(token) {
+                    const el = this.target ?? $refs.body;
+                    const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? start;
+                    el.value = el.value.slice(0, start) + token + el.value.slice(end);
+                    el.focus();
+                    el.setSelectionRange(start + token.length, start + token.length);
+                    el.dispatchEvent(new Event('input'));
+                } }">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; margin-bottom:var(--sp-sm)">
+                    <div>
+                        <h3 style="margin:0 0 2px">{{ $openTemplate?->name ?? 'תבנית חדשה' }}</h3>
+                        <p class="text-text-secondary" style="margin:0; font-size:var(--fs-small)">{{ $spec['intro'] }}</p>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px">
+                        @if ($openTemplate)
+                            <button type="button" wire:click="toggleEmailTemplate({{ $openTemplate->id }})" class="btn btn-ghost btn-sm">{{ $openTemplate->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                        @endif
+                        <button type="button" wire:click="closeEmailTemplate" class="btn btn-ghost btn-sm">סגירה</button>
+                    </div>
+                </div>
+
+                <form wire:submit="saveEmailTemplate" class="form-grid">
+                    <div @class(['full' => $isSupplier])>
                         <label for="emailTemplateName">שם התבנית</label>
                         <input type="text" id="emailTemplateName" wire:model="emailTemplateName">
                         @error('emailTemplateName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
-                    <div>
-                        <label for="emailTemplateType">שימוש</label>
-                        <select id="emailTemplateType" wire:model="emailTemplateType">
-                            <option value="">בחרי...</option>
-                            @foreach (EmailTemplate::TYPE_LABELS as $value => $label)
-                                <option value="{{ $value }}">{{ $label }}</option>
-                            @endforeach
-                        </select>
-                        @error('emailTemplateType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="emailTemplateSubject">נושא</label>
-                        <input type="text" id="emailTemplateSubject" wire:model="emailTemplateSubject">
+                    @unless ($isSupplier)
+                        <div>
+                            <label for="emailTemplateType">שימוש</label>
+                            <select id="emailTemplateType" wire:model.live="emailTemplateType">
+                                @foreach (EmailTemplate::TYPE_LABELS as $value => $label)
+                                    <option value="{{ $value }}">{{ $label }}</option>
+                                @endforeach
+                                @if (! array_key_exists($emailTemplateType, EmailTemplate::TYPE_LABELS))
+                                    <option value="{{ $emailTemplateType }}">כללי</option>
+                                @endif
+                            </select>
+                            @error('emailTemplateType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                    @endunless
+                    <div class="full">
+                        <label for="emailTemplateSubject">נושא המייל</label>
+                        <input type="text" id="emailTemplateSubject" wire:model.live.debounce.400ms="emailTemplateSubject" x-on:focus="target = $el">
                         @error('emailTemplateSubject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full">
-                        <label for="emailTemplateContent">תוכן</label>
-                        <textarea id="emailTemplateContent" wire:model="emailTemplateContent" rows="3"></textarea>
-                        <div class="hint text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">אפשר לשלב בטקסט: @foreach (array_keys(EmailTemplate::PLACEHOLDERS) as $token)<span dir="rtl" style="unicode-bidi:isolate">{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}</span>@if (! $loop->last), @endif @endforeach</div>
+                        <label for="emailTemplateContent">גוף המייל</label>
+                        <textarea id="emailTemplateContent" x-ref="body" wire:model.live.debounce.400ms="emailTemplateContent" x-on:focus="target = $el" rows="10"></textarea>
                         @error('emailTemplateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">הוספת תבנית</button></div>
-                </form>
-            </div>
-
-            <div class="card">
-                <h3>הוספת שדה מיזוג</h3>
-                <form wire:submit="addEmailTemplateField" class="form-grid">
                     <div class="full">
-                        <label for="fieldTemplateId">תבנית</label>
-                        <select id="fieldTemplateId" wire:model="fieldTemplateId">
-                            <option value="">בחרו תבנית</option>
-                            @foreach ($this->emailTemplates as $template)
-                                <option value="{{ $template->id }}">{{ $template->name }}</option>
+                        <label>הוספת שדה (נכנס במקום הסמן)</label>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px">
+                            @foreach ($spec['fields'] as $token => $label)
+                                <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}')">+ {{ $label }}</button>
                             @endforeach
-                        </select>
-                        @error('fieldTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="fieldName">שם השדה</label>
-                        <input type="text" id="fieldName" wire:model="fieldName">
-                        @error('fieldName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="fieldType">סוג שדה</label>
-                        <select id="fieldType" wire:model.live="fieldType">
-                            <option value="free_text">טקסט חופשי</option>
-                            <option value="linked">מקושר למידע עסקי</option>
-                        </select>
-                    </div>
-                    @if ($fieldType === 'linked')
-                        <div class="full">
-                            <label for="fieldLinkedField">שדה מקושר</label>
-                            <select id="fieldLinkedField" wire:model="fieldLinkedField">
-                                <option value="">בחרי שדה...</option>
-                                @foreach (EmailTemplateField::LINKED_FIELDS as $value => $label)
-                                    <option value="{{ $value }}">{{ $label }}</option>
-                                @endforeach
-                            </select>
-                            @error('fieldLinkedField') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            @if ($spec['blockToken'])
+                                <button type="button" class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ $spec['blockToken'] }}')">+ {{ $spec['blockLabel'] }}</button>
+                            @endif
                         </div>
-                    @endif
-                    <div class="full checkbox-row">
-                        <input type="checkbox" id="fieldIsRequired" wire:model="fieldIsRequired">
-                        <label for="fieldIsRequired" style="margin:0">שדה חובה</label>
+                        @if ($spec['blockToken'])
+                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">{{ $spec['blockHint'] }}</div>
+                        @endif
                     </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">הוספת שדה</button></div>
+                    <div class="full">
+                        <label>תצוגה מקדימה (עם פרטים לדוגמה)</label>
+                        <div style="border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-md); background:var(--color-background)">
+                            <div style="font-weight:600; margin-bottom:var(--sp-sm)">{{ $preview['subject'] }}</div>
+                            @if ($spec['blockToken'])
+                                @php($parts = explode($spec['blockToken'], $preview['content']))
+                                @foreach ($parts as $part)
+                                    <div style="white-space:pre-wrap">{{ trim($part, "\n") }}</div>
+                                    @if (! $loop->last || count($parts) === 1)
+                                        <div style="margin:var(--sp-sm) 0">{!! $spec['blockPreviewHtml'] !!}</div>
+                                    @endif
+                                @endforeach
+                            @else
+                                <div style="white-space:pre-wrap">{{ $preview['content'] }}</div>
+                            @endif
+                        </div>
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">שמירת נוסח המייל</button></div>
                 </form>
             </div>
-        </div>
+        @endif
     </section>
     @endif
 
