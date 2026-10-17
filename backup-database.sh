@@ -19,7 +19,12 @@ BACKUP_FILE="${BACKUP_DIR}/crm_${TIMESTAMP}.dump"
 
 cd "${SCRIPT_DIR}"
 
-docker compose exec -T postgres \
+DOCKER=(docker)
+if ! docker info >/dev/null 2>&1; then
+    DOCKER=(sudo docker)
+fi
+
+"${DOCKER[@]}" compose exec -T postgres \
     pg_dump \
     -U "${DB_USERNAME}" \
     -d "${DB_DATABASE}" \

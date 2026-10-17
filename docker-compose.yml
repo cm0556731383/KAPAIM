@@ -1,3 +1,5 @@
+# Settings come from .env (see .env.example): APP_PORT, APP_UID/APP_GID,
+# CONTAINER_PREFIX and the DB_* values. Full install steps: DEPLOY.md.
 services:
 
   app:
@@ -5,13 +7,13 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
 
-    container_name: crm_app
+    container_name: ${CONTAINER_PREFIX:-crm}_app
 
     restart: unless-stopped
 
     working_dir: /var/www/html
 
-    user: "1001:1001"
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
 
     volumes:
       - ./:/var/www/html
@@ -31,12 +33,12 @@ services:
   nginx:
     image: nginx:1.29-alpine
 
-    container_name: crm_nginx
+    container_name: ${CONTAINER_PREFIX:-crm}_nginx
 
     restart: unless-stopped
 
     ports:
-      - "127.0.0.1:8090:80"
+      - "127.0.0.1:${APP_PORT:-8090}:80"
 
     volumes:
       - ./:/var/www/html:ro
@@ -52,7 +54,7 @@ services:
   postgres:
     image: postgres:18-alpine
 
-    container_name: crm_postgres
+    container_name: ${CONTAINER_PREFIX:-crm}_postgres
 
     restart: unless-stopped
 
@@ -88,13 +90,13 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
 
-    container_name: crm_queue
+    container_name: ${CONTAINER_PREFIX:-crm}_queue
 
     restart: unless-stopped
 
     working_dir: /var/www/html
 
-    user: "1001:1001"
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
 
     command:
       [
@@ -126,13 +128,13 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
 
-    container_name: crm_scheduler
+    container_name: ${CONTAINER_PREFIX:-crm}_scheduler
 
     restart: unless-stopped
 
     working_dir: /var/www/html
 
-    user: "1001:1001"
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
 
     command:
       [
@@ -153,6 +155,27 @@ services:
 
     networks:
       - crm
+
+
+  # Builds the CSS/JS into public/build — run on install and after every
+  # update that touches resources/ (install.sh / update.sh do it):
+  #   docker compose run --rm assets
+  assets:
+    image: node:22-alpine
+
+    profiles: ["tools"]
+
+    working_dir: /var/www/html
+
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
+
+    environment:
+      HOME: /tmp
+
+    command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run build"]
+
+    volumes:
+      - ./:/var/www/html
 
 
 volumes:

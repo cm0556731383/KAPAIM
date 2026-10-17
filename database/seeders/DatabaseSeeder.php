@@ -14,8 +14,9 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed the application's database.
      *
-     * MVP (FR-7.1): one "גישה מלאה" role, granted to the two real system users —
-     * business owner and secretary — with identical full access.
+     * Demo data for development and tests: two users with the password
+     * "password", a sample catalog, leads, customers, deals and payments.
+     * A real installation runs InstallSeeder instead (see DEPLOY.md).
      */
     public function run(): void
     {
@@ -53,6 +54,16 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->call(ReferenceDataSeeder::class);
+
+        \App\Models\BusinessEntity::create([
+            'name' => 'כפיים — חוויית תוכן (לדוגמה)',
+            'classification' => 'עוסק פטור',
+            'company_number' => '000000000',
+            'email' => 'billing@example.kapaim.test',
+            'phone' => '03-0000000',
+            'is_active' => true,
+        ]);
+
         $this->call(ProgramsCatalogSeeder::class);
         $this->call(MailingListsSeeder::class);
         $this->call(DocumentTemplatesSeeder::class);

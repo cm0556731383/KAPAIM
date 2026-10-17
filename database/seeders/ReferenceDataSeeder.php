@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use App\Models\BusinessEntity;
 use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\LeadSource;
@@ -45,15 +44,8 @@ class ReferenceDataSeeder extends Seeder
         $this->statuses('expense', ['ממתינה לחשבונית', 'תועדה']); // proposed
         $this->statuses('material_delivery', ['טרם נפתח', 'נפתח', 'אושר שהתקבל']); // confirmed — FR-5.10-5.15
 
-        // ----- עוסק לדוגמה -----
-        BusinessEntity::create([
-            'name' => 'כפיים — חוויית תוכן (לדוגמה)',
-            'classification' => 'עוסק פטור',
-            'company_number' => '000000000',
-            'email' => 'billing@example.kapaim.test',
-            'phone' => '03-0000000',
-            'is_active' => true,
-        ]);
+        // The sample business entity is demo data (DatabaseSeeder) — a real
+        // install adds its own on the settings page (InstallSeeder).
 
         // ----- תבנית דואר לדוגמה: אישור קליטת ליד (FR-1.18) -----
         $leadConfirmation = EmailTemplate::create([
