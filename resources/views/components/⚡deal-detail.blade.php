@@ -140,11 +140,10 @@ class extends Component
     }
 
     /**
-     * Editing amount/special-request is a plain direct update (this stage's
-     * optimistic-locking slice covers status changes and payment recording
-     * only — FR-8.19). Changing the payment method goes through
-     * Deal::updatePaymentMethod(), which blocks the change once any payment
-     * exists (FR-4.30/FR-4.31).
+     * Saved through Deal::updateDetailsWithLock() — the same version check as
+     * status changes and payments (FR-8.19), so a stale tab gets the
+     * conflict message instead of overwriting. The amount locks once
+     * invoiced (Deal::amountLockReason()).
      */
     public function saveDetails(ActivityLogger $activityLogger): void
     {
@@ -165,16 +164,17 @@ class extends Component
             return;
         }
 
-        $this->deal->update([
-            'agreed_amount' => $data['agreedAmount'],
-            'special_request' => $data['specialRequest'] ?: null,
-            'students_count' => $data['studentsCount'] !== null && $data['studentsCount'] !== '' ? (int) $data['studentsCount'] : null,
-        ]);
-
         try {
-            $this->deal->updatePaymentMethod($data['paymentMethodId'] ?: null);
+            $this->deal->updateDetailsWithLock($this->loadedVersion, [
+                'agreed_amount' => $data['agreedAmount'],
+                'special_request' => $data['specialRequest'] ?: null,
+                'students_count' => $data['studentsCount'] !== null && $data['studentsCount'] !== '' ? (int) $data['studentsCount'] : null,
+                'payment_method_id' => $data['paymentMethodId'] ?: null,
+            ]);
         } catch (\RuntimeException $e) {
             $this->detailsError = $e->getMessage();
+
+            return;
         }
 
         $activityLogger->log('deal.updated', "עודכנו פרטי עסקה #{$this->deal->id}", [

@@ -15,17 +15,22 @@ class ReadOnlyGuard
 {
     private static ?string $page = null;
 
+    /** Why the page is read-only, when it isn't the user's permission (EditNotAllowedException's default). */
+    private static ?string $reason = null;
+
     /** Framework bookkeeping tables that a read-only request may still write to. */
     private const ALLOWED_TABLES = ['sessions', 'cache', 'cache_locks', 'jobs', 'failed_jobs'];
 
-    public static function enable(string $page): void
+    public static function enable(string $page, ?string $reason = null): void
     {
         self::$page = $page;
+        self::$reason = $reason ?? self::$reason;
     }
 
     public static function disable(): void
     {
         self::$page = null;
+        self::$reason = null;
     }
 
     public static function check(string $sql): void
@@ -38,6 +43,6 @@ class ReadOnlyGuard
             return;
         }
 
-        throw new EditNotAllowedException(self::$page);
+        throw new EditNotAllowedException(self::$page, self::$reason);
     }
 }

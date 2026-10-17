@@ -657,6 +657,26 @@ class LeadsManagementTest extends TestCase
         $this->assertSame(1, Lead::count());
     }
 
+    public function test_a_converted_leads_card_is_read_only(): void
+    {
+        $lead = $this->createLead('בית ספר שהומר');
+        $customer = $lead->convertToCustomer(app(\App\Services\ActivityLogger::class));
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead->fresh()])
+            ->assertSee('הכרטיס לקריאה בלבד')
+            ->set('interactionType', 'שיחה')
+            ->call('addInteraction')
+            ->assertDispatched('notify', type: 'error');
+
+        $this->assertSame(0, $lead->interactions()->count());
+
+        // A second click on "convert" just lands on the customer card.
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead->fresh()])
+            ->call('convertToCustomer')
+            ->assertRedirect(route('customer-detail', $customer));
+        $this->assertSame(1, \App\Models\Customer::where('lead_id', $lead->id)->count());
+    }
+
     private function createLead(?string $schoolName = null): Lead
     {
         $status = StatusDefinition::firstOrCreate(

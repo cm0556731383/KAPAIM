@@ -306,6 +306,34 @@ class Subscription extends Model
      *
      * @throws RuntimeException on a version conflict or a rule violation.
      */
+    /**
+     * What to confirm before marking $deliveryId supplied with $programId —
+     * null when nothing looks off. Both are allowed (a month can be supplied
+     * late, a program twice on purpose), but are usually a slip: the same
+     * program already supplied in another month, or earlier months still
+     * unmarked.
+     */
+    public function deliverySupplyWarning(int $deliveryId, int $programId): ?string
+    {
+        $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
+        $others = $this->deliveries()->whereKeyNot($delivery->id)->get();
+        $warnings = [];
+
+        $sameProgram = $others->where('is_supplied', true)->firstWhere('program_id', $programId);
+        if ($sameProgram) {
+            $warnings[] = 'התוכנית "'.Program::find($programId)?->name."\" כבר סומנה כסופקה בחודש {$sameProgram->sequence_number} של המנוי.";
+        }
+
+        $earlierOpen = $others
+            ->filter(fn (SubscriptionDelivery $d) => $d->sequence_number < $delivery->sequence_number && ! $d->is_supplied && ! $this->isDeliveryCancelled($d))
+            ->pluck('sequence_number')->sort()->values();
+        if ($earlierOpen->isNotEmpty()) {
+            $warnings[] = ($earlierOpen->count() === 1 ? 'חודש '.$earlierOpen->first().' עדיין לא סומן' : 'חודשים '.$earlierOpen->implode(', ').' עדיין לא סומנו').' כסופק — מסמנים את חודש '.$delivery->sequence_number.' לפניהם.';
+        }
+
+        return $warnings ? implode("\n", $warnings)."\nלסמן בכל זאת?" : null;
+    }
+
     public function markDeliverySupplied(int $expectedVersion, int $deliveryId, int $programId, User $user): SubscriptionDelivery
     {
         $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();

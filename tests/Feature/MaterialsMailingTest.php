@@ -882,6 +882,36 @@ class MaterialsMailingTest extends TestCase
         ]);
     }
 
+    public function test_marking_materials_handled_only_reaches_this_customers_deliveries(): void
+    {
+        $mine = $this->createCustomer();
+        $other = $this->createCustomer();
+        $delivery = MaterialDelivery::sendFor($other, $this->createProgram(), [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
+            [['file_reference' => 'tmp1', 'file_name' => 'a.pdf']], app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class));
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $mine])->call('markMaterialHandled', $delivery->id);
+    }
+
+    public function test_a_materials_send_that_fails_leaves_no_stored_files(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $customer = $this->createCustomer();
+        $program = $this->createProgram();
+        Deal::createForCustomer($customer, $program, null, 400);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [\Illuminate\Http\UploadedFile::fake()->create('חוברת.pdf', 10, 'application/pdf')])
+            // A recipient row with no usable address — MaterialDelivery::sendFor() refuses it.
+            ->set('materialsRecipients', [['contact_id' => null, 'name' => 'ללא כתובת', 'email' => '']])
+            ->call('sendMaterials')
+            ->assertNotSet('materialsError', null);
+
+        $this->assertSame(0, MaterialDelivery::count());
+        $this->assertSame([], \Illuminate\Support\Facades\Storage::disk('local')->allFiles('material-attachments'));
+    }
+
     private function createCustomer(): Customer
     {
         $customer = $this->createLead()->convertToCustomer(app(ActivityLogger::class));

@@ -97,8 +97,12 @@ class ProcessCollectionTasks extends Command
         }
 
         // FR-4.35: the very first task appears one day after the deal
-        // reached "נשלחה חשבונית" — not immediately.
-        if ($deal->updated_at->lte(now()->subDay())) {
+        // reached "נשלחה חשבונית" — not immediately. Counted from the
+        // invoice itself: updated_at moves on every later edit to the deal,
+        // which kept pushing the first task back.
+        $invoiceSentAt = $deal->issuedInvoice()?->sent_at ?? $deal->updated_at;
+
+        if ($invoiceSentAt->lte(now()->subDay())) {
             $this->createTask($deal);
         }
     }

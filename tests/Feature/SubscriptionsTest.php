@@ -903,6 +903,33 @@ class SubscriptionsTest extends TestCase
 
     // ----- helpers -----
 
+    public function test_supplying_out_of_order_or_the_same_program_twice_asks_first(): void
+    {
+        $subscription = $this->openSubscription();
+        $program = $this->createProgram();
+        $deliveries = $subscription->deliveries()->orderBy('sequence_number')->get();
+        $subscription->markDeliverySupplied($subscription->version, $deliveries[0]->id, $program->id, $this->owner);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->set("deliveryProgramSelections.{$deliveries[2]->id}", (string) $program->id)
+            ->call('markDeliverySupplied', $subscription->id, $deliveries[2]->id);
+
+        $js = collect($component->effects['xjs'] ?? [])->pluck('expression')->implode('');
+        $this->assertStringContainsString('כבר סומנה כסופקה בחודש 1', $js);
+        $this->assertStringContainsString('חודש 2 עדיין לא סומן', $js);
+        $this->assertFalse($deliveries[2]->fresh()->is_supplied);
+
+        $component->call('markDeliverySupplied', $subscription->id, $deliveries[2]->id, true);
+        $this->assertTrue($deliveries[2]->fresh()->is_supplied);
+
+        // The next month in order, with a new program, needs no confirmation.
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->set("deliveryProgramSelections.{$deliveries[1]->id}", (string) $this->createProgram()->id)
+            ->call('markDeliverySupplied', $subscription->id, $deliveries[1]->id)
+            ->assertNoJs();
+        $this->assertTrue($deliveries[1]->fresh()->is_supplied);
+    }
+
     private function openSubscription(float $agreedAmount = 4200): Subscription
     {
         $customer = $this->createCustomer();

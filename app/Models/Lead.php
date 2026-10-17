@@ -8,6 +8,7 @@ use App\Services\Integrations\SmoveClient;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -244,6 +245,17 @@ class Lead extends Model
      *                          caller shows the message as a friendly error.
      */
     public function convertToCustomer(ActivityLogger $activityLogger, ?\DateTimeInterface $convertedAt = null): Customer
+    {
+        // Row-locked, so a double click converts once: the second request
+        // waits here, then finds the customer and stops below.
+        return DB::transaction(function () use ($activityLogger, $convertedAt) {
+            self::whereKey($this->id)->lockForUpdate()->first();
+
+            return $this->convertLockedToCustomer($activityLogger, $convertedAt);
+        });
+    }
+
+    private function convertLockedToCustomer(ActivityLogger $activityLogger, ?\DateTimeInterface $convertedAt): Customer
     {
         if ($this->customer()->exists()) {
             throw new RuntimeException('ליד זה כבר הומר ללקוחה — לא ניתן להמיר אותו ללקוחה פעם נוספת.');

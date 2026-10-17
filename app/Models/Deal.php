@@ -530,6 +530,26 @@ class Deal extends Model
      * locked after a payment"). Each payment carries its own method, chosen
      * when it's recorded, so a deal can be paid in several ways.
      */
+    /**
+     * The deal-details form (amount, payment method, students, special
+     * request) — guarded by the same version check as a status change, so a
+     * save from a stale tab can't silently overwrite someone else's edit.
+     *
+     * @throws RuntimeException on a version conflict.
+     */
+    public function updateDetailsWithLock(int $expectedVersion, array $attributes): void
+    {
+        $affected = self::where('id', $this->id)
+            ->where('version', $expectedVersion)
+            ->update($attributes + ['version' => DB::raw('version + 1'), 'updated_at' => now()]);
+
+        if ($affected === 0) {
+            throw new RuntimeException('העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+        }
+
+        $this->refresh();
+    }
+
     public function updatePaymentMethod(?int $paymentMethodId): void
     {
         if ($paymentMethodId !== $this->payment_method_id) {

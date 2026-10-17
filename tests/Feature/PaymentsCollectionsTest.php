@@ -123,6 +123,36 @@ class PaymentsCollectionsTest extends TestCase
             ->assertSee("מכוסה בצ'קים שהתקבלו וטרם נפרעו", false);
     }
 
+    public function test_saving_deal_details_from_a_stale_tab_is_a_conflict_not_an_overwrite(): void
+    {
+        $deal = $this->createDeal(400);
+        $stale = Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal]);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->set('specialRequest', 'שינוי ראשון')
+            ->call('saveDetails')
+            ->assertSet('detailsError', null);
+
+        $stale->set('specialRequest', 'שינוי מלשונית ישנה')
+            ->call('saveDetails')
+            ->assertSet('detailsError', 'העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
+
+        $this->assertSame('שינוי ראשון', $deal->fresh()->special_request);
+    }
+
+    public function test_the_first_collection_task_counts_from_the_invoice_not_the_last_edit(): void
+    {
+        $deal = $this->dealWithInvoice(400);
+        $invoiceSent = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => 'נשלחה חשבונית'], ['is_active' => true, 'sort_order' => 2]);
+        $deal->updateStatusWithLock($deal->version, $invoiceSent->id);
+        $deal->issuedInvoice()->update(['sent_at' => now()->subDays(3)]);
+        $deal->touch(); // edited today
+
+        $this->artisan('collections:process');
+
+        $this->assertSame(1, Task::where('deal_id', $deal->id)->where('task_type', 'collection')->where('status', 'open')->count());
+    }
+
     public function test_an_amount_above_the_database_limit_is_a_validation_error_not_a_crash(): void
     {
         $deal = $this->createDeal(400);

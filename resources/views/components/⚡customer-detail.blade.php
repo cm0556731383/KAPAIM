@@ -611,7 +611,7 @@ class extends Component
      * server-side. FR-3.15: purely manual, no materials-sending hook exists
      * anywhere in this method or the model it calls.
      */
-    public function markDeliverySupplied(int $subscriptionId, int $deliveryId, ActivityLogger $activityLogger): void
+    public function markDeliverySupplied(int $subscriptionId, int $deliveryId, ActivityLogger $activityLogger, bool $confirmed = false): void
     {
         abort_unless(auth()->user()->can('subscriptions.manage'), 403);
 
@@ -626,6 +626,12 @@ class extends Component
         }
 
         $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
+
+        if (! $confirmed && ($warning = $subscription->deliverySupplyWarning($deliveryId, (int) $programId))) {
+            $this->js('confirmDialog('.json_encode($warning, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).").then((ok) => ok && \$wire.markDeliverySupplied({$subscriptionId}, {$deliveryId}, true))");
+
+            return;
+        }
 
         try {
             $delivery = $subscription->markDeliverySupplied($subscription->version, $deliveryId, (int) $programId, auth()->user());
@@ -975,6 +981,8 @@ class extends Component
         try {
             $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove, $links);
         } catch (\RuntimeException $e) {
+            // Nothing was recorded, so the stored copies would be orphans.
+            \Illuminate\Support\Facades\Storage::disk('local')->delete(array_column($attachments, 'file_reference'));
             $this->materialsError = $e->getMessage();
 
             return;
@@ -1003,7 +1011,7 @@ class extends Component
     {
         abort_unless(auth()->user()->can('materials.manage'), 403);
 
-        MaterialDelivery::findOrFail($materialDeliveryId)->markHandled();
+        MaterialDelivery::where('customer_id', $this->customer->id)->findOrFail($materialDeliveryId)->markHandled();
         unset($this->materialDeliveries);
     }
 

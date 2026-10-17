@@ -122,6 +122,18 @@ class extends Component
      * FR-1.15/FR-2.3/FR-8.2: the only place a lead becomes a customer — see
      * Lead::convertToCustomer() for the actual business rules/logging.
      */
+    /**
+     * A converted lead is history — its customer card is where work goes on
+     * (the lead's interactions and tasks show there too). Every write from
+     * this page is blocked the same way as for a view-only user.
+     */
+    public function hydrate(): void
+    {
+        if ($this->lead->converted_at) {
+            \App\Support\ReadOnlyGuard::enable('leads', 'ליד זה הומר ללקוחה ולכן הכרטיס לקריאה בלבד — ההמשך בכרטיס הלקוחה.');
+        }
+    }
+
     public function convertToCustomer(ActivityLogger $activityLogger): void
     {
         $this->conversionError = null;
@@ -129,6 +141,13 @@ class extends Component
         try {
             $customer = $this->lead->convertToCustomer($activityLogger);
         } catch (\RuntimeException $e) {
+            // A second click that lost the race: the conversion already happened.
+            if ($existing = $this->lead->customer()->first()) {
+                $this->redirect(route('customer-detail', $existing), navigate: false);
+
+                return;
+            }
+
             $this->conversionError = $e->getMessage();
 
             return;
@@ -865,7 +884,7 @@ class extends Component
 
     @if ($lead->customer)
         <div class="mb-8" style="background: var(--color-info-bg); color: var(--color-info); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:500;">
-            ליד זה הומר ללקוחה — <a href="{{ route('customer-detail', $lead->customer) }}" style="color:inherit; text-decoration:underline">מעבר לכרטיס הלקוחה</a>.
+            ליד זה הומר ללקוחה, והכרטיס לקריאה בלבד — ההמשך (שיחות, משימות, אנשי קשר) ב<a href="{{ route('customer-detail', $lead->customer) }}" style="color:inherit; text-decoration:underline">כרטיס הלקוחה</a>.
         </div>
     @endif
 

@@ -173,9 +173,10 @@ class LeadToCustomerTest extends TestCase
         $lead = $this->createLead(schoolName: 'בית ספר כפול');
         $customer = $this->convertLead($lead);
 
+        // A second attempt (e.g. a double click) lands on the existing customer.
         Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
             ->call('convertToCustomer')
-            ->assertSet('conversionError', fn ($message) => ! empty($message));
+            ->assertRedirect(route('customer-detail', $customer));
 
         $this->assertSame(1, Customer::count());
         $this->assertSame($customer->id, Customer::first()->id);
