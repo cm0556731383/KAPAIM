@@ -441,9 +441,13 @@ class SumitPaymentsTest extends TestCase
             ->call('selectPaymentMethod', $check->id)
             ->set('paymentAmount', '400')
             ->call('recordPayment')
+            // The pending link already covers the balance — confirm first.
+            ->tap(fn ($c) => $this->assertSame(0, $deal->payments()->count()))
+            ->call('recordPayment', true)
             ->assertSet('paymentError', null)
             ->assertDispatched('notify', type: 'warning');
 
+        $this->assertSame(1, $deal->payments()->count());
         $this->assertNotSame('שולמה', $deal->fresh()->status->name);
         $this->assertSame('pending', $deal->paymentLinks()->sole()->status);
 
@@ -507,6 +511,9 @@ class SumitPaymentsTest extends TestCase
             ->call('selectPaymentMethod', $transfer->id)
             ->set('paymentAmount', '400')
             ->call('recordPayment')
+            // The pending link already covers the balance — confirm first.
+            ->tap(fn ($c) => $this->assertSame(0, $deal->payments()->count()))
+            ->call('recordPayment', true)
             ->assertSet('paymentError', null)
             ->assertDispatched('notify', type: 'warning')
             ->assertSee('חשש לתשלום כפול או ביתר');

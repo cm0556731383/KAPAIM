@@ -159,7 +159,7 @@ class extends Component
             'schoolName' => ['required', 'string', 'max:255'],
             'schoolCity' => ['nullable', 'string', 'max:255'],
             'schoolAddress' => ['nullable', 'string', 'max:255'],
-            'schoolPhone' => ['nullable', 'string', 'max:50'],
+            'schoolPhone' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
             'schoolEmail' => ['nullable', 'email', 'max:255'],
         ], [], ['schoolName' => 'שם המוסד']);
 
@@ -267,7 +267,7 @@ class extends Component
     public function updateStatus(ActivityLogger $activityLogger): void
     {
         $data = $this->validate([
-            'selectedStatusId' => ['required', 'exists:status_definitions,id'],
+            'selectedStatusId' => ['required', \Illuminate\Validation\Rule::exists('status_definitions', 'id')->where('scope', 'lead')],
             'selectedSubStatus' => ['nullable', 'string', 'max:255'],
         ]);
 
@@ -378,7 +378,7 @@ class extends Component
 
     public function editContact(int $id): void
     {
-        $contact = Contact::findOrFail($id);
+        $contact = Contact::where('school_id', $this->lead->school_id)->findOrFail($id);
         $this->editingContactId = $id;
         $this->contactName = $contact->name;
         $this->contactRole = (string) $contact->role;
@@ -392,7 +392,7 @@ class extends Component
 
     public function updateContact(ActivityLogger $activityLogger): void
     {
-        $contact = Contact::findOrFail($this->editingContactId);
+        $contact = Contact::where('school_id', $this->lead->school_id)->findOrFail($this->editingContactId);
         $data = $this->validateContact();
 
         $contact->update($data);
@@ -416,7 +416,7 @@ class extends Component
      */
     public function removeContact(int $id, ActivityLogger $activityLogger): void
     {
-        $contact = Contact::findOrFail($id);
+        $contact = Contact::where('school_id', $this->lead->school_id)->findOrFail($id);
         $name = $contact->name;
         $schoolId = $contact->school_id;
         $contact->delete();
@@ -441,7 +441,7 @@ class extends Component
      */
     public function restoreContact(int $id, ActivityLogger $activityLogger): void
     {
-        $contact = Contact::onlyTrashed()->findOrFail($id);
+        $contact = Contact::onlyTrashed()->where('school_id', $this->lead->school_id)->findOrFail($id);
         $contact->restore($activityLogger);
 
         unset($this->contacts);
@@ -455,8 +455,8 @@ class extends Component
         $data = $this->validate([
             'contactName' => ['required', 'string', 'max:255'],
             'contactRole' => ['nullable', 'string', 'max:255'],
-            'contactPhone' => ['nullable', 'string', 'max:50'],
-            'contactPhoneSecondary' => ['nullable', 'string', 'max:50'],
+            'contactPhone' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
+            'contactPhoneSecondary' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
             'contactEmail' => ['nullable', 'email', 'max:255'],
             'contactEmailSecondary' => ['nullable', 'email', 'max:255'],
             'contactIsPrimary' => ['boolean'],
@@ -684,7 +684,7 @@ class extends Component
 
     public function completeTask(int $id, ActivityLogger $activityLogger): void
     {
-        $task = Task::findOrFail($id);
+        $task = Task::where('lead_id', $this->lead->id)->findOrFail($id);
         $task->update(['status' => 'done', 'completed_at' => now()]);
 
         $activityLogger->log('task.completed', "הושלמה תזכורת \"{$task->title}\"", ['lead_id' => $this->lead->id, 'task_id' => $task->id]);
@@ -698,7 +698,7 @@ class extends Component
      */
     public function cancelTask(int $id, ActivityLogger $activityLogger): void
     {
-        $task = Task::findOrFail($id);
+        $task = Task::where('lead_id', $this->lead->id)->findOrFail($id);
         $title = $task->title;
         $task->delete();
 
@@ -714,7 +714,7 @@ class extends Component
      */
     public function restoreTask(int $id, ActivityLogger $activityLogger): void
     {
-        $task = Task::onlyTrashed()->findOrFail($id);
+        $task = Task::onlyTrashed()->where('lead_id', $this->lead->id)->findOrFail($id);
         $task->restore($activityLogger);
 
         unset($this->tasks);

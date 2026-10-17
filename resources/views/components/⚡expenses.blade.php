@@ -61,7 +61,7 @@ class extends Component
         $data = $this->validate([
             'supplierId' => ['required', 'exists:suppliers,id'],
             'programId' => ['nullable', 'exists:programs,id'],
-            'amount' => ['required', 'numeric', 'gt:0'],
+            'amount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'expenseDate' => ['required', 'date'],
             'notes' => ['nullable', 'string'],
         ], [], ['supplierId' => 'ספק', 'amount' => 'סכום', 'expenseDate' => 'תאריך']);
@@ -209,7 +209,7 @@ class extends Component
         $data = $this->validate([
             'editSupplierId' => ['required', 'exists:suppliers,id'],
             'editProgramId' => ['nullable', 'exists:programs,id'],
-            'editAmount' => ['required', 'numeric', 'gt:0'],
+            'editAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editExpenseDate' => ['required', 'date'],
             'editNotes' => ['nullable', 'string'],
         ], [], ['editSupplierId' => 'ספק', 'editAmount' => 'סכום', 'editExpenseDate' => 'תאריך']);

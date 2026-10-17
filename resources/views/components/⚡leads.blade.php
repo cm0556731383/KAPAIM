@@ -69,9 +69,9 @@ class extends Component
 
         $data = $this->validate([
             'newEmail' => ['required', 'email', 'max:255'],
-            'newPhone' => ['required', 'string', 'max:50'],
+            'newPhone' => ['required', 'string', 'max:50', new \App\Rules\Phone],
             'newSchoolName' => ['nullable', 'string', 'max:255'],
-            'newSchoolPhone' => ['nullable', 'string', 'max:50'],
+            'newSchoolPhone' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
             'newSourceId' => ['nullable', 'exists:lead_sources,id'],
             'newNotes' => ['nullable', 'string'],
         ], [], [

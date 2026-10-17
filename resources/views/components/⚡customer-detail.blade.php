@@ -254,7 +254,7 @@ class extends Component
             'schoolName' => ['required', 'string', 'max:255'],
             'schoolCity' => ['nullable', 'string', 'max:255'],
             'schoolAddress' => ['nullable', 'string', 'max:255'],
-            'schoolPhone' => ['nullable', 'string', 'max:50'],
+            'schoolPhone' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
             'schoolEmail' => ['nullable', 'email', 'max:255'],
             'schoolInvoiceName' => ['nullable', 'string', 'max:255'],
             'schoolBusinessNumber' => ['nullable', 'string', 'max:20', 'regex:/^[0-9][0-9\s-]*$/'],
@@ -374,7 +374,7 @@ class extends Component
 
     public function editContact(int $id): void
     {
-        $contact = Contact::findOrFail($id);
+        $contact = Contact::where('school_id', $this->customer->school_id)->findOrFail($id);
         $this->editingContactId = $id;
         $this->contactName = $contact->name;
         $this->contactRole = (string) $contact->role;
@@ -392,7 +392,7 @@ class extends Component
      */
     public function updateContact(ActivityLogger $activityLogger): void
     {
-        $contact = Contact::findOrFail($this->editingContactId);
+        $contact = Contact::where('school_id', $this->customer->school_id)->findOrFail($this->editingContactId);
         $data = $this->validateContact();
 
         if ($contact->is_primary && ! $data['is_primary'] && ! $this->hasOtherPrimaryContact($contact->id)) {
@@ -432,7 +432,7 @@ class extends Component
      */
     public function removeContact(int $id, ActivityLogger $activityLogger): void
     {
-        $contact = Contact::findOrFail($id);
+        $contact = Contact::where('school_id', $this->customer->school_id)->findOrFail($id);
 
         if ($contact->is_primary && ! $this->hasOtherPrimaryContact($contact->id)) {
             $this->contactError = 'לא ניתן להסיר את איש הקשר הראשי האחרון — לכל לקוחה חייב להיות לפחות איש קשר ראשי אחד.';
@@ -466,7 +466,7 @@ class extends Component
      */
     public function restoreContact(int $id, ActivityLogger $activityLogger): void
     {
-        $contact = Contact::onlyTrashed()->findOrFail($id);
+        $contact = Contact::onlyTrashed()->where('school_id', $this->customer->school_id)->findOrFail($id);
         $contact->restore($activityLogger);
 
         unset($this->contacts);
@@ -482,7 +482,7 @@ class extends Component
      */
     public function restoreTask(int $id, ActivityLogger $activityLogger): void
     {
-        $task = Task::onlyTrashed()->findOrFail($id);
+        $task = Task::onlyTrashed()->where('customer_id', $this->customer->id)->findOrFail($id);
         $task->restore($activityLogger);
 
         unset($this->recentlyRemovedTasks);
@@ -505,7 +505,7 @@ class extends Component
 
         $data = $this->validate([
             'dealItem' => ['required', 'string'],
-            'dealAgreedAmount' => ['nullable', 'numeric', 'gt:0'],
+            'dealAgreedAmount' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'dealSpecialRequest' => ['nullable', 'string'],
             'dealPaymentMethodId' => ['nullable', 'exists:payment_methods,id'],
             'dealStudentsCount' => ['nullable', 'integer', 'min:0'],
@@ -794,7 +794,7 @@ class extends Component
     {
         abort_unless(auth()->user()->can('subscriptions.manage'), 403);
 
-        $data = $this->validate(['monthlyPaymentOverrideInput' => ['nullable', 'numeric', 'gt:0']]);
+        $data = $this->validate(['monthlyPaymentOverrideInput' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()]]);
 
         $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
         $amount = $data['monthlyPaymentOverrideInput'] !== null && $data['monthlyPaymentOverrideInput'] !== ''
@@ -1045,8 +1045,8 @@ class extends Component
         $data = $this->validate([
             'contactName' => ['required', 'string', 'max:255'],
             'contactRole' => ['nullable', 'string', 'max:255'],
-            'contactPhone' => ['nullable', 'string', 'max:50'],
-            'contactPhoneSecondary' => ['nullable', 'string', 'max:50'],
+            'contactPhone' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
+            'contactPhoneSecondary' => ['nullable', 'string', 'max:50', new \App\Rules\Phone],
             'contactEmail' => ['nullable', 'email', 'max:255'],
             'contactEmailSecondary' => ['nullable', 'email', 'max:255'],
             'contactIsPrimary' => ['boolean'],

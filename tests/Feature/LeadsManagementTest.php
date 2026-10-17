@@ -612,6 +612,51 @@ class LeadsManagementTest extends TestCase
         $this->assertSame('2030-02-01', $task->fresh()->due_at->toDateString());
     }
 
+    public function test_a_lead_page_only_touches_its_own_schools_contacts(): void
+    {
+        $lead = $this->createLead('בית ספר א');
+        $other = $this->createLead('בית ספר ב');
+        $foreign = \App\Models\Contact::create(['school_id' => $other->school_id, 'name' => 'איש קשר זר', 'is_primary' => true]);
+
+        foreach (['editContact', 'removeContact'] as $action) {
+            try {
+                Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])->call($action, $foreign->id);
+                $this->fail("{$action} reached another school's contact.");
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            }
+        }
+
+        $this->assertNotSoftDeleted('contacts', ['id' => $foreign->id]);
+        $this->assertSame('איש קשר זר', $foreign->fresh()->name);
+    }
+
+    public function test_a_lead_only_takes_a_lead_status(): void
+    {
+        $lead = $this->createLead();
+        $dealStatus = StatusDefinition::create(['scope' => 'deal', 'name' => 'פתוחה', 'is_active' => true, 'sort_order' => 1]);
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->set('selectedStatusId', (string) $dealStatus->id)
+            ->call('updateStatus')
+            ->assertHasErrors('selectedStatusId');
+
+        $this->assertNotSame($dealStatus->id, $lead->fresh()->status_id);
+    }
+
+    public function test_a_phone_number_needs_digits(): void
+    {
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('newEmail', 'a@example.com')
+            ->set('newPhone', 'abcdef')
+            ->call('addLead')
+            ->assertHasErrors('newPhone')
+            ->set('newPhone', '050-123 4567')
+            ->call('addLead')
+            ->assertHasNoErrors();
+
+        $this->assertSame(1, Lead::count());
+    }
+
     private function createLead(?string $schoolName = null): Lead
     {
         $status = StatusDefinition::firstOrCreate(

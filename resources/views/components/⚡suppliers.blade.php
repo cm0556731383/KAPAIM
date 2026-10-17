@@ -41,7 +41,7 @@ class extends Component
             'name' => ['required', 'string', 'max:255'],
             'companyNumber' => ['nullable', 'string', 'max:255'],
             'classification' => ['required', 'in:'.implode(',', Supplier::CLASSIFICATIONS)],
-            'phone' => ['nullable', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:255', new \App\Rules\Phone],
             'email' => ['nullable', 'email', 'max:255'],
             'notes' => ['nullable', 'string'],
         ], [], ['name' => 'שם הספק', 'companyNumber' => 'מספר חברה']);

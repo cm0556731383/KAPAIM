@@ -145,6 +145,24 @@ class Deal extends Model
     }
 
     /**
+     * Why the agreed amount can no longer change, or null while it still can:
+     * the balance owed is computed from it, so once SUMIT issued the invoice
+     * (or the deal was cancelled) a new amount would no longer match it.
+     */
+    public function amountLockReason(): ?string
+    {
+        if ($this->status?->name === self::CANCELLED_STATUS_NAME) {
+            return 'העסקה מבוטלת — לא ניתן לשנות את הסכום המוסכם.';
+        }
+
+        if ($this->issuedInvoice()) {
+            return 'לעסקה כבר הופקה חשבונית — לא ניתן לשנות את הסכום המוסכם. לתיקון יש להפיק חשבונית זיכוי.';
+        }
+
+        return null;
+    }
+
+    /**
      * Build-plan 08: every recorded payment against this deal — see
      * recordPayment() below, the only place a Payment row is ever created.
      */
@@ -229,7 +247,7 @@ class Deal extends Model
 
     public static function badgeClassForStatusName(?string $statusName): string
     {
-        return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
+        return self::BADGE_CLASSES[$statusName ?? ''] ?? 'badge-neutral';
     }
 
     /**
@@ -948,6 +966,32 @@ class Deal extends Model
             return null;
         }
 
+        return $this->committedPayments();
+    }
+
+    /**
+     * Asked before a new payment, check, or payment link is recorded: the
+     * warning to confirm when $amount on top of what was paid and is still
+     * on its way would come to more than the amount due — null when it
+     * wouldn't. A payment above the balance gets a SUMIT receipt right away,
+     * which can't be taken back, so a typo must be caught before, not after.
+     */
+    public function overpaymentWarning(float $amount): ?string
+    {
+        $due = $this->amountDue();
+        $committed = $this->committedPayments(always: true)['committed'];
+
+        if ($committed + $amount <= $due + 0.005) {
+            return null;
+        }
+
+        return 'הסכום (₪'.number_format($amount, 2).') גבוה מהיתרה לתשלום (₪'.number_format(max(0.0, $due - $committed), 2).').'
+            ."\nהקבלה שתופק עליו היא סופית. לרשום בכל זאת?";
+    }
+
+    /** @return ?array{due: float, paid: float, committed: float, checks: \Illuminate\Support\Collection, links: \Illuminate\Support\Collection, standingOrder: ?float} */
+    private function committedPayments(bool $always = false): ?array
+    {
         $due = $this->amountDue();
         $paid = $this->totalPaid();
         $checks = $this->pendingChecks();
@@ -955,7 +999,7 @@ class Deal extends Model
         $standingOrder = $this->standingOrderRemaining();
         $committed = $paid + $checks->sum('amount') + $links->sum('amount') + ($standingOrder ?? 0);
 
-        if ($committed <= $due + 0.005) {
+        if (! $always && $committed <= $due + 0.005) {
             return null;
         }
 

@@ -133,6 +133,10 @@ class extends Component
             'is_active' => $data['editIsActive'],
         ]);
 
+        if (! $user->is_active) {
+            $user->logOutEverywhere();
+        }
+
         $activityLogger->log('user.updated', "עודכנה משתמשת: {$user->name}".($user->is_active ? '' : ' (לא פעילה)'), [
             'metadata' => ['updated_user_id' => $user->id],
         ]);
@@ -147,6 +151,7 @@ class extends Component
         $user = User::findOrFail($id);
         $password = Str::password(12);
         $user->update(['password' => $password]);
+        $user->logOutEverywhere();
 
         $activityLogger->log('user.password_reset', "אופסה הסיסמה של המשתמשת {$user->name}", [
             'metadata' => ['updated_user_id' => $user->id],

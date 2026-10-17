@@ -143,7 +143,7 @@ class Customer extends Model
 
     public static function badgeClassForStatusName(?string $statusName): string
     {
-        return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
+        return self::BADGE_CLASSES[$statusName ?? ''] ?? 'badge-neutral';
     }
 }
 

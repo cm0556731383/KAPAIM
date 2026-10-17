@@ -268,7 +268,7 @@ class extends Component
                 'editForm.classification' => ['required', 'in:'.implode(',', $this->businessEntityClassifications)],
                 'editForm.company_number' => ['required', 'string', 'max:255'],
                 'editForm.email' => ['required', 'email'],
-                'editForm.phone' => ['required', 'string', 'max:255'],
+                'editForm.phone' => ['required', 'string', 'max:255', new \App\Rules\Phone],
             ],
         };
 
@@ -372,7 +372,7 @@ class extends Component
             'businessEntityClassification' => ['required', 'in:עוסק פטור,עוסק מורשה,חברה בעמ'],
             'businessEntityCompanyNumber' => ['required', 'string', 'max:255'],
             'businessEntityEmail' => ['required', 'email'],
-            'businessEntityPhone' => ['required', 'string', 'max:255'],
+            'businessEntityPhone' => ['required', 'string', 'max:255', new \App\Rules\Phone],
         ], [], [
             'businessEntityName' => 'שם העוסק',
             'businessEntityCompanyNumber' => 'ח.פ / ע.מ',

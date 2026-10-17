@@ -47,6 +47,100 @@ class PaymentsCollectionsTest extends TestCase
 
     // ----- auth / permissions -----
 
+    // ----- QA pass 3: amount locking, overpayment confirmation, amount caps -----
+
+    public function test_the_agreed_amount_locks_once_the_invoice_is_issued(): void
+    {
+        $open = $this->createDeal(400);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $open])
+            ->set('agreedAmount', '450')
+            ->call('saveDetails')
+            ->assertHasNoErrors();
+        $this->assertEquals(450, (float) $open->fresh()->agreed_amount);
+
+        $invoiced = $this->dealWithInvoice(400);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $invoiced])
+            ->set('agreedAmount', '5000')
+            ->call('saveDetails')
+            ->assertHasErrors('agreedAmount')
+            // Other details still save while the amount stays as invoiced.
+            ->set('agreedAmount', '400')
+            ->set('studentsCount', '25')
+            ->call('saveDetails')
+            ->assertHasNoErrors();
+
+        $this->assertEquals(400, (float) $invoiced->fresh()->agreed_amount);
+        $this->assertSame(25, $invoiced->fresh()->students_count);
+    }
+
+    public function test_an_amount_above_the_database_limit_is_a_validation_error_not_a_crash(): void
+    {
+        $deal = $this->createDeal(400);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->set('agreedAmount', '99999999999999')
+            ->call('saveDetails')
+            ->assertHasErrors('agreedAmount');
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $deal->customer])
+            ->set('dealItem', 'program:'.$deal->program_id)
+            ->set('dealAgreedAmount', '99999999999999')
+            ->call('createDeal')
+            ->assertHasErrors('dealAgreedAmount')
+            ->assertSet('dealError', null);
+    }
+
+    public function test_a_payment_above_the_balance_asks_for_confirmation_before_it_is_recorded(): void
+    {
+        $deal = $this->createDeal(400);
+        $method = $this->createPaymentMethod();
+        $deal->recordPayment($deal->version, 300, null, $method->id);
+
+        $component = Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->call('selectPaymentMethod', $method->id)
+            ->set('paymentAmount', '5000')
+            ->call('recordPayment');
+
+        $this->assertSame(1, $deal->payments()->count(), 'Nothing is recorded before the confirmation.');
+        $js = collect($component->effects['xjs'] ?? [])->pluck('expression')->implode("\n");
+        $this->assertStringContainsString('confirmDialog(', $js);
+        $this->assertStringContainsString('$wire.recordPayment(true)', $js);
+        $this->assertStringContainsString('100.00', $js, 'The dialog names the remaining balance.');
+
+        $component->call('recordPayment', true);
+        $this->assertSame(2, $deal->payments()->count());
+
+        // Within the balance there is no dialog at all.
+        $within = $this->createDeal(400);
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $within])
+            ->call('selectPaymentMethod', $method->id)
+            ->set('paymentAmount', '400')
+            ->call('recordPayment')
+            ->assertNoJs();
+        $this->assertSame(1, $within->payments()->count());
+    }
+
+    public function test_checks_above_the_balance_ask_for_confirmation_too(): void
+    {
+        $deal = $this->createDeal(400);
+        $checks = $this->createPaymentMethod("צ'קים", 'check');
+        $rows = [
+            ['number' => '1', 'due_date' => now()->toDateString(), 'amount' => '300', 'bank' => '', 'branch' => '', 'account' => ''],
+            ['number' => '2', 'due_date' => now()->addMonth()->toDateString(), 'amount' => '300', 'bank' => '', 'branch' => '', 'account' => ''],
+        ];
+
+        $component = Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->call('selectPaymentMethod', $checks->id)
+            ->set('checkRows', $rows)
+            ->call('recordChecks');
+        $this->assertSame(0, $deal->payments()->count());
+
+        $component->call('recordChecks', true);
+        $this->assertSame(2, $deal->payments()->count());
+    }
+
     // ----- correcting / removing a mistaken payment -----
 
     public function test_a_payment_without_a_receipt_can_be_edited_and_deleted_and_the_deal_status_follows(): void

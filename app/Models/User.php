@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 #[Fillable(['name', 'email', 'personal_email', 'password', 'role_id', 'is_active'])]
 #[Hidden(['password', 'remember_token'])]
@@ -76,5 +78,20 @@ class User extends Authenticatable
     public function hasPermission(string $resource, string $action): bool
     {
         return $this->role?->hasPermission($resource, $action) ?? false;
+    }
+
+    /**
+     * Ends every session this user has open, "remember me" included — after
+     * a deactivation or a password reset the old login must stop working
+     * right away, not when its session happens to expire. The session making
+     * the change survives when a user resets her own password.
+     */
+    public function logOutEverywhere(): void
+    {
+        DB::table('sessions')
+            ->where('user_id', $this->id)
+            ->when(auth()->id() === $this->id, fn ($q) => $q->where('id', '!=', session()->getId()))
+            ->delete();
+        $this->forceFill(['remember_token' => Str::random(60)])->saveQuietly();
     }
 }

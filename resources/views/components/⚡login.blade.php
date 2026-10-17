@@ -3,11 +3,19 @@
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 
 new
 #[Layout('layouts.guest', ['title' => 'התחברות — כפיים'])]
 class extends Component
 {
+    private const MAX_ATTEMPTS_PER_IP = 5;
+
+    private const MAX_ATTEMPTS = 20;
+
+    private const LOCKOUT_SECONDS = 300;
+
     public string $email = '';
     public string $password = '';
     public bool $remember = false;
@@ -22,10 +30,31 @@ class extends Component
             'password' => ['required', 'string'],
         ]);
 
+        // The login page is on a public domain — after 5 wrong passwords
+        // from one IP, or 20 from anywhere (the IP behind the proxy can be
+        // forged), an email waits, so a password can't be brute-forced.
+        $email = Str::lower($credentials['email']);
+        $limits = ['login:'.$email.'|'.request()->ip() => self::MAX_ATTEMPTS_PER_IP, 'login:'.$email => self::MAX_ATTEMPTS];
+
+        foreach ($limits as $key => $maxAttempts) {
+            if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+                $this->errorMessage = 'יותר מדי ניסיונות התחברות. נסו שוב בעוד '.max(1, (int) ceil(RateLimiter::availableIn($key) / 60)).' דקות.';
+
+                return;
+            }
+        }
+
         if (! Auth::attempt($credentials, $this->remember)) {
+            foreach (array_keys($limits) as $key) {
+                RateLimiter::hit($key, self::LOCKOUT_SECONDS);
+            }
             $this->errorMessage = 'אימייל או סיסמה שגויים.';
 
             return;
+        }
+
+        foreach (array_keys($limits) as $key) {
+            RateLimiter::clear($key);
         }
 
         if (! Auth::user()->is_active) {

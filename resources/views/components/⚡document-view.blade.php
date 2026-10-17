@@ -114,9 +114,9 @@ class extends Component
 
         $data = $this->validate([
             'lineDescription' => ['required', 'string', 'max:255'],
-            'lineQuantity' => ['required', 'numeric', 'gt:0'],
-            'lineAmount' => ['required', 'numeric', 'gt:0'],
-            'lineUnitPrice' => ['nullable', 'numeric'],
+            'lineQuantity' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'lineAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'lineUnitPrice' => ['nullable', 'numeric', 'min:0', \App\Support\Money::maxRule()],
         ], [], ['lineDescription' => 'תיאור', 'lineAmount' => 'סכום']);
 
         try {
@@ -310,6 +310,13 @@ class extends Component
                         </tbody>
                     </table>
                     </div>
+                    {{-- The balance owed follows the deal's amount, and the amount locks once the invoice is issued — so a mismatch here would stay. --}}
+                    @php $invoiceMismatch = ! $document->sent_at && $document->deal && abs($document->totalAmount() - (float) $document->deal->agreed_amount) >= 0.005; @endphp
+                    @if ($invoiceMismatch)
+                        <div style="margin: var(--sp-md) var(--sp-lg) 0; background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small);">
+                            סה"כ החשבונית (₪{{ number_format($document->totalAmount(), 2) }}) שונה מסכום העסקה (₪{{ number_format((float) $document->deal->agreed_amount, 2) }}). היתרה לתשלום מחושבת לפי סכום העסקה, ואחרי ההפקה לא ניתן לשנות אותו — כדאי לעדכן את סכום העסקה בכרטיס העסקה לפני ההפקה.
+                        </div>
+                    @endif
                     @unless ($document->sent_at)
                         {{-- Collapsed by default: the invoice already has its line(s); empty
                              inputs here read as "unfilled fields" rather than "add another line". --}}
@@ -338,7 +345,7 @@ class extends Component
                         </p>
                     @else
                         <div style="margin-top:var(--sp-lg)">
-                            <button type="button" wire:click="send('digital')" class="btn btn-primary">הפקה מול Summit</button>
+                            <button type="button" wire:click="send('digital')" class="btn btn-primary" @if ($document->document_type === 'invoice' && ($invoiceMismatch ?? false)) wire:confirm="סה&quot;כ החשבונית שונה מסכום העסקה, ואחרי ההפקה לא ניתן לשנות את סכום העסקה. להפיק בכל זאת?" @endif>הפקה מול Summit</button>
                         </div>
                     @endif
                 </div>

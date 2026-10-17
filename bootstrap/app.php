@@ -26,6 +26,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // secret instead. Without this every one of them 419'd in production
         // (tests never noticed: CSRF is skipped while running unit tests).
         $middleware->preventRequestForgery(except: ['webhooks/*']);
+
+        $middleware->web(append: [\App\Http\Middleware\EnsureUserIsActive::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

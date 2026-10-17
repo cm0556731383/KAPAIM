@@ -151,11 +151,19 @@ class extends Component
         $this->detailsError = null;
 
         $data = $this->validate([
-            'agreedAmount' => ['required', 'numeric', 'gt:0'],
+            'agreedAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'specialRequest' => ['nullable', 'string'],
             'paymentMethodId' => ['nullable', 'exists:payment_methods,id'],
             'studentsCount' => ['nullable', 'integer', 'min:0'],
         ], [], ['agreedAmount' => 'סכום מוסכם', 'studentsCount' => 'מספר תלמידות']);
+
+        $lockReason = $this->deal->amountLockReason();
+
+        if ($lockReason && abs((float) $data['agreedAmount'] - (float) $this->deal->agreed_amount) >= 0.005) {
+            $this->addError('agreedAmount', $lockReason);
+
+            return;
+        }
 
         $this->deal->update([
             'agreed_amount' => $data['agreedAmount'],
@@ -187,7 +195,7 @@ class extends Component
     {
         $this->statusError = null;
 
-        $data = $this->validate(['selectedStatusId' => ['required', 'exists:status_definitions,id']]);
+        $data = $this->validate(['selectedStatusId' => ['required', \Illuminate\Validation\Rule::exists('status_definitions', 'id')->where('scope', 'deal')]]);
 
         $oldStatusName = $this->deal->status?->name;
         $newStatus = StatusDefinition::findOrFail($data['selectedStatusId']);
@@ -269,7 +277,7 @@ class extends Component
 
         $data = $this->validate([
             'creditDescription' => ['required', 'string', 'max:255'],
-            'creditAmount' => ['required', 'numeric', 'gt:0', 'lte:'.$invoiceTotal],
+            'creditAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule(), 'lte:'.$invoiceTotal],
         ], ['creditAmount.lte' => 'סכום הזיכוי לא יכול לעלות על סכום החשבונית (₪'.number_format($invoiceTotal, 2).').'],
             ['creditDescription' => 'פירוט', 'creditAmount' => 'סכום']);
 
@@ -438,7 +446,7 @@ class extends Component
         $this->paymentError = null;
 
         $data = $this->validate([
-            'editPaymentAmount' => ['required', 'numeric', 'gt:0'],
+            'editPaymentAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editPaymentDate' => ['required', 'date'],
             'editCheckNumber' => ['nullable', 'string', 'max:255'],
             'editCheckDueDate' => ['nullable', 'date'],
@@ -525,14 +533,18 @@ class extends Component
         $this->notifySuccess("טיוטת ה{$label} נמחקה.");
     }
 
-    public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
+    public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
 
         $data = $this->validate([
-            'paymentAmount' => ['required', 'numeric', 'gt:0'],
+            'paymentAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'paymentDate' => ['nullable', 'date'],
         ], [], ['paymentAmount' => 'סכום שהתקבל']);
+
+        if ($this->askToConfirmOverpayment((float) $data['paymentAmount'], 'recordPayment', $overpaymentConfirmed)) {
+            return;
+        }
 
         try {
             $payment = $this->deal->recordPayment(
@@ -596,7 +608,7 @@ class extends Component
     }
 
     /** Records every check row as a check payment of its own; each one's receipt follows when it clears. */
-    public function recordChecks(ActivityLogger $activityLogger): void
+    public function recordChecks(ActivityLogger $activityLogger, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
 
@@ -604,7 +616,7 @@ class extends Component
             'checkRows' => ['required', 'array', 'min:1'],
             'checkRows.*.number' => ['required', 'string', 'max:50'],
             'checkRows.*.due_date' => ['required', 'date'],
-            'checkRows.*.amount' => ['required', 'numeric', 'gt:0'],
+            'checkRows.*.amount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'checkRows.*.bank' => ['nullable', 'integer', 'between:1,999'],
             'checkRows.*.branch' => ['nullable', 'digits_between:1,5'],
             'checkRows.*.account' => ['nullable', 'regex:/^[0-9-]{2,20}$/'],
@@ -612,6 +624,10 @@ class extends Component
             'checkRows.*.number' => "מס' צ'ק", 'checkRows.*.due_date' => 'תאריך פירעון', 'checkRows.*.amount' => 'סכום',
             'checkRows.*.bank' => 'בנק', 'checkRows.*.branch' => 'סניף', 'checkRows.*.account' => 'מס\' חשבון',
         ]);
+
+        if ($this->askToConfirmOverpayment((float) array_sum(array_column($this->checkRows, 'amount')), 'recordChecks', $overpaymentConfirmed)) {
+            return;
+        }
 
         try {
             $payments = $this->deal->recordChecks($this->loadedVersion, $this->checkRows, (int) $this->payMethodId ?: null);
@@ -727,6 +743,24 @@ class extends Component
      * user how it went. The payment stands either way; a receipt that
      * couldn't be issued stays available from the payments table.
      */
+    /**
+     * More than the balance owed opens the app's confirm dialog instead of
+     * recording, and only its "אישור" calls $method again, confirmed. True
+     * when the action must stop here and wait for that answer.
+     */
+    private function askToConfirmOverpayment(float $amount, string $method, bool $confirmed): bool
+    {
+        $warning = $confirmed ? null : $this->deal->fresh()->overpaymentWarning($amount);
+
+        if ($warning === null) {
+            return false;
+        }
+
+        $this->js('confirmDialog('.json_encode($warning, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).").then((ok) => ok && \$wire.{$method}(true))");
+
+        return true;
+    }
+
     private function notifyPaymentWithReceipt(Payment $payment, string $done, ExternalOperationRunner $runner, SummitClient $summit): void
     {
         if ($this->beforePaymentReceipt) {
@@ -768,13 +802,17 @@ class extends Component
      * see Deal::chargeCardViaSummit()'s docblock for why this is the one
      * payment path where the external call happens before the local record.
      */
-    public function chargeCard(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit): void
+    public function chargeCard(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
 
         $data = $this->validate([
-            'paymentAmount' => ['required', 'numeric', 'gt:0'],
+            'paymentAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
         ], [], ['paymentAmount' => 'סכום לסליקה']);
+
+        if ($this->askToConfirmOverpayment((float) $data['paymentAmount'], 'chargeCard', $overpaymentConfirmed)) {
+            return;
+        }
 
         try {
             $payment = $this->deal->chargeCardViaSummit($this->loadedVersion, (float) $data['paymentAmount'], $runner, $summit);
@@ -814,16 +852,21 @@ class extends Component
      * If only the email fails the link still exists — it's listed with a
      * copy button, so it can be sent by hand.
      */
-    public function sendPaymentLink(ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
+    public function sendPaymentLink(ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
 
         $data = $this->validate([
-            'linkAmount' => ['required', 'numeric', 'gt:0'],
+            'linkAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'linkEmail' => ['required', 'email'],
         ], [], ['linkAmount' => 'סכום לתשלום', 'linkEmail' => 'דוא"ל הנמענת']);
 
         $purpose = $this->payType() === 'recurring' ? PaymentLink::PURPOSE_STANDING_ORDER : PaymentLink::PURPOSE_PAYMENT;
+
+        // A standing-order link pays only its first month; the rest is the plan's, warned about on registration.
+        if ($purpose === PaymentLink::PURPOSE_PAYMENT && $this->askToConfirmOverpayment((float) $data['linkAmount'], 'sendPaymentLink', $overpaymentConfirmed)) {
+            return;
+        }
 
         try {
             $link = PaymentLink::createFor($this->deal, (float) $data['linkAmount'], $runner, $summit, $purpose);
@@ -1079,7 +1122,9 @@ class extends Component
                 <form wire:submit="saveDetails" class="form-grid">
                     <div>
                         <label for="agreedAmount">סכום מוסכם</label>
-                        <input type="text" id="agreedAmount" wire:model="agreedAmount" class="ltr-num" dir="ltr">
+                        @php $amountLockReason = $deal->amountLockReason(); @endphp
+                        <input type="text" id="agreedAmount" wire:model="agreedAmount" class="ltr-num" dir="ltr" @disabled($amountLockReason) @if ($amountLockReason) title="{{ $amountLockReason }}" @endif>
+                        @if ($amountLockReason) <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">{{ $amountLockReason }}</div> @endif
                         @error('agreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>

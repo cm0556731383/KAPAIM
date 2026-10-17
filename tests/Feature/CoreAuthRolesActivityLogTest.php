@@ -54,6 +54,63 @@ class CoreAuthRolesActivityLogTest extends TestCase
         $this->assertFalse(\Illuminate\Support\Facades\Hash::check('password', $secretary->password));
     }
 
+    public function test_deactivating_a_user_or_resetting_her_password_ends_her_open_sessions(): void
+    {
+        $insertSession = fn (string $id, User $user) => \Illuminate\Support\Facades\DB::table('sessions')->insert([
+            'id' => $id, 'user_id' => $user->id, 'ip_address' => '127.0.0.1', 'user_agent' => 'test', 'payload' => '', 'last_activity' => time(),
+        ]);
+        $insertSession('secretary-1', $this->secretary);
+        $insertSession('owner-1', $this->owner);
+        $this->secretary->forceFill(['remember_token' => 'old-token'])->save();
+
+        Livewire::actingAs($this->owner)->test('users-roles')
+            ->call('resetPassword', $this->secretary->id);
+
+        $this->assertDatabaseMissing('sessions', ['id' => 'secretary-1']);
+        $this->assertDatabaseHas('sessions', ['id' => 'owner-1']);
+        $this->assertNotSame('old-token', $this->secretary->fresh()->remember_token);
+
+        $insertSession('secretary-2', $this->secretary);
+
+        Livewire::actingAs($this->owner)->test('users-roles')
+            ->call('editUser', $this->secretary->id)
+            ->set('editIsActive', false)
+            ->call('updateUser');
+
+        $this->assertDatabaseMissing('sessions', ['id' => 'secretary-2']);
+    }
+
+    public function test_a_session_of_a_user_deactivated_after_login_is_logged_out(): void
+    {
+        $this->actingAs($this->secretary)->get('/')->assertOk();
+
+        $this->secretary->update(['is_active' => false]);
+
+        $this->actingAs($this->secretary->fresh())->get('/')->assertRedirect('/login');
+        $this->assertGuest();
+    }
+
+    public function test_login_is_locked_after_repeated_wrong_passwords(): void
+    {
+        $login = fn (string $password) => Livewire::test('login')
+            ->set('email', 'owner@kapaim.test')
+            ->set('password', $password)
+            ->call('login');
+
+        foreach (range(1, 5) as $_) {
+            $login('wrong')->assertSet('errorMessage', 'אימייל או סיסמה שגויים.');
+        }
+
+        // Even the right password waits out the lockout.
+        $login('password')->assertNoRedirect();
+        $this->assertGuest();
+        $this->assertStringContainsString('יותר מדי ניסיונות', (string) $login('password')->get('errorMessage'));
+
+        \Illuminate\Support\Facades\RateLimiter::clear('login:owner@kapaim.test|127.0.0.1');
+        \Illuminate\Support\Facades\RateLimiter::clear('login:owner@kapaim.test');
+        $login('password')->assertRedirect('/');
+    }
+
     public function test_a_user_cannot_deactivate_herself(): void
     {
         Livewire::actingAs($this->owner)->test('users-roles')

@@ -122,12 +122,12 @@ class Lead extends Model
 
     public static function trafficLightColorForStatusName(?string $statusName): string
     {
-        return self::TRAFFIC_LIGHT_COLORS[$statusName] ?? 'yellow';
+        return self::TRAFFIC_LIGHT_COLORS[$statusName ?? ''] ?? 'yellow';
     }
 
     public static function badgeClassForStatusName(?string $statusName): string
     {
-        return self::BADGE_CLASSES[$statusName] ?? 'badge-neutral';
+        return self::BADGE_CLASSES[$statusName ?? ''] ?? 'badge-neutral';
     }
 
     /** Whether any requested item is a subscription bundle — drives the leads list's subscription frame. */

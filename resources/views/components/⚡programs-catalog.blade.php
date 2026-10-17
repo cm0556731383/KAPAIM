@@ -58,7 +58,7 @@ class extends Component
         $data = $this->validate([
             'programName' => ['required', 'string', 'max:255', 'unique:programs,name'],
             'programDescription' => ['nullable', 'string'],
-            'programPrice' => ['required', 'numeric', 'gt:0'],
+            'programPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'programIsPremium' => ['boolean'],
         ], [], [
             'programName' => 'שם התוכנית',
@@ -130,7 +130,7 @@ class extends Component
         $data = $this->validate([
             'editName' => ['required', 'string', 'max:255', "unique:{$table},name,".(int) $id],
             'editDescription' => ['nullable', 'string'],
-            'editPrice' => ['required', 'numeric', 'gt:0'],
+            'editPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editFlag' => ['boolean'],
         ], [], ['editName' => 'שם', 'editPrice' => 'מחיר']);
 
@@ -186,7 +186,7 @@ class extends Component
         $data = $this->validate([
             'bundleName' => ['required', 'string', 'max:255', 'unique:bundles,name'],
             'bundleDescription' => ['nullable', 'string'],
-            'bundlePrice' => ['required', 'numeric', 'gt:0'],
+            'bundlePrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'bundleIsSubscriptionType' => ['boolean'],
         ], [], [
             'bundleName' => 'שם המארז',
