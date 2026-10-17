@@ -60,6 +60,21 @@ class SubscriptionsTest extends TestCase
         $this->assertSame(0, $subscription->deliveries()->whereNotNull('program_id')->count());
     }
 
+    public function test_the_same_subscription_cannot_be_sold_twice_while_it_is_active(): void
+    {
+        $customer = $this->createCustomer();
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('dealItem', 'bundle:'.$subscriptionBundle->id)
+            ->call('createDeal')
+            ->assertNotSet('dealError', null);
+
+        $this->assertSame(1, $customer->deals()->count());
+        $this->assertSame(1, $customer->subscriptions()->count());
+    }
+
     public function test_a_deal_for_a_non_subscription_program_never_opens_a_subscription(): void
     {
         $customer = $this->createCustomer();

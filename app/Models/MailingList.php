@@ -86,9 +86,12 @@ class MailingList extends Model
             ->where('membership_status', MailingMembership::STATUS_ACTIVE)
             ->with(['lead.school', 'customer.contacts', 'supplier'])
             ->get()
+            // A converted lead's membership keeps its lead_id next to the
+            // new customer_id (Lead::convertToCustomer()) — the customer's
+            // contacts are who it reaches from then on.
             ->flatMap(fn (MailingMembership $m) => match (true) {
-                $m->lead_id !== null => [['email' => $m->lead?->email, 'name' => $m->lead?->school?->name]],
                 $m->customer_id !== null => ($m->customer?->contacts ?? collect())->map(fn ($c) => ['email' => $c->email, 'name' => $c->name])->all(),
+                $m->lead_id !== null => [['email' => $m->lead?->email, 'name' => $m->lead?->school?->name]],
                 $m->supplier_id !== null => [['email' => $m->supplier?->email, 'name' => $m->supplier?->name]],
                 default => [],
             })

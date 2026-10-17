@@ -200,6 +200,14 @@ class extends Component
         $oldStatusName = $this->deal->status?->name;
         $newStatus = StatusDefinition::findOrFail($data['selectedStatusId']);
 
+        // The cancel dialog says it can't be undone — keep that promise.
+        if ($oldStatusName === Deal::CANCELLED_STATUS_NAME && $newStatus->name !== Deal::CANCELLED_STATUS_NAME) {
+            $this->statusError = 'העסקה בוטלה, וביטול אינו הפיך — לא ניתן לפתוח אותה מחדש. לעסקה חדשה יש ליצור עסקה בכרטיס הלקוחה.';
+            $this->syncFields();
+
+            return;
+        }
+
         try {
             $this->deal->updateStatusWithLock($this->loadedVersion, $newStatus->id);
         } catch (\RuntimeException $e) {
@@ -770,7 +778,7 @@ class extends Component
         }
 
         if (! $this->deal->issuedInvoice()) {
-            $this->notifySuccess("{$done}. הקבלה תופק אחרי הפקת חשבונית לעסקה.");
+            $this->notifySuccess("{$done}. אחרי הפקת החשבונית יש להפיק את הקבלה מטבלת התשלומים (\"הפקת קבלה\").");
 
             return;
         }

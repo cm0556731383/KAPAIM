@@ -363,7 +363,7 @@ class SummitClient
      */
     private function payment(float $amount, ?PaymentMethod $method, ?Payment $payment = null): array
     {
-        [$type, $detailsKey] = self::PAYMENT_TYPES[$method?->type] ?? [8, 'Details_Other'];
+        [$type, $detailsKey] = self::PAYMENT_TYPES[$method?->type ?? ''] ?? [8, 'Details_Other'];
 
         $details = match ($detailsKey) {
             'Details_Other' => ['Type' => $method?->name ?? 'אחר'],

@@ -291,6 +291,14 @@ class Deal extends Model
             throw new RuntimeException('לא ניתן ליצור עסקה עבור מארז שהושבת.');
         }
 
+        // The same subscription twice at once is a duplicate sale (e.g. a
+        // second click) — renewing means next year's bundle, a different one.
+        if ($bundle?->is_subscription_type && $customer->subscriptions()
+            ->whereHas('deal', fn ($q) => $q->where('bundle_id', $bundle->id))
+            ->get()->contains->isActive()) {
+            throw new RuntimeException("ללקוחה כבר יש מנוי פעיל במארז \"{$bundle->name}\" — לא ניתן למכור לה אותו מנוי פעם נוספת.");
+        }
+
         $status = StatusDefinition::firstOrCreate(
             ['scope' => 'deal', 'name' => self::DEFAULT_STATUS_NAME],
             ['is_active' => true, 'sort_order' => 1],

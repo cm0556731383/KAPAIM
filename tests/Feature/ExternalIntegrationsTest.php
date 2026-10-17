@@ -1353,6 +1353,29 @@ class ExternalIntegrationsTest extends TestCase
         $this->assertSame(72, $settings['material_reminder_hours']);
     }
 
+    public function test_saved_secrets_never_reach_the_settings_page_and_a_blank_field_keeps_them(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'smove-key-ABCD1234', 'webhook_secret' => 'smove-hook-WXYZ']]);
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => false, 'settings' => []]);
+        ExternalIntegrationSetting::create(['system' => 'landing_page', 'is_active' => false, 'settings' => ['webhook_secret' => 'landing-SECRET99']]);
+
+        $component = Livewire::actingAs($this->owner)->test('settings');
+        $page = $component->html().json_encode($component->snapshot);
+
+        foreach (['smove-key-ABCD1234', 'smove-hook-WXYZ', 'landing-SECRET99'] as $secret) {
+            $this->assertStringNotContainsString($secret, $page);
+        }
+        $this->assertStringContainsString('1234', $page, 'The last 4 characters show which key is saved.');
+
+        $component->set('smoveMaterialReminderHours', '24')->call('saveSmoveSettings')->call('saveLandingPageSettings');
+
+        $smove = ExternalIntegrationSetting::where('system', 'smove')->first()->settings;
+        $this->assertSame('smove-key-ABCD1234', $smove['api_key']);
+        $this->assertSame('smove-hook-WXYZ', $smove['webhook_secret']);
+        $this->assertSame(24, $smove['material_reminder_hours']);
+        $this->assertSame('landing-SECRET99', ExternalIntegrationSetting::where('system', 'landing_page')->first()->settings['webhook_secret']);
+    }
+
     // ----- helpers -----
 
     private function createLeadConfirmationTemplate(): void

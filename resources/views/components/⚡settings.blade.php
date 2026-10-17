@@ -67,6 +67,15 @@ class extends Component
 
     public string $landingPageWebhookSecret = '';
 
+    /**
+     * What's already saved for each secret, as its last 4 characters only —
+     * the secrets themselves never reach the page (anyone who may view the
+     * settings would otherwise read them in the page source). A blank field
+     * on save keeps the saved value, same as the SUMIT keys.
+     */
+    #[\Livewire\Attributes\Locked]
+    public array $savedSecretHints = [];
+
     /** Reference-data row being edited inline: "status:{id}", "lead_source:{id}", … */
     public ?string $editingRecord = null;
 
@@ -87,8 +96,8 @@ class extends Component
         $this->subscriptionStartMonth = (string) HebrewCalendar::startMonth();
 
         $smove = ExternalIntegrationSetting::where('system', 'smove')->first()?->settings ?? [];
-        $this->smoveApiKey = (string) ($smove['api_key'] ?? '');
-        $this->smoveWebhookSecret = (string) ($smove['webhook_secret'] ?? '');
+        $this->savedSecretHints['smove_api_key'] = self::secretHint($smove['api_key'] ?? null);
+        $this->savedSecretHints['smove_webhook_secret'] = self::secretHint($smove['webhook_secret'] ?? null);
         $this->smoveMaterialReminderHours = (string) ($smove['material_reminder_hours'] ?? ProcessMaterialReminders::DEFAULT_REMINDER_HOURS);
         $this->smoveListId = (string) ($smove['list_id'] ?? '');
 
@@ -98,7 +107,12 @@ class extends Component
         $this->loadSumitCompanies();
 
         $landingPage = ExternalIntegrationSetting::where('system', 'landing_page')->first()?->settings ?? [];
-        $this->landingPageWebhookSecret = (string) ($landingPage['webhook_secret'] ?? '');
+        $this->savedSecretHints['landing_page_webhook_secret'] = self::secretHint($landingPage['webhook_secret'] ?? null);
+    }
+
+    private static function secretHint(?string $secret): string
+    {
+        return filled($secret) ? '••••••••'.mb_substr(trim($secret), -4) : '';
     }
 
     /**
@@ -130,12 +144,18 @@ class extends Component
             'smoveListId' => ['nullable', 'integer', 'min:1'],
         ], [], ['smoveListId' => 'מזהה רשימה ב-Smove']);
 
-        ExternalIntegrationSetting::firstOrCreate(['system' => 'smove'], ['is_active' => false, 'settings' => []])->update(['settings' => [
-            'api_key' => $data['smoveApiKey'] ?: null,
-            'webhook_secret' => $data['smoveWebhookSecret'] ?: null,
+        $setting = ExternalIntegrationSetting::firstOrCreate(['system' => 'smove'], ['is_active' => false, 'settings' => []]);
+        $saved = $setting->settings ?? [];
+        $setting->update(['settings' => [
+            'api_key' => filled($data['smoveApiKey']) ? trim($data['smoveApiKey']) : ($saved['api_key'] ?? null),
+            'webhook_secret' => filled($data['smoveWebhookSecret']) ? trim($data['smoveWebhookSecret']) : ($saved['webhook_secret'] ?? null),
             'material_reminder_hours' => (int) $data['smoveMaterialReminderHours'],
             'list_id' => $data['smoveListId'] ? (int) $data['smoveListId'] : null,
         ]]);
+
+        $this->savedSecretHints['smove_api_key'] = self::secretHint($setting->settings['api_key']);
+        $this->savedSecretHints['smove_webhook_secret'] = self::secretHint($setting->settings['webhook_secret']);
+        $this->reset(['smoveApiKey', 'smoveWebhookSecret']);
 
         $activityLogger->log('external_integration_setting.updated', 'עודכנו הגדרות חיבור Smove');
         unset($this->integrations);
@@ -219,9 +239,14 @@ class extends Component
     {
         $data = $this->validate(['landingPageWebhookSecret' => ['nullable', 'string', 'max:255']]);
 
-        ExternalIntegrationSetting::firstOrCreate(['system' => 'landing_page'], ['is_active' => false, 'settings' => []])->update(['settings' => [
-            'webhook_secret' => $data['landingPageWebhookSecret'] ?: null,
-        ]]);
+        $setting = ExternalIntegrationSetting::firstOrCreate(['system' => 'landing_page'], ['is_active' => false, 'settings' => []]);
+
+        if (filled($data['landingPageWebhookSecret'])) {
+            $setting->update(['settings' => ['webhook_secret' => trim($data['landingPageWebhookSecret'])]]);
+        }
+
+        $this->savedSecretHints['landing_page_webhook_secret'] = self::secretHint($setting->settings['webhook_secret'] ?? null);
+        $this->reset('landingPageWebhookSecret');
 
         $activityLogger->log('external_integration_setting.updated', 'עודכן סוד ה-Webhook של דף הנחיתה');
         unset($this->integrations);
@@ -1003,7 +1028,10 @@ class extends Component
                 <form wire:submit="saveSmoveSettings" class="form-grid">
                     <div class="full">
                         <label for="smoveApiKey">מפתח API (חובה)</label>
-                        <input type="password" id="smoveApiKey" wire:model="smoveApiKey" class="ltr-num" dir="ltr">
+                        <input type="password" id="smoveApiKey" wire:model="smoveApiKey" class="ltr-num" dir="ltr" placeholder="{{ $savedSecretHints['smove_api_key'] ?? '' }}" autocomplete="new-password">
+                        @if ($savedSecretHints['smove_api_key'] ?? '')
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">✓ שמור: <span dir="ltr">{{ $savedSecretHints['smove_api_key'] }}</span> — להחלפה הקלידו ערך חדש</div>
+                        @endif
                         <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:6px 0 0">
                             איפה מוצאים את זה: נכנסים לחשבון שלכם ב-<span class="ltr-num" dir="ltr">smoove.io</span> ←
                             עוברים עם העכבר על שם החשבון (למעלה) ← בוחרים <b><span class="ltr-num" dir="ltr">API Keys &amp; pixels</span></b> ←
@@ -1013,7 +1041,10 @@ class extends Component
                     </div>
                     <div class="full">
                         <label for="smoveWebhookSecret">סוד Webhook (רשות)</label>
-                        <input type="password" id="smoveWebhookSecret" wire:model="smoveWebhookSecret" class="ltr-num" dir="ltr">
+                        <input type="password" id="smoveWebhookSecret" wire:model="smoveWebhookSecret" class="ltr-num" dir="ltr" placeholder="{{ $savedSecretHints['smove_webhook_secret'] ?? '' }}" autocomplete="new-password">
+                        @if ($savedSecretHints['smove_webhook_secret'] ?? '')
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">✓ שמור: <span dir="ltr">{{ $savedSecretHints['smove_webhook_secret'] }}</span> — להחלפה הקלידו ערך חדש</div>
+                        @endif
                         <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:6px 0 0">
                             זה לא מגיע מ-Smove — זו מילת סוד שאתם ממציאים בעצמכם (כמו סיסמה), ומזינים גם כאן וגם בממשק Smove
                             אם מגדירים שם התראה על "מייל נפתח". אין לכם דבר כזה מוגדר? אפשר להשאיר ריק.
@@ -1050,7 +1081,10 @@ class extends Component
                 <form wire:submit="saveLandingPageSettings" class="form-grid">
                     <div class="full">
                         <label for="landingPageWebhookSecret">סוד Webhook</label>
-                        <input type="password" id="landingPageWebhookSecret" wire:model="landingPageWebhookSecret" class="ltr-num" dir="ltr">
+                        <input type="password" id="landingPageWebhookSecret" wire:model="landingPageWebhookSecret" class="ltr-num" dir="ltr" placeholder="{{ $savedSecretHints['landing_page_webhook_secret'] ?? '' }}" autocomplete="new-password">
+                        @if ($savedSecretHints['landing_page_webhook_secret'] ?? '')
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">✓ שמור: <span dir="ltr">{{ $savedSecretHints['landing_page_webhook_secret'] }}</span> — להחלפה הקלידו ערך חדש</div>
+                        @endif
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
                 </form>

@@ -575,6 +575,19 @@ class MaterialsMailingTest extends TestCase
         $this->assertSame(1, MailingMembership::where('mailing_list_id', $primary->id)->where('customer_id', $customer->id)->count());
     }
 
+    public function test_a_converted_leads_list_membership_reaches_the_customers_contacts(): void
+    {
+        $lead = $this->createLead();
+        $lead->joinPrimaryMailingList();
+        $customer = $lead->convertToCustomer(app(ActivityLogger::class));
+        $customer->contacts()->first()->update(['email' => 'principal@example.com']);
+        \App\Models\Contact::create(['school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'מזכירה', 'email' => 'office@example.com']);
+
+        $emails = collect(MailingList::primaryList()->recipients())->pluck('email')->all();
+
+        $this->assertEqualsCanonicalizing(['principal@example.com', 'office@example.com'], $emails);
+    }
+
     public function test_converting_a_lead_that_never_joined_still_puts_the_customer_on_the_primary_list(): void
     {
         $lead = $this->createLead(); // never called joinPrimaryMailingList()

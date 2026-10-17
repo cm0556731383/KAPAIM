@@ -75,6 +75,22 @@ class PaymentsCollectionsTest extends TestCase
         $this->assertSame(25, $invoiced->fresh()->students_count);
     }
 
+    public function test_a_cancelled_deal_cannot_be_reopened(): void
+    {
+        $deal = $this->createDeal(400);
+        $cancelled = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => Deal::CANCELLED_STATUS_NAME], ['is_active' => true, 'sort_order' => 9]);
+        $open = StatusDefinition::where('scope', 'deal')->where('name', Deal::DEFAULT_STATUS_NAME)->first();
+        $deal->updateStatusWithLock($deal->version, $cancelled->id);
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal->fresh()])
+            ->set('selectedStatusId', (string) $open->id)
+            ->call('updateStatus')
+            ->assertSet('selectedStatusId', (string) $cancelled->id)
+            ->assertNotSet('statusError', null);
+
+        $this->assertSame(Deal::CANCELLED_STATUS_NAME, $deal->fresh()->status->name);
+    }
+
     public function test_an_amount_above_the_database_limit_is_a_validation_error_not_a_crash(): void
     {
         $deal = $this->createDeal(400);
