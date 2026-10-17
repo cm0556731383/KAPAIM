@@ -127,27 +127,19 @@ class GlobalSearchTest extends TestCase
             ->assertSee('לקוחה');
     }
 
-    public function test_leads_view_only_user_only_gets_their_own_not_yet_converted_lead_never_a_customer(): void
+    public function test_a_user_with_only_leads_access_gets_every_reps_leads_but_never_a_customer(): void
     {
-        // Matches term "יובלים": repA's own lead, repB's lead (not theirs),
-        // and a customer — repA should only ever see their own lead.
-        $ownLead = $this->createLead($this->repA, schoolName: 'בית ספר יובלים של שרית');
-        $otherRepLead = $this->createLead($this->repB, schoolName: 'בית ספר יובלים של מיכל');
+        // Access to the leads page is access to every lead (2026-10-17); customers stay closed without that page.
+        $this->createLead($this->repA, schoolName: 'בית ספר יובלים של שרית');
+        $this->createLead($this->repB, schoolName: 'בית ספר יובלים של מיכל');
         $this->createCustomer('מכללת יובלים להכשרה');
-
-        // Their own already-converted lead must also disappear (FR-7.4).
-        $convertedOwnLead = $this->createLead($this->repA, schoolName: 'בית ספר יובלים שהומר');
-        $convertedOwnLead->convertToCustomer(app(ActivityLogger::class));
 
         $component = Livewire::actingAs($this->repA)->test('global-search')->set('query', 'יובלים');
 
         $component->assertSee('בית ספר יובלים של שרית');
-        $component->assertDontSee('בית ספר יובלים של מיכל');
-        $component->assertDontSee('מכללת יובלים להכשרה');
-        $component->assertDontSee('בית ספר יובלים שהומר');
-        $component->assertDontSee('לקוחה');
-
-        $this->assertNotSame($ownLead->id, $otherRepLead->id);
+        $component->assertSee('בית ספר יובלים של מיכל');
+        // The customer's own (converted) lead may match as a lead — never the customer itself.
+        $this->assertNotContains('customer', $component->instance()->results()->pluck('type'));
     }
 
     public function test_leads_manage_and_customers_manage_holder_gets_both_result_types(): void

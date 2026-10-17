@@ -84,13 +84,14 @@ class DashboardSummaryTest extends TestCase
         $this->assertSame(3, $this->dashboard->newLeadsCount($this->owner));
     }
 
-    public function test_new_leads_count_is_scoped_to_the_reps_own_leads(): void
+    /** Access to the leads page is access to every lead (2026-10-17) — a rep's count includes the other reps' leads. */
+    public function test_new_leads_count_includes_every_reps_leads_for_a_user_with_leads_access(): void
     {
         $this->createLead($this->repA, schoolName: 'ליד של שרית');
         $this->createLead($this->repB, schoolName: 'ליד של מיכל');
 
-        $this->assertSame(1, $this->dashboard->newLeadsCount($this->repA));
-        $this->assertSame(1, $this->dashboard->newLeadsCount($this->repB));
+        $this->assertSame(2, $this->dashboard->newLeadsCount($this->repA));
+        $this->assertSame(2, $this->dashboard->newLeadsCount($this->repB));
         $this->assertSame(2, $this->dashboard->newLeadsCount($this->owner));
     }
 
@@ -135,7 +136,7 @@ class DashboardSummaryTest extends TestCase
         $this->assertSame(0, $this->dashboard->followUpsDueTodayCount($this->owner));
     }
 
-    public function test_follow_ups_due_today_is_scoped_to_the_reps_own_leads(): void
+    public function test_follow_ups_due_today_includes_every_reps_leads_for_a_user_with_leads_access(): void
     {
         Carbon::setTestNow('2026-06-15 09:00:00');
 
@@ -145,7 +146,7 @@ class DashboardSummaryTest extends TestCase
         $leadB = $this->createLead($this->repB, schoolName: 'ליד מיכל עם פולואפ');
         FollowUp::create(['lead_id' => $leadB->id, 'user_id' => $this->repB->id, 'occurred_at' => now(), 'next_at' => '2026-06-15 10:00:00']);
 
-        $this->assertSame(1, $this->dashboard->followUpsDueTodayCount($this->repA));
+        $this->assertSame(2, $this->dashboard->followUpsDueTodayCount($this->repA));
         $this->assertSame(2, $this->dashboard->followUpsDueTodayCount($this->owner));
     }
 
@@ -347,7 +348,7 @@ class DashboardSummaryTest extends TestCase
         $this->assertNull($this->dashboard->latestProgramSummary($noAccessUser));
     }
 
-    public function test_latest_program_summary_shows_only_the_reps_own_interested_leads(): void
+    public function test_latest_program_summary_shows_every_reps_interested_leads_for_a_user_with_leads_access(): void
     {
         $program = $this->createProgram('תוכנית לבדיקת הרשאות');
 
@@ -360,7 +361,7 @@ class DashboardSummaryTest extends TestCase
         $summary = $this->dashboard->latestProgramSummary($this->repA);
 
         $this->assertTrue($summary['interested']->contains(fn ($l) => $l->school?->name === 'בית ספר שרית מתעניין'));
-        $this->assertFalse($summary['interested']->contains(fn ($l) => $l->school?->name === 'בית ספר מיכל מתעניין'));
+        $this->assertTrue($summary['interested']->contains(fn ($l) => $l->school?->name === 'בית ספר מיכל מתעניין'));
         $this->assertTrue($summary['purchased']->isEmpty());
     }
 

@@ -55,31 +55,17 @@ class SalesRepPermissionsTest extends TestCase
         ]);
     }
 
-    public function test_leads_view_only_user_sees_only_their_own_assigned_leads(): void
+    /** Access to the leads page is access to every lead, whoever it's assigned to (2026-10-17). */
+    public function test_a_user_with_leads_access_sees_every_reps_leads(): void
     {
-        $leadA = $this->createLead($this->repA, schoolName: 'בית ספר של שרית');
         $leadB = $this->createLead($this->repB, schoolName: 'בית ספר של מיכל');
+        $this->createLead($this->repA, schoolName: 'בית ספר של שרית');
 
-        $response = $this->actingAs($this->repA)->get('/leads');
-        $response->assertOk();
-        $response->assertSee('בית ספר של שרית');
-        $response->assertDontSee('בית ספר של מיכל');
+        $this->actingAs($this->repA)->get('/leads')->assertOk()
+            ->assertSee('בית ספר של שרית')
+            ->assertSee('בית ספר של מיכל');
 
-        $response = $this->actingAs($this->repB)->get('/leads');
-        $response->assertOk();
-        $response->assertSee('בית ספר של מיכל');
-        $response->assertDontSee('בית ספר של שרית');
-
-        // Sanity: both leads really exist, just scoped differently per user.
-        $this->assertSame(2, Lead::count());
-        $this->assertNotSame($leadA->id, $leadB->id);
-    }
-
-    public function test_leads_view_only_user_cannot_view_another_reps_lead_detail(): void
-    {
-        $leadB = $this->createLead($this->repB);
-
-        $this->actingAs($this->repA)->get("/leads/{$leadB->id}")->assertStatus(403);
+        $this->actingAs($this->repA)->get("/leads/{$leadB->id}")->assertOk();
     }
 
     public function test_leads_view_only_user_can_view_their_own_not_yet_converted_lead(): void
@@ -92,21 +78,12 @@ class SalesRepPermissionsTest extends TestCase
         $response->assertSee('בית ספר שרית');
     }
 
-    /**
-     * FR-7.4, the critical case: conversion revokes lead-detail access too
-     * (not just customer access) — automatically, as a direct consequence of
-     * LeadPolicy::view() re-checking converted_at, no separate process.
-     */
-    public function test_converting_a_reps_lead_revokes_their_access_to_the_lead_detail_page_too(): void
+    public function test_a_converted_lead_stays_open_to_a_user_with_leads_access(): void
     {
         $lead = $this->createLead($this->repA, schoolName: 'בית ספר להמרה');
-
-        // Access works before conversion.
-        $this->actingAs($this->repA)->get("/leads/{$lead->id}")->assertOk();
-
         $lead->convertToCustomer(app(ActivityLogger::class));
 
-        $this->actingAs($this->repA)->get("/leads/{$lead->id}")->assertStatus(403);
+        $this->actingAs($this->repA)->get("/leads/{$lead->id}")->assertOk();
     }
 
     public function test_leads_view_only_user_is_blocked_from_customers_screens(): void
@@ -148,16 +125,24 @@ class SalesRepPermissionsTest extends TestCase
         ]);
     }
 
-    public function test_leads_view_only_user_cannot_call_the_reassignment_action(): void
+    public function test_leads_edit_may_reassign_a_lead_but_leads_view_only_may_not(): void
     {
         $lead = $this->createLead($this->repA);
 
         Livewire::actingAs($this->repA)->test('lead-detail', ['lead' => $lead])
             ->set('assignedUserId', (string) $this->repB->id)
+            ->call('assignUser');
+        $this->assertSame($this->repB->id, $lead->fresh()->assigned_user_id);
+
+        $viewOnly = Role::create(['name' => 'צפייה בלידים', 'is_active' => true]);
+        $viewOnly->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
+        $viewer = User::create(['name' => 'צופה', 'email' => 'viewer@kapaim.test', 'password' => 'password', 'role_id' => $viewOnly->id, 'is_active' => true]);
+
+        Livewire::actingAs($viewer)->test('lead-detail', ['lead' => $lead])
+            ->set('assignedUserId', (string) $this->repA->id)
             ->call('assignUser')
             ->assertStatus(403);
-
-        $this->assertSame($this->repA->id, $lead->fresh()->assigned_user_id);
+        $this->assertSame($this->repB->id, $lead->fresh()->assigned_user_id);
     }
 
     private function createLead(User $assignedUser, ?string $schoolName = null): Lead

@@ -86,7 +86,7 @@ class ReferenceDataSeeder extends Seeder
         // Build-plan 12: this exact role is also who Lead::createFromLandingPage()
         // auto-assigns among (FR-7.5) once a real user actually holds it.
         $salesRep = Role::create(['name' => Role::SALES_REP_ROLE_NAME, 'is_active' => true]);
-        // Her own assigned leads only (no 'leads-all'), which she may also edit; plus the dashboard and search.
+        // The leads page (every lead — PagePermissions::ALIASES), which she may also edit; plus the dashboard and search.
         foreach ([['leads', 'view'], ['leads', 'edit'], ['dashboard', 'view'], ['dashboard', 'edit'], ['search', 'view']] as [$resource, $action]) {
             $salesRep->permissions()->create(['resource' => $resource, 'action' => $action, 'is_allowed' => true]);
         }

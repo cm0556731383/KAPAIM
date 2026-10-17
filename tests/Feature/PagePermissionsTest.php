@@ -50,12 +50,12 @@ class PagePermissionsTest extends TestCase
         $role = $this->limitedRole();
 
         Livewire::actingAs($this->owner)->test('users-roles')
-            ->call('togglePermission', $this->fullAccess->id, 'suppliers', 'edit');
+            ->call('togglePermission', $this->fullAccess->id, 'finance', 'edit');
 
         $this->fullAccess->refresh();
         $this->assertFalse($this->fullAccess->hasPermission('suppliers', 'edit'));
         $this->assertTrue($this->fullAccess->hasPermission('suppliers', 'view'));
-        $this->assertTrue($this->fullAccess->hasPermission('expenses', 'edit'));
+        $this->assertTrue($this->fullAccess->hasPermission('leads', 'edit'));
         $this->assertTrue($role->hasPermission('dashboard', 'view'));
     }
 
@@ -64,12 +64,12 @@ class PagePermissionsTest extends TestCase
         $role = $this->limitedRole();
         $component = Livewire::actingAs($this->owner)->test('users-roles');
 
-        $component->call('togglePermission', $role->id, 'expenses', 'edit');
+        $component->call('togglePermission', $role->id, 'finance', 'edit');
         $role->refresh();
         $this->assertTrue($role->hasPermission('expenses', 'view'));
         $this->assertTrue($role->hasPermission('expenses', 'edit'));
 
-        $component->call('togglePermission', $role->id, 'expenses', 'view');
+        $component->call('togglePermission', $role->id, 'finance', 'view');
         $role->refresh();
         $this->assertFalse($role->hasPermission('expenses', 'view'));
         $this->assertFalse($role->hasPermission('expenses', 'edit'));
@@ -95,7 +95,7 @@ class PagePermissionsTest extends TestCase
         $role = $this->limitedRole([['users', 'view']]);
 
         Livewire::actingAs($this->userWith($role))->test('users-roles')
-            ->call('togglePermission', $role->id, 'expenses', 'view')
+            ->call('togglePermission', $role->id, 'finance', 'view')
             ->assertForbidden();
 
         $this->assertFalse($role->fresh()->hasPermission('expenses', 'view'));
@@ -103,7 +103,7 @@ class PagePermissionsTest extends TestCase
 
     public function test_a_view_only_page_opens_but_blocks_saving(): void
     {
-        $user = $this->userWith($this->limitedRole([['suppliers', 'view']]));
+        $user = $this->userWith($this->limitedRole([['finance', 'view']]));
 
         $this->actingAs($user)->get(route('suppliers'))->assertOk();
 
@@ -118,7 +118,7 @@ class PagePermissionsTest extends TestCase
 
     public function test_with_edit_the_same_page_saves(): void
     {
-        $user = $this->userWith($this->limitedRole([['suppliers', 'edit']]));
+        $user = $this->userWith($this->limitedRole([['finance', 'edit']]));
 
         Livewire::actingAs($user)->test('suppliers')
             ->set('name', 'ספק חדש')
@@ -138,9 +138,9 @@ class PagePermissionsTest extends TestCase
 
     public function test_without_the_dashboard_the_home_page_goes_to_the_first_page_she_may_open(): void
     {
-        $user = $this->userWith($this->limitedRole([['expenses', 'view']]));
+        $user = $this->userWith($this->limitedRole([['finance', 'view']]));
 
-        $this->actingAs($user)->get('/')->assertRedirect(route('expenses'));
+        $this->actingAs($user)->get('/')->assertRedirect(route('suppliers'));
     }
 
     private function limitedRole(array $rows = [['dashboard', 'view']]): Role

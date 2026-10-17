@@ -16,9 +16,9 @@ use Livewire\Component;
  * control already happens per-entity inside results() below by re-running
  * the exact same record-level scoping as the list screens themselves:
  *   - leads half: identical to ⚡leads.blade.php's leads() computed
- *     (build-plan 13, FR-7.2-7.4) — a leads-all.view holder finds every lead;
- *     a leads.view-only holder (future "עובדת מכירות") only finds leads
- *     assigned to them that have not yet converted.
+ *     (build-plan 13, FR-7.2-7.4) — a leads-all.view holder finds every lead.
+ *     Since 2026-10-17 leads-all follows the leads page itself
+ *     (PagePermissions::ALIASES), so whoever may open leads finds them all.
  *   - customers half: gated on customers.manage, mirroring
  *     ⚡customers.blade.php's page-level gate — a user without it never sees
  *     a customer here, the customer half of the search is skipped entirely

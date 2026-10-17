@@ -184,10 +184,9 @@
                 @can('mailing-lists.view')
                 <a href="{{ route('mailing-lists') }}" class="{{ request()->routeIs('mailing-lists') ? 'active' : '' }}"><svg><use href="#icon-mailing"></use></svg>רשימות תפוצה</a>
                 @endcan
-                @php($financeUrl = collect(['suppliers' => 'suppliers', 'expenses' => 'expenses', 'cashflow-report' => 'cashflow-report'])->filter(fn ($route, $page) => auth()->user()?->can($page.'.view'))->map(fn ($route) => route($route))->first())
-                @if ($financeUrl)
-                <a href="{{ $financeUrl }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
-                @endif
+                @can('finance.view')
+                <a href="{{ route('suppliers') }}" class="{{ request()->routeIs('suppliers') || request()->routeIs('expenses') || request()->routeIs('cashflow-report') ? 'active' : '' }}"><svg><use href="#icon-suppliers"></use></svg>ספקים והוצאות</a>
+                @endcan
             </nav>
             <nav>
                 @can('catalog.view')

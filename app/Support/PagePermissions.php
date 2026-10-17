@@ -15,21 +15,15 @@ use App\Models\User;
  */
 class PagePermissions
 {
-    /** page key => [label, has an edit permission, route name] — in side-menu order. */
+    /** page key => [label, has an edit permission, route name] — the side menu's pages, in its order. */
     public const PAGES = [
         'dashboard' => ['מסך עבודה', true, null],
         'leads' => ['לידים', true, 'leads'],
-        'leads-all' => ['לידים — כל הלידים (לא רק המשויכים אליה)', true, null],
         'customers' => ['לקוחות', true, 'customers'],
-        'deals' => ['עסקאות', true, null],
-        'documents' => ['מסמכים', true, null],
         'payments' => ['גבייה ותשלומים', true, 'collections'],
         'mailing-lists' => ['רשימות תפוצה', true, 'mailing-lists'],
-        'suppliers' => ['ספקים', true, 'suppliers'],
-        'expenses' => ['הוצאות', true, 'expenses'],
-        'cashflow-report' => ['דוח הכנסות והוצאות', false, 'cashflow-report'],
+        'finance' => ['ספקים והוצאות', true, 'suppliers'],
         'catalog' => ['קטלוג תוכניות', true, 'programs-catalog'],
-        'document-templates' => ['תבניות מסמכים (לשונית בהגדרות מערכת)', true, null],
         'settings' => ['הגדרות מערכת', true, 'settings'],
         'users' => ['משתמשות והרשאות', true, 'users-roles'],
         'activity-log' => ['יומן פעילות', false, 'activity-log'],
@@ -43,28 +37,37 @@ class PagePermissions
         'lead-detail' => 'leads',
         'customers' => 'customers',
         'customer-detail' => 'customers',
-        'deal-detail' => 'deals',
-        'document-view' => 'documents',
+        'deal-detail' => 'customers',
+        'document-view' => 'customers',
         'collections' => 'payments',
         'mailing-lists' => 'mailing-lists',
-        'suppliers' => 'suppliers',
-        'expenses' => 'expenses',
-        'cashflow-report' => 'cashflow-report',
+        'suppliers' => 'finance',
+        'expenses' => 'finance',
+        'cashflow-report' => 'finance',
         'programs-catalog' => 'catalog',
-        'document-templates' => 'document-templates',
+        'document-templates' => 'settings',
         'settings' => 'settings',
         'users-roles' => 'users',
         'activity-log' => 'activity-log',
         'global-search' => 'search',
     ];
 
-    // 'leads-all': not a page of its own — view = sees every lead, not only the ones assigned to her;
-    // edit = may also assign leads to users. Without it, the leads page shows only her own open leads.
-
-    /** Older resource names used inside pages, answered by the page they live on. */
+    /**
+     * Parts of a page checked by their own name in the code, answered by the
+     * page they live on — access to a page is access to all of it (business
+     * owner's call, 2026-10-17). So leads.view sees every lead, not only her
+     * own, and leads.edit may also assign them.
+     */
     public const ALIASES = [
+        'leads-all' => 'leads',
+        'deals' => 'customers',
+        'documents' => 'customers',
         'subscriptions' => 'customers',
         'materials' => 'customers',
+        'suppliers' => 'finance',
+        'expenses' => 'finance',
+        'cashflow-report' => 'finance',
+        'document-templates' => 'settings',
     ];
 
     public static function label(string $page): string
