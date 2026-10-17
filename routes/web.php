@@ -312,7 +312,12 @@ Route::middleware('auth')->group(function () {
             ),
         ]);
     })->name('cashflow-report.pdf');
-    Route::livewire('/document-templates', 'document-templates')->name('document-templates');
+    // Document templates are a tab of the settings page now; the old address still leads there.
+    Route::get('/document-templates', function () {
+        abort_unless(auth()->user()->can('document-templates.view') && auth()->user()->can('settings.view'), 403);
+
+        return redirect()->route('settings', ['tab' => 'document-templates']);
+    })->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {
         abort_unless(auth()->user()->can('documents.view'), 403);

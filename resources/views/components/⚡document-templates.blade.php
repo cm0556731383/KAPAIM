@@ -6,11 +6,12 @@ use App\Models\DocumentTemplateField;
 use App\Services\ActivityLogger;
 use App\Services\DocumentLinkedFields;
 use Livewire\Attributes\Computed;
-use Livewire\Attributes\Layout;
 use Livewire\Component;
 
 /**
- * Build-plan 07 (US-015) — תבניות מסמכים. Mirrors ⚡settings.blade.php's
+ * Build-plan 07 (US-015) — תבניות מסמכים, shown as a tab of the settings
+ * page (⚡settings.blade.php embeds it; /document-templates redirects there)
+ * but still gated by its own document-templates permission. Mirrors ⚡settings.blade.php's
  * email-template-field manager pattern. FR-4.14/US-015's closing line: a
  * template is never deleted, only deactivated (is_active) — same convention
  * as programs/bundles/email templates — because DocumentTemplate itself
@@ -20,7 +21,6 @@ use Livewire\Component;
  * into a document that already exists.
  */
 new
-#[Layout('layouts.app', ['title' => 'תבניות מסמכים — כפיים'])]
 class extends Component
 {
     use Notifies;
@@ -199,12 +199,6 @@ class extends Component
 ?>
 
 <div x-data>
-    <div class="topbar">
-        <div>
-            <h1 class="mb-0.5">תבניות מסמכים</h1>
-        </div>
-    </div>
-
     <section class="settings-section">
         <div class="section-head">
             <h2>כל התבניות</h2>

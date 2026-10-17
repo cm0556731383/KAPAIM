@@ -35,7 +35,7 @@ class PageSmokeTest extends TestCase
         $urls = [
             '/', '/search?q=ב', '/users-roles', '/activity-log', '/settings', '/programs-catalog',
             '/leads', '/customers', '/collections', '/mailing-lists', '/suppliers', '/expenses',
-            '/cashflow-report', '/document-templates',
+            '/cashflow-report', '/settings?tab=document-templates',
         ];
 
         foreach (Lead::pluck('id') as $id) {

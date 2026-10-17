@@ -587,6 +587,9 @@ class extends Component
         <span class="{{ $activeTab === 'payment-methods' ? 'active' : '' }}" wire:click="$set('activeTab', 'payment-methods')">אמצעי תשלום</span>
         <span class="{{ $activeTab === 'business-entities' ? 'active' : '' }}" wire:click="$set('activeTab', 'business-entities')">עוסקים</span>
         <span class="{{ $activeTab === 'email-templates' ? 'active' : '' }}" wire:click="$set('activeTab', 'email-templates')">תבניות דואר</span>
+        @can('document-templates.view')
+        <span class="{{ $activeTab === 'document-templates' ? 'active' : '' }}" wire:click="$set('activeTab', 'document-templates')">תבניות מסמכים</span>
+        @endcan
         <span class="{{ $activeTab === 'integrations' ? 'active' : '' }}" wire:click="$set('activeTab', 'integrations')">אינטגרציות</span>
     </div>
 
@@ -806,6 +809,13 @@ class extends Component
             </form>
         </div>
     </section>
+    @endif
+
+    @if ($activeTab === 'document-templates')
+    @can('document-templates.view')
+    {{-- ===== תבניות מסמכים — its own component, with its own permissions ===== --}}
+    <livewire:document-templates />
+    @endcan
     @endif
 
     @if ($activeTab === 'email-templates')

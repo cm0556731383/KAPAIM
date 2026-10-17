@@ -29,7 +29,7 @@ class PagePermissions
         'expenses' => ['הוצאות', true, 'expenses'],
         'cashflow-report' => ['דוח הכנסות והוצאות', false, 'cashflow-report'],
         'catalog' => ['קטלוג תוכניות', true, 'programs-catalog'],
-        'document-templates' => ['תבניות מסמכים', true, 'document-templates'],
+        'document-templates' => ['תבניות מסמכים (לשונית בהגדרות מערכת)', true, null],
         'settings' => ['הגדרות מערכת', true, 'settings'],
         'users' => ['משתמשות והרשאות', true, 'users-roles'],
         'activity-log' => ['יומן פעילות', false, 'activity-log'],

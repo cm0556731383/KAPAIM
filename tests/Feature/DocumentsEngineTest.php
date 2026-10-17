@@ -884,7 +884,9 @@ class DocumentsEngineTest extends TestCase
     {
         $template = $this->createTemplate('quote');
 
-        $response = $this->actingAs($this->owner)->get('/document-templates');
+        $this->actingAs($this->owner)->get('/document-templates')->assertRedirect(route('settings', ['tab' => 'document-templates']));
+
+        $response = $this->actingAs($this->owner)->get('/settings?tab=document-templates');
 
         $response->assertOk();
         $response->assertSee($template->name);

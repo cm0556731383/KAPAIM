@@ -193,9 +193,6 @@
                 @can('catalog.view')
                 <a href="{{ route('programs-catalog') }}" class="{{ request()->routeIs('programs-catalog') ? 'active' : '' }}"><svg><use href="#icon-catalog"></use></svg>קטלוג תוכניות</a>
                 @endcan
-                @can('document-templates.view')
-                <a href="{{ route('document-templates') }}" class="{{ request()->routeIs('document-templates') ? 'active' : '' }}"><svg><use href="#icon-documents"></use></svg>תבניות מסמכים</a>
-                @endcan
                 @can('settings.view')
                 <a href="{{ route('settings') }}" class="{{ request()->routeIs('settings') ? 'active' : '' }}"><svg><use href="#icon-settings"></use></svg>הגדרות מערכת</a>
                 @endcan
