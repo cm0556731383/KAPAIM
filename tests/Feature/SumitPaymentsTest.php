@@ -451,7 +451,10 @@ class SumitPaymentsTest extends TestCase
         $this->assertNotSame('שולמה', $deal->fresh()->status->name);
         $this->assertSame('pending', $deal->paymentLinks()->sole()->status);
 
-        Livewire::test('collections')->assertSee($deal->program_name_snapshot)->assertSee('קישור תשלום');
+        // The check covers the balance, so it's no debt to chase (Deal::uncoveredBalance()) —
+        // the double-payment risk shows on the deal card instead.
+        Livewire::test('collections')->tap(fn ($c) => $this->assertTrue($c->instance()->awaitingPayment->isEmpty()));
+        Livewire::test('deal-detail', ['deal' => $deal->fresh()])->assertSee('חשש לתשלום כפול או ביתר');
     }
 
     public function test_double_payment_cancelling_the_link_leaves_only_the_check(): void

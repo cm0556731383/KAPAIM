@@ -1017,6 +1017,19 @@ class extends Component
         return $this->customer->outstandingBalance();
     }
 
+    /** The real debt — what checks already received will cover isn't one (Deal::uncoveredBalance()). */
+    #[Computed]
+    public function uncoveredBalance(): float
+    {
+        return $this->customer->uncoveredBalance();
+    }
+
+    #[Computed]
+    public function pendingChecksTotal(): float
+    {
+        return $this->customer->pendingChecksTotal();
+    }
+
     /**
      * FR-2.16: a direct link from the customer card into a still-open
      * collection task (App\Console\Commands\ProcessCollectionTasks), if any.
@@ -1179,8 +1192,8 @@ class extends Component
             @if ($this->hasActiveSubscription)
                 <span class="badge badge-primary" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">מנויה פעילה</span>
             @endif
-            @if ($this->outstandingBalance > 0)
-                <span class="badge badge-error" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">חוב פתוח: ₪{{ number_format($this->outstandingBalance, 0) }}</span>
+            @if ($this->uncoveredBalance > 0)
+                <span class="badge badge-error" style="margin-bottom:8px; margin-inline-start:6px; display:inline-flex">חוב פתוח: ₪{{ number_format($this->uncoveredBalance, 0) }}</span>
             @endif
             <h1>{{ $customer->school?->name ?? '—' }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">
@@ -1663,9 +1676,13 @@ class extends Component
         <div class="card">
             <h3>מצב תשלומים ויתרת חוב</h3>
 
-            @if ($this->outstandingBalance > 0)
+            @if ($this->uncoveredBalance > 0)
                 <div class="mb-8" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
-                    ללקוחה זו יתרת חוב פתוחה בסך <span class="ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</span>.
+                    ללקוחה זו יתרת חוב פתוחה בסך <span class="ltr-num">₪{{ number_format($this->uncoveredBalance, 0) }}</span>.
+                </div>
+            @elseif ($this->pendingChecksTotal > 0)
+                <div class="mb-8" style="background: var(--color-background); color: var(--color-text-secondary); border:1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">
+                    אין חוב פתוח — היתרה מכוסה בצ'קים שהתקבלו וטרם נפרעו (<span class="ltr-num">₪{{ number_format($this->pendingChecksTotal, 0) }}</span>).
                 </div>
             @else
                 <div class="mb-8" style="background: var(--color-success-bg); color: var(--color-success); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); font-weight:600;">

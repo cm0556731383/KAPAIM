@@ -91,6 +91,38 @@ class PaymentsCollectionsTest extends TestCase
         $this->assertSame(Deal::CANCELLED_STATUS_NAME, $deal->fresh()->status->name);
     }
 
+    public function test_checks_received_for_the_balance_are_not_a_debt_alert(): void
+    {
+        $deal = $this->invoiceSentDeal(600);
+        $transfer = $this->createPaymentMethod();
+        $checks = $this->createPaymentMethod("צ'קים", 'check');
+        $deal->recordPayment($deal->version, 200, null, $transfer->id);
+        $deal->fresh()->recordChecks($deal->fresh()->version, [
+            ['number' => '1', 'due_date' => now()->addMonth()->toDateString(), 'amount' => '400', 'bank' => '', 'branch' => '', 'account' => ''],
+        ], $checks->id);
+        $deal = $deal->fresh();
+
+        $this->assertEquals(400, $deal->outstandingBalance(), 'The check is still not paid…');
+        $this->assertEquals(0, $deal->uncoveredBalance(), '…but it is no debt either.');
+        $this->assertEquals(0, $deal->customer->uncoveredBalance());
+
+        Livewire::actingAs($this->owner)->test('collections')
+            ->assertSet('totalOutstanding', 0.0)
+            // Not among the deals awaiting payment — only in the checks-to-deposit list.
+            ->tap(fn ($c) => $this->assertTrue($c->instance()->awaitingPayment->isEmpty()))
+            ->assertSee('400');
+
+        $deal->update(['updated_at' => now()->subDays(2)]);
+        $this->artisan('collections:process');
+        $this->assertSame(0, Task::where('deal_id', $deal->id)->where('task_type', 'collection')->count());
+
+        // Inside the customer card: no debt badge, the pending checks show instead.
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $deal->customer])
+            ->set('activeTab', 'billing')
+            ->assertDontSee('חוב פתוח:')
+            ->assertSee("מכוסה בצ'קים שהתקבלו וטרם נפרעו", false);
+    }
+
     public function test_an_amount_above_the_database_limit_is_a_validation_error_not_a_crash(): void
     {
         $deal = $this->createDeal(400);

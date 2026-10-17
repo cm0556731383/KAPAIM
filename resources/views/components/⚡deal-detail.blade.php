@@ -1330,7 +1330,8 @@ class extends Component
             @if ($pendingChecks->isNotEmpty())
                 <div class="cell"><div class="k">צ'קים שטרם נפרעו ({{ $pendingChecks->count() }}) — לא כלולים בשולם</div><div class="v ltr-num">₪{{ number_format($pendingChecks->sum('amount'), 0) }}</div></div>
             @endif
-            <div class="cell {{ $this->outstandingBalance > 0 ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
+            @php $coveredByChecks = $this->outstandingBalance > 0 && $this->deal->uncoveredBalance() <= 0; @endphp
+            <div class="cell {{ $this->outstandingBalance > 0 && ! $coveredByChecks ? 'due' : 'settled' }}"><div class="k">יתרה לתשלום{{ $coveredByChecks ? " — מכוסה בצ'קים שטרם נפרעו" : '' }}</div><div class="v ltr-num">₪{{ number_format($this->outstandingBalance, 0) }}</div></div>
         </div>
 
         @if ($risk = $this->paymentRisk)

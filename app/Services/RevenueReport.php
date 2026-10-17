@@ -173,8 +173,8 @@ class RevenueReport
     private function revenueEntries(): Collection
     {
         $entries = $this->nonSubscriptionPayments()->toBase()->map(fn (Payment $payment) => [
-            'month' => CarbonImmutable::parse($payment->payment_date)->format('Y-m'),
-            'date' => CarbonImmutable::parse($payment->payment_date)->toDateString(),
+            'month' => CarbonImmutable::parse($this->incomeDate($payment))->format('Y-m'),
+            'date' => CarbonImmutable::parse($this->incomeDate($payment))->toDateString(),
             'amount' => (float) $payment->amount,
             'description' => "תשלום · {$this->customerName($payment->deal)}",
         ] + $this->revenueSource($payment->deal));
@@ -244,7 +244,7 @@ class RevenueReport
         $revenue = [];
 
         $this->nonSubscriptionPayments()->each(function (Payment $payment) use (&$revenue) {
-            $month = CarbonImmutable::parse($payment->payment_date)->format('Y-m');
+            $month = CarbonImmutable::parse($this->incomeDate($payment))->format('Y-m');
             $revenue[$month] = ($revenue[$month] ?? 0) + (float) $payment->amount;
         });
 
@@ -338,10 +338,21 @@ class RevenueReport
     }
 
     /** Every real Payment whose deal is NOT against the subscription-type bundle — those are handled by subscriptionMonthlySlices() instead. */
+    /**
+     * A check is income only once it cleared — received but not yet cleared
+     * it isn't (the business owner's call, 2026-10-18) — and then in the
+     * month it cleared.
+     */
     private function nonSubscriptionPayments(): Collection
     {
-        return Payment::with('deal.bundle', 'deal.program', 'deal.customer.school')->get()
-            ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type);
+        return Payment::with('paymentMethod', 'deal.bundle', 'deal.program', 'deal.customer.school')->get()
+            ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type)
+            ->reject(fn (Payment $payment) => $payment->isCheck() && ! $payment->cleared_date);
+    }
+
+    private function incomeDate(Payment $payment): \DateTimeInterface|string
+    {
+        return $payment->isCheck() ? $payment->cleared_date : $payment->payment_date;
     }
 
     private function subscriptions(): Collection

@@ -38,7 +38,8 @@ class extends Component
                 ->orWhereHas('paymentLinks', fn ($l) => $l->where('status', PaymentLink::STATUS_PENDING)))
             ->with(['customer.school', 'paymentMethod', 'payments', 'paymentLinks'])
             ->get()
-            ->filter(fn (Deal $deal) => $deal->outstandingBalance() > 0);
+            // Checks already received cover their part — not a debt to chase.
+            ->filter(fn (Deal $deal) => $deal->uncoveredBalance() > 0);
 
         $tasks = Task::where('task_type', 'collection')->where('status', 'open')
             ->whereIn('deal_id', $deals->pluck('id'))
@@ -75,7 +76,7 @@ class extends Component
     #[Computed]
     public function totalOutstanding(): float
     {
-        return (float) $this->awaitingPayment->sum(fn ($row) => $row->deal->outstandingBalance());
+        return (float) $this->awaitingPayment->sum(fn ($row) => $row->deal->uncoveredBalance());
     }
 }
 ?>
@@ -123,7 +124,7 @@ class extends Component
                                 @php $pendingChecks = $deal->pendingChecks(); @endphp
                                 @if ($pendingChecks->isNotEmpty())<div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">+ ₪{{ number_format($pendingChecks->sum('amount'), 0) }} בצ'קים שטרם נפרעו</div>@endif
                             </td>
-                            <td class="ltr-num" style="color:var(--color-error); font-weight:700">₪{{ number_format($deal->outstandingBalance(), 0) }}</td>
+                            <td class="ltr-num" style="color:var(--color-error); font-weight:700">₪{{ number_format($deal->uncoveredBalance(), 0) }}</td>
                             <td>{{ $deal->paymentMethod?->name ?? '—' }}</td>
                             <td>
                                 @if ($row->invoiceSentAt)<div>חשבונית · <span class="ltr-num">{{ $row->invoiceSentAt->format('d/m/Y') }}</span></div>@endif

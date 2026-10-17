@@ -240,6 +240,18 @@ class Deal extends Model
         return max(0.0, $this->amountDue() - $this->totalPaid());
     }
 
+    /**
+     * The balance that's really still open: what checks already received
+     * (not yet cleared) will cover is not a debt — the business owner's
+     * call, 2026-10-18. Drives every debt alert (collections, dashboard,
+     * the customer card's debt badge, collection tasks); the pending checks
+     * themselves show inside the deal and customer cards.
+     */
+    public function uncoveredBalance(): float
+    {
+        return max(0.0, $this->outstandingBalance() - (float) $this->pendingChecks()->sum('amount'));
+    }
+
     public function isFullyPaid(): bool
     {
         return $this->totalPaid() >= $this->amountDue();

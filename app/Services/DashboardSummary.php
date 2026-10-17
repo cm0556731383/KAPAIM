@@ -104,7 +104,7 @@ class DashboardSummary
         $deals = $this->dealsWithOpenCollectionTasks();
 
         return [
-            'amount' => $deals->sum(fn (Deal $deal) => $deal->outstandingBalance()),
+            'amount' => $deals->sum(fn (Deal $deal) => $deal->uncoveredBalance()),
             'customerCount' => $deals->pluck('customer_id')->unique()->count(),
         ];
     }

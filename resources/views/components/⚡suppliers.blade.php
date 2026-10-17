@@ -35,7 +35,7 @@ class extends Component
         abort_unless(auth()->user()->can('suppliers.view'), 403);
     }
 
-    public function saveSupplier(ActivityLogger $activityLogger): void
+    public function saveSupplier(ActivityLogger $activityLogger, bool $duplicateConfirmed = false): void
     {
         $data = $this->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -45,6 +45,19 @@ class extends Component
             'email' => ['nullable', 'email', 'max:255'],
             'notes' => ['nullable', 'string'],
         ], [], ['name' => 'שם הספק', 'companyNumber' => 'מספר חברה']);
+
+        // Two suppliers by the same name are allowed (it can really happen),
+        // but usually it's the same one entered twice — ask first.
+        $sameName = $duplicateConfirmed ? null : Supplier::whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower(trim($data['name']))])
+            ->when($this->editingSupplierId, fn ($q) => $q->whereKeyNot($this->editingSupplierId))
+            ->first();
+
+        if ($sameName) {
+            $warning = "קיים כבר ספק בשם \"{$sameName->name}\"".($sameName->company_number ? " (מספר חברה {$sameName->company_number})" : '').'. לשמור בכל זאת ספק נוסף באותו שם?';
+            $this->js('confirmDialog('.json_encode($warning, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).').then((ok) => ok && $wire.saveSupplier(true))');
+
+            return;
+        }
 
         $attributes = [
             'name' => $data['name'],

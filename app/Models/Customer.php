@@ -130,6 +130,24 @@ class Customer extends Model
             ->sum(fn (Deal $deal) => $deal->outstandingBalance());
     }
 
+    /** outstandingBalance() less what checks already received will cover (Deal::uncoveredBalance()) — the real debt. */
+    public function uncoveredBalance(): float
+    {
+        return (float) $this->openDeals()->sum(fn (Deal $deal) => $deal->uncoveredBalance());
+    }
+
+    /** Checks received on this customer's open deals that haven't cleared yet. */
+    public function pendingChecksTotal(): float
+    {
+        return (float) $this->openDeals()->sum(fn (Deal $deal) => $deal->pendingChecks()->sum('amount'));
+    }
+
+    private function openDeals()
+    {
+        return $this->deals()->with('status')->get()
+            ->reject(fn (Deal $deal) => $deal->status?->name === Deal::CANCELLED_STATUS_NAME);
+    }
+
     public function exceedsSubscriptionPriceAlert(): bool
     {
         $subscriptionPrice = Bundle::where('is_subscription_type', true)->where('is_active', true)->first()?->price;

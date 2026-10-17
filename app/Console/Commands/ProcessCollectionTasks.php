@@ -49,16 +49,14 @@ class ProcessCollectionTasks extends Command
 
     private function closeTasksForPaidDeals(): void
     {
-        $paidStatus = StatusDefinition::where('scope', 'deal')->where('name', Deal::PAID_STATUS_NAME)->first();
-
-        if (! $paidStatus) {
-            return;
-        }
+        $paidStatusId = StatusDefinition::where('scope', 'deal')->where('name', Deal::PAID_STATUS_NAME)->value('id');
 
         Task::where('task_type', self::TASK_TYPE)
             ->where('status', 'open')
-            ->whereHas('deal', fn ($q) => $q->where('status_id', $paidStatus->id))
+            ->with('deal.status')
             ->get()
+            // Paid — or what's left is covered by checks already received.
+            ->filter(fn (Task $task) => ($paidStatusId && $task->deal?->status_id === $paidStatusId) || ($task->deal && $task->deal->uncoveredBalance() <= 0))
             ->each(fn (Task $task) => $task->update(['status' => 'done', 'completed_at' => now()]));
     }
 
@@ -73,7 +71,8 @@ class ProcessCollectionTasks extends Command
         Deal::where('status_id', $invoiceSentStatus->id)
             ->with(['customer.lead', 'payments', 'status'])
             ->get()
-            ->filter(fn (Deal $deal) => ! $deal->isFullyPaid())
+            // Checks already received cover their part (Deal::uncoveredBalance()).
+            ->filter(fn (Deal $deal) => $deal->uncoveredBalance() > 0)
             ->each(fn (Deal $deal) => $this->processDeal($deal));
     }
 

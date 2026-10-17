@@ -13,6 +13,7 @@ use App\Models\Expense;
 use App\Models\Lead;
 use App\Models\MailingList;
 use App\Models\MailingMembership;
+use App\Models\PaymentMethod;
 use App\Models\Program;
 use App\Models\Role;
 use App\Models\School;
@@ -606,6 +607,47 @@ class SuppliersExpensesTest extends TestCase
         $this->assertStringContainsString(e($supplier->name), $full);
         $this->assertStringContainsString('10/09/2026', $full);
         $this->assertStringContainsString('הדפסת חוברות לבדיקה', $full);
+    }
+
+    public function test_a_second_supplier_with_the_same_name_asks_before_saving(): void
+    {
+        $this->fakeSmove();
+        $existing = Supplier::create(['name' => 'דפוס הצפון', 'classification' => 'עוסק פטור']);
+
+        // Editing the supplier itself never asks.
+        Livewire::actingAs($this->owner)->test('suppliers')
+            ->call('editSupplier', $existing->id)
+            ->set('notes', 'עודכן')
+            ->call('saveSupplier')
+            ->assertNoJs();
+        $this->assertSame('עודכן', $existing->fresh()->notes);
+
+        $component = Livewire::actingAs($this->owner)->test('suppliers')
+            ->set('name', '  דפוס הצפון ')
+            ->call('saveSupplier');
+
+        $this->assertSame(1, Supplier::count(), 'Nothing is saved before the confirmation.');
+        $this->assertStringContainsString('$wire.saveSupplier(true)', collect($component->effects['xjs'] ?? [])->pluck('expression')->implode(''));
+
+        $component->call('saveSupplier', true);
+        $this->assertSame(2, Supplier::count());
+    }
+
+    public function test_a_check_is_income_only_once_it_cleared_and_in_the_month_it_cleared(): void
+    {
+        $customer = $this->createCustomer();
+        $deal = Deal::createForCustomer($customer, $this->createProgram(), null, 400);
+        $check = PaymentMethod::create(['name' => "צ'קים", 'type' => 'check', 'is_active' => true]);
+        $payment = $deal->recordPayment($deal->version, 400, '2026-09-05', $check->id, '100', '2026-11-01');
+        $report = app(\App\Services\RevenueReport::class);
+
+        $this->assertSame(0.0, (float) $report->statement()['revenue_total']);
+
+        $payment->update(['check_status' => \App\Models\Payment::CHECK_CLEARED, 'cleared_date' => '2026-11-02 10:00:00']);
+
+        $this->assertEquals(400, $report->statement()['revenue_total']);
+        $this->assertEquals(400, $report->statement([2026], [11])['revenue_total']);
+        $this->assertEquals(0, $report->statement([2026], [9])['revenue_total']);
     }
 
     private function fakeSmove(): void
