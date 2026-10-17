@@ -1,11 +1,14 @@
-@props(['triggerLabel', 'triggerClass' => 'btn btn-primary', 'title' => null, 'name' => null])
+@props(['triggerLabel' => null, 'triggerClass' => 'btn btn-primary', 'title' => null, 'name' => null])
 
 <span
     x-data="{ open: false }"
     x-on:close-modals.window="open = false"
     @if ($name) x-on:open-modal.window="if ($event.detail.name === '{{ $name }}') open = true" @endif
 >
-    <button type="button" class="{{ $triggerClass }}" @click="open = true">{{ $triggerLabel }}</button>
+    {{-- No trigger label: opened only by an open-modal event with its $name. --}}
+    @if ($triggerLabel)
+        <button type="button" class="{{ $triggerClass }}" @click="open = true">{{ $triggerLabel }}</button>
+    @endif
 
     <template x-teleport="body">
         <div class="modal-overlay" x-show="open" x-cloak @click.self="open = false" @keydown.escape.window="open = false" style="display:none">

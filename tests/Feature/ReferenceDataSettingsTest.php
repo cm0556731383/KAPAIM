@@ -105,6 +105,25 @@ class ReferenceDataSettingsTest extends TestCase
         $this->assertTrue($materials->fresh()->is_active);
     }
 
+    public function test_adding_a_lead_source_payment_method_or_business_entity_closes_its_window_only_on_success(): void
+    {
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'leads')
+            ->assertSee('+ הוספת מקור ליד')
+            ->call('addLeadSource')
+            ->assertHasErrors('leadSourceName')
+            ->assertNotDispatched('close-modals')
+            ->set('leadSourceName', 'פייסבוק')
+            ->call('addLeadSource')
+            ->assertDispatched('close-modals')
+            ->set('paymentMethodName', 'ביט')->set('paymentMethodType', 'other')
+            ->call('addPaymentMethod')
+            ->assertDispatched('close-modals');
+
+        $this->assertDatabaseHas('lead_sources', ['name' => 'פייסבוק']);
+        $this->assertDatabaseHas('payment_methods', ['name' => 'ביט']);
+    }
+
     public function test_settings_page_requires_auth(): void
     {
         $this->get('/settings')->assertRedirect('/login');
@@ -143,18 +162,20 @@ class ReferenceDataSettingsTest extends TestCase
         ]);
     }
 
-    public function test_a_new_email_template_is_created_from_the_editor(): void
+    public function test_email_and_document_templates_cannot_be_created_from_the_screen(): void
     {
-        Livewire::actingAs($this->owner)->test('settings')
-            ->call('selectEmailTemplate', 0)
-            ->set('emailTemplateName', 'תבנית בדיקה')
-            ->set('emailTemplateType', 'general')
-            ->set('emailTemplateSubject', 'נושא בדיקה')
-            ->set('emailTemplateContent', 'תוכן בדיקה')
-            ->call('saveEmailTemplate')
-            ->assertHasNoErrors();
+        $this->actingAs($this->owner)->get('/settings?tab=email-templates')->assertOk()->assertDontSee('+ תבנית חדשה');
+        $this->actingAs($this->owner)->get('/settings?tab=document-templates')->assertOk()->assertDontSee('+ תבנית חדשה');
 
-        $this->assertDatabaseHas('email_templates', ['name' => 'תבנית בדיקה', 'template_type' => 'general', 'is_active' => true]);
+        // Saving with no template open finds nothing to update — and creates nothing.
+        try {
+            Livewire::actingAs($this->owner)->test('document-templates')
+                ->set('templateName', 'חדשה')->set('templateContent', 'תוכן')
+                ->call('saveTemplate');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        }
+
+        $this->assertDatabaseMissing('document_templates', ['name' => 'חדשה']);
     }
 
     public function test_the_email_templates_tab_lists_every_template_and_opens_the_chosen_one_with_a_preview(): void

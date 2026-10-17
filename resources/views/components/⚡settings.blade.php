@@ -41,7 +41,7 @@ class extends Component
     public array $businessEntityClassifications = ['עוסק פטור', 'עוסק מורשה', 'חברה בעמ'];
 
     // ===== תבניות דואר (EMAIL_TEMPLATE) =====
-    /** The template open in the editor — an id, 0 for a new one, null when none is chosen. */
+    /** The template open in the editor — null when none is chosen. */
     public ?int $selectedEmailTemplateId = null;
     public string $emailTemplateName = '';
     public string $emailTemplateType = 'general';
@@ -313,6 +313,7 @@ class extends Component
         $activityLogger->log('lead_source.created', "נוצר מקור ליד חדש: {$source->name}");
 
         $this->reset(['leadSourceName']);
+        $this->dispatch('close-modals');
         unset($this->leadSources);
     }
 
@@ -346,6 +347,7 @@ class extends Component
         $activityLogger->log('payment_method.created', "נוצר אמצעי תשלום חדש: {$method->name}");
 
         $this->reset(['paymentMethodName', 'paymentMethodType']);
+        $this->dispatch('close-modals');
         unset($this->paymentMethods);
     }
 
@@ -390,6 +392,7 @@ class extends Component
         $activityLogger->log('business_entity.created', "נוצר עוסק חדש: {$entity->name}");
 
         $this->reset(['businessEntityName', 'businessEntityCompanyNumber', 'businessEntityEmail', 'businessEntityPhone']);
+        $this->dispatch('close-modals');
         $this->businessEntityClassification = 'עוסק פטור';
         unset($this->businessEntities);
         $this->loadSumitCompanies();
@@ -409,17 +412,17 @@ class extends Component
 
     // ----- תבניות דואר -----
 
-    /** Opens a template in the editor below the list; 0 opens a blank new one. */
+    /** Opens a template in the editor below the list — new templates aren't created from the screen. */
     public function selectEmailTemplate(int $id): void
     {
         $this->resetErrorBag();
-        $template = $id ? EmailTemplate::findOrFail($id) : null;
+        $template = EmailTemplate::findOrFail($id);
 
         $this->selectedEmailTemplateId = $id;
-        $this->emailTemplateName = (string) $template?->name;
-        $this->emailTemplateType = (string) ($template?->template_type ?? 'general');
-        $this->emailTemplateSubject = (string) $template?->subject;
-        $this->emailTemplateContent = (string) $template?->content;
+        $this->emailTemplateName = (string) $template->name;
+        $this->emailTemplateType = $template->template_type;
+        $this->emailTemplateSubject = (string) $template->subject;
+        $this->emailTemplateContent = (string) $template->content;
     }
 
     public function closeEmailTemplate(): void
@@ -436,12 +439,12 @@ class extends Component
      */
     public function saveEmailTemplate(ActivityLogger $activityLogger): void
     {
-        $template = $this->selectedEmailTemplateId ? EmailTemplate::findOrFail($this->selectedEmailTemplateId) : null;
-        $isFixed = in_array($template?->template_type, EmailTemplate::FIXED_TYPES, true);
+        $template = EmailTemplate::findOrFail($this->selectedEmailTemplateId);
+        $isFixed = in_array($template->template_type, EmailTemplate::FIXED_TYPES, true);
 
         $data = $this->validate([
             'emailTemplateName' => ['required', 'string', 'max:255'],
-            'emailTemplateType' => $isFixed ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template?->template_type]))],
+            'emailTemplateType' => $isFixed ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template->template_type]))],
             'emailTemplateSubject' => ['required', 'string', 'max:255'],
             'emailTemplateContent' => ['required', 'string'],
         ], [], [
@@ -461,14 +464,8 @@ class extends Component
             $values['template_type'] = $data['emailTemplateType'];
         }
 
-        if ($template) {
-            $template->update($values);
-            $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
-        } else {
-            $template = EmailTemplate::create($values + ['is_active' => true]);
-            $activityLogger->log('email_template.created', "נוצרה תבנית דואר חדשה: {$template->name}");
-            $this->selectedEmailTemplateId = $template->id;
-        }
+        $template->update($values);
+        $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
 
         unset($this->emailTemplates);
         $this->notifySuccess('נוסח המייל נשמר.');
@@ -659,8 +656,18 @@ class extends Component
     @if ($activeTab === 'leads')
     {{-- ===== מקורות ליד ===== --}}
     <section class="settings-section">
-        <div class="section-head">
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap">
             <h2>מקורות ליד</h2>
+            <x-modal trigger-label="+ הוספת מקור ליד" title="מקור ליד חדש">
+                <form wire:submit="addLeadSource" class="form-grid">
+                    <div class="full">
+                        <label for="leadSourceName">שם המקור</label>
+                        <input type="text" id="leadSourceName" wire:model="leadSourceName">
+                        @error('leadSourceName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">הוספת מקור</button></div>
+                </form>
+            </x-modal>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
@@ -691,24 +698,34 @@ class extends Component
             </table>
             </div>
         </div>
-        <div class="card" style="max-width:640px">
-            <form wire:submit="addLeadSource" class="form-grid">
-                <div class="full">
-                    <label for="leadSourceName">מקור ליד חדש</label>
-                    <input type="text" id="leadSourceName" wire:model="leadSourceName">
-                    @error('leadSourceName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">הוספת מקור</button></div>
-            </form>
-        </div>
     </section>
     @endif
 
     @if ($activeTab === 'payment-methods')
     {{-- ===== אמצעי תשלום ===== --}}
     <section class="settings-section">
-        <div class="section-head">
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap">
             <h2>אמצעי תשלום</h2>
+            <x-modal trigger-label="+ הוספת אמצעי תשלום" title="אמצעי תשלום חדש">
+                <form wire:submit="addPaymentMethod" class="form-grid">
+                    <div>
+                        <label for="paymentMethodName">שם</label>
+                        <input type="text" id="paymentMethodName" wire:model="paymentMethodName">
+                        @error('paymentMethodName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="paymentMethodType">סוג</label>
+                        <select id="paymentMethodType" wire:model="paymentMethodType">
+                            <option value="">בחרי סוג...</option>
+                            @foreach (PaymentMethod::TYPE_LABELS as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </select>
+                        @error('paymentMethodType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">הוספת אמצעי תשלום</button></div>
+                </form>
+            </x-modal>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
@@ -741,35 +758,50 @@ class extends Component
             </table>
             </div>
         </div>
-        <div class="card" style="max-width:640px">
-            <form wire:submit="addPaymentMethod" class="form-grid">
-                <div>
-                    <label for="paymentMethodName">שם</label>
-                    <input type="text" id="paymentMethodName" wire:model="paymentMethodName">
-                    @error('paymentMethodName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="paymentMethodType">סוג</label>
-                    <select id="paymentMethodType" wire:model="paymentMethodType">
-                        <option value="">בחרי סוג...</option>
-                        @foreach (PaymentMethod::TYPE_LABELS as $value => $label)
-                            <option value="{{ $value }}">{{ $label }}</option>
-                        @endforeach
-                    </select>
-                    @error('paymentMethodType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">הוספת אמצעי תשלום</button></div>
-            </form>
-        </div>
     </section>
     @endif
 
     @if ($activeTab === 'business-entities')
     {{-- ===== עוסקים ===== --}}
     <section class="settings-section">
-        <div class="section-head">
-            <h2>עוסקים</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">נבחר בכל הפקת חשבונית</p>
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap">
+            <div>
+                <h2>עוסקים</h2>
+                <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">נבחר בכל הפקת חשבונית</p>
+            </div>
+            <x-modal trigger-label="+ הוספת עוסק" title="עוסק חדש">
+                <form wire:submit="addBusinessEntity" class="form-grid">
+                    <div>
+                        <label for="businessEntityName">שם העוסק</label>
+                        <input type="text" id="businessEntityName" wire:model="businessEntityName">
+                        @error('businessEntityName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="businessEntityClassification">סיווג</label>
+                        <select id="businessEntityClassification" wire:model="businessEntityClassification">
+                            @foreach ($businessEntityClassifications as $classification)
+                                <option value="{{ $classification }}">{{ $classification }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
+                        <label for="businessEntityCompanyNumber">ח.פ / ע.מ</label>
+                        <input type="text" id="businessEntityCompanyNumber" wire:model="businessEntityCompanyNumber" class="ltr-num" dir="ltr">
+                        @error('businessEntityCompanyNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="businessEntityPhone">טלפון</label>
+                        <input type="text" id="businessEntityPhone" wire:model="businessEntityPhone" class="ltr-num" dir="ltr">
+                        @error('businessEntityPhone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full">
+                        <label for="businessEntityEmail">אימייל</label>
+                        <input type="text" id="businessEntityEmail" wire:model="businessEntityEmail" class="ltr-num" dir="ltr">
+                        @error('businessEntityEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">הוספת עוסק</button></div>
+                </form>
+            </x-modal>
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
@@ -814,39 +846,6 @@ class extends Component
             </table>
             </div>
         </div>
-        <div class="card" style="max-width:640px">
-            <form wire:submit="addBusinessEntity" class="form-grid">
-                <div>
-                    <label for="businessEntityName">שם העוסק</label>
-                    <input type="text" id="businessEntityName" wire:model="businessEntityName">
-                    @error('businessEntityName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="businessEntityClassification">סיווג</label>
-                    <select id="businessEntityClassification" wire:model="businessEntityClassification">
-                        @foreach ($businessEntityClassifications as $classification)
-                            <option value="{{ $classification }}">{{ $classification }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label for="businessEntityCompanyNumber">ח.פ / ע.מ</label>
-                    <input type="text" id="businessEntityCompanyNumber" wire:model="businessEntityCompanyNumber" class="ltr-num" dir="ltr">
-                    @error('businessEntityCompanyNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div>
-                    <label for="businessEntityPhone">טלפון</label>
-                    <input type="text" id="businessEntityPhone" wire:model="businessEntityPhone" class="ltr-num" dir="ltr">
-                    @error('businessEntityPhone') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div class="full">
-                    <label for="businessEntityEmail">אימייל</label>
-                    <input type="text" id="businessEntityEmail" wire:model="businessEntityEmail" class="ltr-num" dir="ltr">
-                    @error('businessEntityEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">הוספת עוסק</button></div>
-            </form>
-        </div>
     </section>
     @endif
 
@@ -865,7 +864,6 @@ class extends Component
                 <h2>תבניות דואר</h2>
                 <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:0">מיילים שהמערכת שולחת בעצמה — לא מסמכים עסקיים ולא דיוור לרשימות תפוצה. בוחרים תבנית כדי לערוך אותה.</p>
             </div>
-            <button type="button" wire:click="selectEmailTemplate(0)" class="btn btn-secondary">+ תבנית חדשה</button>
         </div>
 
         <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-md)">
@@ -895,7 +893,7 @@ class extends Component
         @if ($selectedEmailTemplateId !== null)
             @php($spec = $this->emailTemplateSpec())
             @php($preview = $this->emailTemplatePreview())
-            @php($openTemplate = $selectedEmailTemplateId ? $this->emailTemplates->firstWhere('id', $selectedEmailTemplateId) : null)
+            @php($openTemplate = $this->emailTemplates->firstWhere('id', $selectedEmailTemplateId))
             @php($isFixed = in_array($emailTemplateType, EmailTemplate::FIXED_TYPES, true))
             <div class="card" wire:key="email-template-editor-{{ $selectedEmailTemplateId }}" x-data="{ target: null, insert(token) {
                     const el = this.target ?? $refs.body;
@@ -907,7 +905,7 @@ class extends Component
                 } }">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; margin-bottom:var(--sp-sm)">
                     <div>
-                        <h3 style="margin:0 0 2px">{{ $openTemplate?->name ?? 'תבנית חדשה' }}</h3>
+                        <h3 style="margin:0 0 2px">{{ $openTemplate?->name }}</h3>
                         <p class="text-text-secondary" style="margin:0; font-size:var(--fs-small)">{{ $spec['intro'] }}</p>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px">
@@ -977,38 +975,31 @@ class extends Component
     @endif
 
     @if ($activeTab === 'integrations')
-    {{-- ===== אינטגרציות חיצוניות ===== --}}
+    {{-- ===== אינטגרציות חיצוניות — a card per system, its on/off switch in its header ===== --}}
+    @php($integrationsBySystem = $this->integrations->keyBy('system'))
     <section class="settings-section">
         <div class="section-head">
             <h2>אינטגרציות חיצוניות</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">חיבור אמיתי ל-Smove ו-Summit, וה-Webhook הנכנס מדף הנחיתה — כל עוד "מושבת" למטה, שום קריאה החוצה לא מתבצעת בפועל</p>
-        </div>
-        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
-            <div class="table-scroll">
-            <table>
-                <thead><tr><th>מערכת</th><th>סטטוס</th><th></th></tr></thead>
-                <tbody>
-                    @foreach ($this->integrations as $integration)
-                        <tr>
-                            <td>{{ ExternalOperation::SYSTEM_LABELS[$integration->system] ?? 'חיבור חיצוני' }}</td>
-                            <td>
-                                @if ($integration->is_active)
-                                    <span class="badge badge-success">פעיל</span>
-                                @else
-                                    <span class="badge badge-neutral">מושבת</span>
-                                @endif
-                            </td>
-                            <td><button type="button" wire:click="toggleIntegration({{ $integration->id }})" class="btn btn-ghost">{{ $integration->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-            </div>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">כל חיבור מופעל או מושבת בכרטיס שלו. כשחיבור מושבת, המערכת לא פונה אליו בכלל.</p>
         </div>
 
         <div class="cols2">
-            <div class="card">
-                <h3>Smove — חיבור החשבון שלך</h3>
+            {{-- Right column: Smove, and the landing page right under it --}}
+            <div style="display:flex; flex-direction:column; gap:var(--sp-md); min-width:0">
+                <div class="card">
+                @php($integration = $integrationsBySystem['smove'] ?? null)
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; padding-bottom:var(--sp-md); margin-bottom:var(--sp-md); border-bottom:1px solid var(--color-border)">
+                    <div style="min-width:0; flex:1 1 220px">
+                        <h3 style="margin:0 0 4px">Smove — דיוור ומיילים</h3>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">שליחת מיילים ללקוחות: חומרי לימוד, תזכורות, מסמכים ודיוור לרשימות תפוצה.</p>
+                    </div>
+                    @if ($integration)
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
+                            <span class="badge {{ $integration->is_active ? 'badge-success' : 'badge-neutral' }}">{{ $integration->is_active ? 'פעיל' : 'מושבת' }}</span>
+                            <button type="button" wire:click="toggleIntegration({{ $integration->id }})" class="btn btn-ghost btn-sm">{{ $integration->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                        </div>
+                    @endif
+                </div>
                 <form wire:submit="saveSmoveSettings" class="form-grid">
                     <div class="full">
                         <label for="smoveApiKey">מפתח API (חובה)</label>
@@ -1034,19 +1025,55 @@ class extends Component
                         @error('smoveListId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
-                        <label for="smoveMaterialReminderHours">כמה שעות לחכות לפני תזכורת על חומרי לימוד שלא נפתחו</label>
+                        <label for="smoveMaterialReminderHours">כמה שעות לחכות לפני תזכורת על חומרי לימוד שלא אושרו</label>
                         <input type="text" id="smoveMaterialReminderHours" wire:model="smoveMaterialReminderHours" class="ltr-num" dir="ltr">
                         @error('smoveMaterialReminderHours') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">שמירת הגדרות Smove</button></div>
                 </form>
+                </div>
+
+                <div class="card">
+                @php($integration = $integrationsBySystem['landing_page'] ?? null)
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; padding-bottom:var(--sp-md); margin-bottom:var(--sp-md); border-bottom:1px solid var(--color-border)">
+                    <div style="min-width:0; flex:1 1 220px">
+                        <h3 style="margin:0 0 4px">דף הנחיתה</h3>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">פניות מטופס דף הנחיתה נכנסות כלידים חדשים. את הסוד מזינים גם בהגדרות דף הנחיתה עצמו, בכותרת X-Webhook-Secret.</p>
+                    </div>
+                    @if ($integration)
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
+                            <span class="badge {{ $integration->is_active ? 'badge-success' : 'badge-neutral' }}">{{ $integration->is_active ? 'פעיל' : 'מושבת' }}</span>
+                            <button type="button" wire:click="toggleIntegration({{ $integration->id }})" class="btn btn-ghost btn-sm">{{ $integration->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                        </div>
+                    @endif
+                </div>
+                <form wire:submit="saveLandingPageSettings" class="form-grid">
+                    <div class="full">
+                        <label for="landingPageWebhookSecret">סוד Webhook</label>
+                        <input type="password" id="landingPageWebhookSecret" wire:model="landingPageWebhookSecret" class="ltr-num" dir="ltr">
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
+                </form>
+                </div>
             </div>
 
-            <div class="card">
-                <h3>SUMIT (סאמיט) — חיבורים</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">לכל עוסק יש חיבור משלו לחשבון SUMIT נפרד, וחשבונית נשלחת לחשבון של העוסק שממנו הופקה. תנו לכל חיבור שם שיזהה אותו. מספר החברה והמפתח הפרטי נמצאים ב-SUMIT בתפריט API ← מפתחות API. להוספת חיבור — הוסיפו עוסק בטבלת העוסקים.</p>
+            {{-- Left column: SUMIT and all its connections --}}
+            <div class="card" style="min-width:0">
+                @php($integration = $integrationsBySystem['summit'] ?? null)
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; padding-bottom:var(--sp-md); margin-bottom:var(--sp-md); border-bottom:1px solid var(--color-border)">
+                    <div style="min-width:0; flex:1 1 220px">
+                        <h3 style="margin:0 0 4px">SUMIT (סאמיט) — חשבוניות וסליקה</h3>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">לכל עוסק חיבור משלו לחשבון SUMIT נפרד, וחשבונית נשלחת לחשבון של העוסק שממנו הופקה. מספר החברה והמפתח הפרטי נמצאים ב-SUMIT בתפריט API ← מפתחות API. להוספת חיבור מוסיפים עוסק בלשונית עוסקים.</p>
+                    </div>
+                    @if ($integration)
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
+                            <span class="badge {{ $integration->is_active ? 'badge-success' : 'badge-neutral' }}">{{ $integration->is_active ? 'פעיל' : 'מושבת' }}</span>
+                            <button type="button" wire:click="toggleIntegration({{ $integration->id }})" class="btn btn-ghost btn-sm">{{ $integration->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                        </div>
+                    @endif
+                </div>
                 @foreach ($sumitCompanies as $entityId => $company)
-                    <form wire:submit="saveSumitCompany({{ $entityId }})" class="form-grid" style="border-top:1px solid var(--color-border); padding-top:var(--sp-md); margin-top:var(--sp-md)">
+                    <form wire:submit="saveSumitCompany({{ $entityId }})" class="form-grid" style="background:var(--color-background); border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-md); margin-bottom:var(--sp-md)">
                         <div class="full" style="display:flex; align-items:center; gap:var(--sp-sm); flex-wrap:wrap">
                             <strong>{{ $company['connection_name'] ?: 'חיבור ללא שם' }}</strong>
                             @if ($company['company_id'] !== '' && $company['has_key'])
@@ -1086,25 +1113,13 @@ class extends Component
                         @error("sumitConnection.{$entityId}") <div class="full" style="color: var(--color-error); font-size: var(--fs-caption);">{{ $message }}</div> @enderror
                     </form>
                 @endforeach
-                <form wire:submit="saveSummitSettings" class="form-grid" style="border-top:1px solid var(--color-border); padding-top:var(--sp-md); margin-top:var(--sp-md)">
+                <form wire:submit="saveSummitSettings" class="form-grid">
                     <div class="full">
                         <span class="checkbox-row"><input type="checkbox" id="summitTestMode" wire:model="summitTestMode"><label for="summitTestMode" style="margin:0">מצב בדיקה (לכל החברות) — מסמכים יופקו ב-SUMIT כטיוטה, וחיובי אשראי יבוצעו כבדיקת אישור בלבד, ללא חיוב בפועל</label></span>
                     </div>
                     <div class="full"><button type="submit" class="btn btn-secondary">שמירת מצב בדיקה</button></div>
                 </form>
             </div>
-        </div>
-
-        <div class="card" style="margin-top:var(--sp-md); max-width:640px">
-            <h3>דף הנחיתה — סוד Webhook</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-8px">יש להזין סוד זה גם בהגדרות דף הנחיתה עצמו, בכותרת X-Webhook-Secret.</p>
-            <form wire:submit="saveLandingPageSettings" class="form-grid">
-                <div class="full">
-                    <label for="landingPageWebhookSecret">סוד Webhook</label>
-                    <input type="password" id="landingPageWebhookSecret" wire:model="landingPageWebhookSecret" class="ltr-num" dir="ltr">
-                </div>
-                <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
-            </form>
         </div>
     </section>
     @endif

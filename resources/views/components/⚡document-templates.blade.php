@@ -61,24 +61,16 @@ class extends Component
             'templateContent' => 'מלל התבנית',
         ]);
 
-        if ($this->editingTemplateId) {
-            $template = DocumentTemplate::findOrFail($this->editingTemplateId);
-            $template->update([
-                'name' => $data['templateName'],
-                'document_type' => $data['templateDocumentType'],
-                'content' => $data['templateContent'],
-            ]);
-            $activityLogger->log('document_template.updated', "עודכנה תבנית מסמך: {$template->name}");
-        } else {
-            $template = DocumentTemplate::create([
-                'name' => $data['templateName'],
-                'document_type' => $data['templateDocumentType'],
-                'content' => $data['templateContent'],
-                'is_active' => true,
-            ]);
-            $activityLogger->log('document_template.created', "נוצרה תבנית מסמך חדשה: {$template->name}");
-        }
+        // Only an existing template is saved here — new templates aren't created from the screen.
+        $template = DocumentTemplate::findOrFail($this->editingTemplateId);
+        $template->update([
+            'name' => $data['templateName'],
+            'document_type' => $data['templateDocumentType'],
+            'content' => $data['templateContent'],
+        ]);
+        $activityLogger->log('document_template.updated', "עודכנה תבנית מסמך: {$template->name}");
 
+        $this->dispatch('close-modals');
         $this->cancelEdit();
         unset($this->templates);
     }
@@ -203,7 +195,8 @@ class extends Component
         <div class="section-head">
             <h2>כל התבניות</h2>
             <div style="display:flex; gap:var(--sp-sm)">
-                <x-modal name="template" trigger-label="+ תבנית חדשה" :title="$editingTemplateId ? 'עריכת תבנית' : 'תבנית חדשה'">
+                {{-- Existing templates are edited here (editTemplate() opens it); new ones aren't created from the screen. --}}
+                <x-modal name="template" title="עריכת תבנית">
                     <form wire:submit="saveTemplate" class="form-grid">
                         <div>
                             <label for="templateName">שם התבנית</label>
@@ -288,7 +281,7 @@ class extends Component
                         @endif
 
                         <div class="full" style="display:flex; gap:var(--sp-sm)">
-                            <button type="submit" class="btn btn-primary">{{ $editingTemplateId ? 'שמירת שינויים' : 'יצירת תבנית' }}</button>
+                            <button type="submit" class="btn btn-primary">שמירת שינויים</button>
                             @if ($editingTemplateId)
                                 <button type="button" wire:click="cancelEdit" class="btn btn-ghost">ביטול עריכה</button>
                             @endif
