@@ -7,6 +7,7 @@ use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
+use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\Lead;
 use App\Models\MailingList;
@@ -461,6 +462,64 @@ class MaterialsMailingTest extends TestCase
         $this->artisan('materials:process-reminders');
 
         $this->assertFalse(ActivityLog::where('activity_type', 'material_delivery.reminder_due')->where('material_delivery_id', $delivery->id)->exists());
+    }
+
+    public function test_the_materials_email_has_a_received_button_that_confirms_the_delivery(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+        Http::fake(fn ($request) => $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => 5], 200));
+
+        EmailTemplate::materialDelivery()->update(['subject' => 'חומרים: {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}\n{{רשימת_החומרים}}"]);
+
+        $delivery = $this->createDelivery();
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
+            && $request['subject'] === 'חומרים: '.$delivery->program->name
+            && str_contains($request['body'], 'a.pdf')
+            // Not placed by the text — appended at the end.
+            && str_contains($request['body'], 'קיבלתי את החומרים')
+            && str_contains($request['body'], e($delivery->acknowledgeUrl())));
+
+        $this->get($delivery->acknowledgeUrl())->assertOk();
+        $this->assertNotNull($delivery->fresh()->acknowledged_at);
+    }
+
+    public function test_an_overdue_delivery_gets_one_reminder_to_every_recipient_in_the_template_wording(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111, 'material_reminder_hours' => 48]]);
+        Http::fake(fn ($request) => $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => 5], 200));
+        EmailTemplate::materialReminder()->update(['subject' => 'עוד לא אישרתם את {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}\n{{כפתור_אישור_קבלה}}"]);
+
+        $delivery = $this->createDelivery();
+        $delivery->recipients()->create(['contact_id' => null, 'recipient_name' => 'ב', 'recipient_email' => 'b@example.com']);
+        $delivery->update(['sent_at' => now()->subHours(49)]);
+
+        $this->artisan('materials:process-reminders');
+        $this->artisan('materials:process-reminders');
+
+        $reminders = collect(Http::recorded())->filter(fn ($pair) => str_contains($pair[0]->url(), '/Campaigns') && str_starts_with((string) $pair[0]['subject'], 'עוד לא אישרתם'));
+        $this->assertCount(1, $reminders);
+        $this->assertCount(2, $reminders->first()[0]['toMembersById']);
+        $this->assertStringContainsString('קיבלתי את החומרים', $reminders->first()[0]['body']);
+        $this->assertNotNull($delivery->fresh()->reminder_sent_at);
+    }
+
+    public function test_a_handled_delivery_or_a_disabled_reminder_template_sends_no_reminder(): void
+    {
+        $handled = $this->createDelivery();
+        $handled->update(['sent_at' => now()->subHours(49)]);
+        $handled->markHandled();
+
+        $this->artisan('materials:process-reminders');
+        $this->assertFalse(ActivityLog::where('activity_type', 'material_delivery.reminder_due')->where('material_delivery_id', $handled->id)->exists());
+
+        EmailTemplate::materialReminder()->update(['is_active' => false]);
+        $overdue = $this->createDelivery();
+        $overdue->update(['sent_at' => now()->subHours(49)]);
+
+        $this->artisan('materials:process-reminders');
+        $this->assertFalse(ActivityLog::where('activity_type', 'material_delivery.reminder_due')->where('material_delivery_id', $overdue->id)->exists());
+        $this->assertNull($overdue->fresh()->reminder_sent_at);
     }
 
     public function test_reminder_window_is_configurable_via_the_smove_integration_setting(): void

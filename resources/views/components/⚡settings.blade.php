@@ -429,18 +429,19 @@ class extends Component
     }
 
     /**
-     * Saves the open template. A supplier-invoice email keeps its type — the
-     * expenses page looks it up by it (EmailTemplate::SUPPLIER_TYPES); the
-     * others may switch between TYPE_LABELS' uses.
+     * Saves the open template. An email the code looks up by type (the
+     * supplier-invoice requests, the materials reminder —
+     * EmailTemplate::FIXED_TYPES) keeps it; the others may switch between
+     * TYPE_LABELS' uses.
      */
     public function saveEmailTemplate(ActivityLogger $activityLogger): void
     {
         $template = $this->selectedEmailTemplateId ? EmailTemplate::findOrFail($this->selectedEmailTemplateId) : null;
-        $isSupplier = in_array($template?->template_type, EmailTemplate::SUPPLIER_TYPES, true);
+        $isFixed = in_array($template?->template_type, EmailTemplate::FIXED_TYPES, true);
 
         $data = $this->validate([
             'emailTemplateName' => ['required', 'string', 'max:255'],
-            'emailTemplateType' => $isSupplier ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template?->template_type]))],
+            'emailTemplateType' => $isFixed ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template?->template_type]))],
             'emailTemplateSubject' => ['required', 'string', 'max:255'],
             'emailTemplateContent' => ['required', 'string'],
         ], [], [
@@ -456,7 +457,7 @@ class extends Component
             'content' => $data['emailTemplateContent'],
         ];
 
-        if (! $isSupplier) {
+        if (! $isFixed) {
             $values['template_type'] = $data['emailTemplateType'];
         }
 
@@ -475,6 +476,9 @@ class extends Component
 
     public function toggleEmailTemplate(int $id, ActivityLogger $activityLogger): void
     {
+        // The materials email is always sent — disabling it would stop sending materials altogether.
+        abort_if(in_array(EmailTemplate::findOrFail($id)->template_type, EmailTemplate::ALWAYS_ACTIVE_TYPES, true), 403);
+
         $this->toggleActive(EmailTemplate::class, $id, $activityLogger, 'email_template');
         unset($this->emailTemplates);
     }
@@ -490,16 +494,14 @@ class extends Component
     public function emailTemplateSpec(): array
     {
         $uploadButton = '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">להעלאת החשבונית</span>';
+        $receivedButton = '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">קיבלתי את החומרים</span>';
 
         return match ($this->emailTemplateType) {
             EmailTemplate::SUPPLIER_INVOICE_REQUEST => [
                 'usage' => 'בקשת חשבונית מספק',
                 'intro' => 'המייל שנשלח לספק עבור הוצאה אחת שאין לה חשבונית: בלחיצה על "בקשה מהספק במייל" בדף ההוצאות, או בשליחה לכל הספקים כשחסרה לספק חשבונית אחת. השדות בסוגריים המסולסלים יתמלאו בפרטי ההוצאה, והספק יקבל כפתור להעלאת החשבונית ישירות למערכת.',
                 'fields' => ['שם_הספק' => 'שם הספק', 'תאריך_התשלום' => 'תאריך התשלום', 'סכום' => 'סכום', 'תוכנית' => 'תוכנית', 'הערות' => 'הערות'],
-                'blockToken' => EmailTemplate::UPLOAD_BUTTON_TOKEN,
-                'blockLabel' => 'כפתור העלאת החשבונית',
-                'blockHint' => 'אם הכפתור לא מופיע בטקסט, הוא יתווסף בסוף המייל.',
-                'blockPreviewHtml' => $uploadButton,
+                'blocks' => [EmailTemplate::UPLOAD_BUTTON_TOKEN => ['label' => 'כפתור העלאת החשבונית', 'preview' => $uploadButton]],
                 'example' => [
                     'supplier_name' => 'דפוס הראל בע"מ',
                     'expense_date' => now()->subDays(12)->format('d/m/Y'),
@@ -513,11 +515,25 @@ class extends Component
                 'usage' => 'בקשת כמה חשבוניות מספק',
                 'intro' => 'המייל שנשלח בלחיצה על "בקשת חשבוניות מכל הספקים" בדף ההוצאות לספק שחסרות לו כמה חשבוניות — מייל אחד עם רשימת ההוצאות, ולכל הוצאה כפתור משלה להעלאת החשבונית.',
                 'fields' => ['שם_הספק' => 'שם הספק', 'מספר_החשבוניות_החסרות' => 'מספר החשבוניות החסרות', 'סכום_כולל' => 'סכום כולל'],
-                'blockToken' => EmailTemplate::EXPENSE_LIST_TOKEN,
-                'blockLabel' => 'רשימת ההוצאות עם כפתורי ההעלאה',
-                'blockHint' => 'אם הרשימה לא מופיעה בטקסט, היא תתווסף בסוף המייל.',
-                'blockPreviewHtml' => collect(['תשלום מתאריך 03/09/2026 · ₪1,250', 'תשלום מתאריך 21/09/2026 · ₪480'])->map(fn ($row) => '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--color-border)"><span>'.$row.'</span><span style="display:inline-block; background:#286E9A; color:#fff; border-radius:24px; padding:6px 16px; font-weight:700; font-size:var(--fs-caption)">להעלאת החשבונית</span></div>')->implode(''),
+                'blocks' => [EmailTemplate::EXPENSE_LIST_TOKEN => ['label' => 'רשימת ההוצאות עם כפתורי ההעלאה', 'preview' => collect(['תשלום מתאריך 03/09/2026 · ₪1,250', 'תשלום מתאריך 21/09/2026 · ₪480'])->map(fn ($row) => '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--color-border)"><span>'.$row.'</span><span style="display:inline-block; background:#286E9A; color:#fff; border-radius:24px; padding:6px 16px; font-weight:700; font-size:var(--fs-caption)">להעלאת החשבונית</span></div>')->implode('')]],
                 'example' => ['supplier_name' => 'דפוס הראל בע"מ', 'expense_count' => '2', 'total_amount' => '1,730'],
+            ],
+            EmailTemplate::MATERIAL_DELIVERY => [
+                'usage' => 'שליחת חומרי לימוד',
+                'intro' => 'המייל שנשלח בלחיצה על "שליחת חומרים" בכרטיס הלקוחה, לכל הנמענים שנבחרו. רשימת החומרים היא הקבצים והקישורים שצורפו לשליחה. לחיצה על "קיבלתי את החומרים" מסמנת את המשלוח כהתקבל ומבטלת את התזכורת.',
+                'fields' => ['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'],
+                'blocks' => [
+                    EmailTemplate::MATERIALS_LIST_TOKEN => ['label' => 'רשימת החומרים', 'preview' => '<ul style="margin:0; padding-inline-start:20px"><li><a style="color:#286E9A; font-weight:600">חוברת לתלמידה.pdf</a></li><li><a style="color:#286E9A; font-weight:600">סרטון הדרכה</a></li></ul>'],
+                    EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => ['label' => 'כפתור "קיבלתי את החומרים"', 'preview' => $receivedButton],
+                ],
+                'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
+            ],
+            EmailTemplate::MATERIAL_REMINDER => [
+                'usage' => 'תזכורת על חומרים שלא אושרו',
+                'intro' => 'נשלחת פעם אחת לכל נמעני משלוח חומרים שלא אושר עד שעבר מספר השעות שמוגדר באינטגרציות ← Smove. לא נשלחת אם הלקוחה כבר לחצה "קיבלתי את החומרים", או אם המשלוח סומן כטופל. כשהתבנית מושבתת, לא נשלחות תזכורות.',
+                'fields' => ['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'],
+                'blocks' => [EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => ['label' => 'כפתור "קיבלתי את החומרים"', 'preview' => $receivedButton]],
+                'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
             ],
             default => [
                 'usage' => EmailTemplate::TYPE_LABELS[$this->emailTemplateType] ?? 'כללי',
@@ -525,7 +541,7 @@ class extends Component
                     ? 'נשלח אוטומטית לאיש הקשר כשנכנס ליד חדש מדף הנחיתה. השדות בסוגריים המסולסלים יתמלאו בפרטי הליד.'
                     : 'תבנית כללית — המערכת לא שולחת אותה אוטומטית.',
                 'fields' => ['שם_איש_הקשר' => 'שם איש הקשר', 'שם_בית_הספר' => 'שם בית הספר'],
-                'blockToken' => null,
+                'blocks' => [],
                 'example' => ['contact_name' => 'רחל כהן', 'school_name' => 'בית ספר אורות'],
             ],
         };
@@ -536,6 +552,29 @@ class extends Component
     {
         return (new EmailTemplate(['subject' => $this->emailTemplateSubject, 'content' => $this->emailTemplateContent]))
             ->render($this->emailTemplateSpec()['example']);
+    }
+
+    /**
+     * The preview's body as HTML: the text escaped, each block's sample where
+     * its token sits, and a block the text doesn't place at the end — the
+     * same rule the real send follows (SmoveClient::textWithBlocks()).
+     */
+    public function emailTemplatePreviewHtml(): string
+    {
+        $blocks = collect($this->emailTemplateSpec()['blocks'])->map(fn (array $block) => '<div style="margin:var(--sp-sm) 0">'.$block['preview'].'</div>');
+        $content = $this->emailTemplatePreview()['content'];
+        $text = fn (string $part) => trim($part, "\n") === '' ? '' : '<div style="white-space:pre-wrap">'.e(trim($part, "\n")).'</div>';
+
+        if ($blocks->isEmpty()) {
+            return $text($content);
+        }
+
+        $pattern = '/('.$blocks->keys()->map(fn ($token) => preg_quote($token, '/'))->implode('|').')/u';
+
+        return collect(preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE))
+            ->map(fn (string $part) => $blocks[$part] ?? $text($part))
+            ->implode('')
+            .$blocks->reject(fn ($html, $token) => str_contains($content, $token))->implode('');
     }
 
     // ----- אינטגרציות חיצוניות -----
@@ -837,7 +876,7 @@ class extends Component
                     @foreach ($this->emailTemplates as $template)
                         <tr wire:key="email-template-{{ $template->id }}" wire:click="selectEmailTemplate({{ $template->id }})" style="cursor:pointer; {{ $selectedEmailTemplateId === $template->id ? 'background:var(--color-background)' : '' }}">
                             <td style="font-weight:{{ $selectedEmailTemplateId === $template->id ? '700' : '400' }}">{{ $template->name }}</td>
-                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}</td>
+                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', EmailTemplate::MATERIAL_DELIVERY => 'שליחת חומרי לימוד', EmailTemplate::MATERIAL_REMINDER => 'תזכורת על חומרים שלא אושרו', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}</td>
                             <td class="text-text-secondary">{{ \Illuminate\Support\Str::limit($template->subject, 60) }}</td>
                             <td>
                                 @if ($template->is_active)
@@ -857,7 +896,7 @@ class extends Component
             @php($spec = $this->emailTemplateSpec())
             @php($preview = $this->emailTemplatePreview())
             @php($openTemplate = $selectedEmailTemplateId ? $this->emailTemplates->firstWhere('id', $selectedEmailTemplateId) : null)
-            @php($isSupplier = in_array($emailTemplateType, EmailTemplate::SUPPLIER_TYPES, true))
+            @php($isFixed = in_array($emailTemplateType, EmailTemplate::FIXED_TYPES, true))
             <div class="card" wire:key="email-template-editor-{{ $selectedEmailTemplateId }}" x-data="{ target: null, insert(token) {
                     const el = this.target ?? $refs.body;
                     const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? start;
@@ -872,7 +911,7 @@ class extends Component
                         <p class="text-text-secondary" style="margin:0; font-size:var(--fs-small)">{{ $spec['intro'] }}</p>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px">
-                        @if ($openTemplate)
+                        @if ($openTemplate && ! in_array($openTemplate->template_type, EmailTemplate::ALWAYS_ACTIVE_TYPES, true))
                             <button type="button" wire:click="toggleEmailTemplate({{ $openTemplate->id }})" class="btn btn-ghost btn-sm">{{ $openTemplate->is_active ? 'השבתה' : 'הפעלה' }}</button>
                         @endif
                         <button type="button" wire:click="closeEmailTemplate" class="btn btn-ghost btn-sm">סגירה</button>
@@ -880,12 +919,12 @@ class extends Component
                 </div>
 
                 <form wire:submit="saveEmailTemplate" class="form-grid">
-                    <div @class(['full' => $isSupplier])>
+                    <div @class(['full' => $isFixed])>
                         <label for="emailTemplateName">שם התבנית</label>
                         <input type="text" id="emailTemplateName" wire:model="emailTemplateName">
                         @error('emailTemplateName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
-                    @unless ($isSupplier)
+                    @unless ($isFixed)
                         <div>
                             <label for="emailTemplateType">שימוש</label>
                             <select id="emailTemplateType" wire:model.live="emailTemplateType">
@@ -915,29 +954,19 @@ class extends Component
                             @foreach ($spec['fields'] as $token => $label)
                                 <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}')">+ {{ $label }}</button>
                             @endforeach
-                            @if ($spec['blockToken'])
-                                <button type="button" class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ $spec['blockToken'] }}')">+ {{ $spec['blockLabel'] }}</button>
-                            @endif
+                            @foreach ($spec['blocks'] as $token => $block)
+                                <button type="button" class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ $token }}')">+ {{ $block['label'] }}</button>
+                            @endforeach
                         </div>
-                        @if ($spec['blockToken'])
-                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">{{ $spec['blockHint'] }}</div>
+                        @if ($spec['blocks'])
+                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">רכיב שלא מופיע בטקסט יתווסף בסוף המייל.</div>
                         @endif
                     </div>
                     <div class="full">
                         <label>תצוגה מקדימה (עם פרטים לדוגמה)</label>
                         <div style="border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-md); background:var(--color-background)">
                             <div style="font-weight:600; margin-bottom:var(--sp-sm)">{{ $preview['subject'] }}</div>
-                            @if ($spec['blockToken'])
-                                @php($parts = explode($spec['blockToken'], $preview['content']))
-                                @foreach ($parts as $part)
-                                    <div style="white-space:pre-wrap">{{ trim($part, "\n") }}</div>
-                                    @if (! $loop->last || count($parts) === 1)
-                                        <div style="margin:var(--sp-sm) 0">{!! $spec['blockPreviewHtml'] !!}</div>
-                                    @endif
-                                @endforeach
-                            @else
-                                <div style="white-space:pre-wrap">{{ $preview['content'] }}</div>
-                            @endif
+                            {!! $this->emailTemplatePreviewHtml() !!}
                         </div>
                     </div>
                     <div class="full"><button type="submit" class="btn btn-primary">שמירת נוסח המייל</button></div>

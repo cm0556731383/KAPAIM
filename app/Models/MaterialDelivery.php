@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\URL;
 use RuntimeException;
 
 /**
@@ -33,7 +34,7 @@ use RuntimeException;
  * A delivery is never deleted (matches every other business-record
  * convention here) — no soft-deletes column, no delete route.
  */
-#[Fillable(['customer_id', 'program_id', 'status_id', 'sent_at', 'opened_at', 'acknowledged_at', 'handled_at'])]
+#[Fillable(['customer_id', 'program_id', 'status_id', 'sent_at', 'opened_at', 'acknowledged_at', 'handled_at', 'reminder_sent_at'])]
 class MaterialDelivery extends Model
 {
     use HasFactory;
@@ -57,6 +58,7 @@ class MaterialDelivery extends Model
             'opened_at' => 'datetime',
             'acknowledged_at' => 'datetime',
             'handled_at' => 'datetime',
+            'reminder_sent_at' => 'datetime',
         ];
     }
 
@@ -118,18 +120,24 @@ class MaterialDelivery extends Model
     }
 
     /**
-     * FR-5.16: eligible for an automatic reminder — not opened/acknowledged,
-     * and $hours have passed since it was sent. Used by
-     * App\Console\Commands\ProcessMaterialReminders — deliberately excludes
-     * handled_at from this one (a stale item dismissed by a user is done for
-     * dashboard purposes, but the underlying "did the customer ever see it"
-     * question that the reminder answers is independent of that dismissal).
+     * FR-5.16: eligible for the automatic reminder — sent $hours ago or more,
+     * not opened or confirmed, not marked handled by staff, and not reminded
+     * yet (one reminder per delivery). Used by
+     * App\Console\Commands\ProcessMaterialReminders.
      */
     public function scopeOverdueForReminder(Builder $query, int $hours): Builder
     {
         return $query->whereNull('opened_at')
             ->whereNull('acknowledged_at')
+            ->whereNull('handled_at')
+            ->whereNull('reminder_sent_at')
             ->where('sent_at', '<=', now()->subHours($hours));
+    }
+
+    /** The "I received the materials" link in the materials email and its reminder — the signed materials.acknowledge route. */
+    public function acknowledgeUrl(): string
+    {
+        return URL::signedRoute('materials.acknowledge', ['material' => $this->id]);
     }
 
     /**
@@ -244,6 +252,12 @@ class MaterialDelivery extends Model
             ],
         );
 
+        // The business owner's wording (settings → תבניות דואר); the seeded default if it's ever missing.
+        $email = (EmailTemplate::materialDelivery() ?? new EmailTemplate([
+            'subject' => 'חומרי לימוד: {{תוכנית}}',
+            'content' => "שלום,\n\nמצורפים קישורים לחומרי הלימוד:\n\n".EmailTemplate::MATERIALS_LIST_TOKEN."\n\n".EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN."\n\nבברכה, כפיים",
+        ]))->render(['school_name' => (string) $customer->school?->name, 'program_name' => $program->name]);
+
         $runner->run(
             'smove',
             'materials_send',
@@ -251,7 +265,9 @@ class MaterialDelivery extends Model
             fn () => $smove->sendMaterialsEmail(
                 array_map(fn (array $r) => ['email' => $r['email'], 'name' => $r['name']], $validRecipients),
                 array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->downloadUrl()], $attachmentModels),
-                "חומרי לימוד: {$program->name}",
+                $email['subject'],
+                $email['content'],
+                $delivery->acknowledgeUrl(),
             ),
             [
                 'material_delivery_id' => $delivery->id,

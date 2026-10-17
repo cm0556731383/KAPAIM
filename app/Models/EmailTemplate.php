@@ -43,8 +43,8 @@ class EmailTemplate extends Model
 
     /**
      * The email asking a supplier for a missing invoice (Expense::requestInvoice()).
-     * Seeded by migration, edited only on the document-templates page — kept
-     * out of TYPE_LABELS so the settings screen neither lists nor creates one.
+     * Seeded by migration, edited in settings → תבניות דואר — kept out of
+     * TYPE_LABELS, so it can't be created there or switched to another use.
      */
     public const SUPPLIER_INVOICE_REQUEST = 'supplier_invoice_request';
 
@@ -71,8 +71,44 @@ class EmailTemplate extends Model
     /** Where the list of expenses (each with its own upload button) goes in a several-invoices request (appended at the end when absent). */
     public const EXPENSE_LIST_TOKEN = '{{רשימת_ההוצאות}}';
 
-    /** The supplier-invoice email types — the expenses page looks them up by type, so settings never lets them change it. */
+    /** The supplier-invoice email types. */
     public const SUPPLIER_TYPES = [self::SUPPLIER_INVOICE_REQUEST, self::SUPPLIER_INVOICES_REQUEST];
+
+    /**
+     * The one reminder a customer gets for materials she hasn't confirmed
+     * (materials:process-reminders). Seeded by migration; can use
+     * {{שם_בית_הספר}} and {{תוכנית}}, and ACKNOWLEDGE_BUTTON_TOKEN.
+     */
+    public const MATERIAL_REMINDER = 'material_reminder';
+
+    /** Where the "I received the materials" button goes in the reminder (appended at the end when absent). */
+    public const ACKNOWLEDGE_BUTTON_TOKEN = '{{כפתור_אישור_קבלה}}';
+
+    /**
+     * The materials email itself (MaterialDelivery::sendFor()). Seeded by
+     * migration; can use {{שם_בית_הספר}} and {{תוכנית}}, MATERIALS_LIST_TOKEN
+     * and ACKNOWLEDGE_BUTTON_TOKEN. Always sent — it can't be disabled.
+     */
+    public const MATERIAL_DELIVERY = 'material_delivery';
+
+    /** Where the list of material links goes in the materials email (appended at the end when absent). */
+    public const MATERIALS_LIST_TOKEN = '{{רשימת_החומרים}}';
+
+    /** Emails the code looks up by type — settings never lets their type change. */
+    public const FIXED_TYPES = [...self::SUPPLIER_TYPES, self::MATERIAL_DELIVERY, self::MATERIAL_REMINDER];
+
+    /** Emails that are always sent — settings offers no disable button for them. */
+    public const ALWAYS_ACTIVE_TYPES = [self::MATERIAL_DELIVERY];
+
+    public static function materialDelivery(): ?self
+    {
+        return self::where('template_type', self::MATERIAL_DELIVERY)->first();
+    }
+
+    public static function materialReminder(): ?self
+    {
+        return self::where('template_type', self::MATERIAL_REMINDER)->first();
+    }
 
     public static function supplierInvoicesRequest(): ?self
     {

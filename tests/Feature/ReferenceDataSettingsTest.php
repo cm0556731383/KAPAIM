@@ -65,6 +65,46 @@ class ReferenceDataSettingsTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_the_materials_reminder_template_is_edited_with_its_button_and_keeps_its_type(): void
+    {
+        $reminder = EmailTemplate::materialReminder();
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'email-templates')
+            ->assertSee('תזכורת חומרי לימוד')
+            ->call('selectEmailTemplate', $reminder->id)
+            ->assertSee('כפתור "קיבלתי את החומרים"')
+            ->set('emailTemplateSubject', 'תזכורת {{תוכנית}}')
+            ->assertSee('תזכורת אלול')
+            ->call('saveEmailTemplate')
+            ->assertHasNoErrors();
+
+        $this->assertSame('תזכורת {{תוכנית}}', $reminder->fresh()->subject);
+        $this->assertSame(EmailTemplate::MATERIAL_REMINDER, $reminder->fresh()->template_type);
+    }
+
+    public function test_the_materials_email_template_is_edited_with_both_its_blocks_and_cannot_be_disabled(): void
+    {
+        $materials = EmailTemplate::materialDelivery();
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'email-templates')
+            ->call('selectEmailTemplate', $materials->id)
+            ->assertSee('+ רשימת החומרים')
+            ->assertSee('חוברת לתלמידה.pdf')
+            ->assertSee('קיבלתי את החומרים')
+            ->assertDontSee('השבתה')
+            ->set('emailTemplateSubject', 'החומרים של {{שם_בית_הספר}}')
+            ->assertSee('החומרים של בית ספר אורות')
+            ->call('saveEmailTemplate')
+            ->assertHasNoErrors()
+            ->call('toggleEmailTemplate', $materials->id)
+            ->assertForbidden();
+
+        $this->assertSame('החומרים של {{שם_בית_הספר}}', $materials->fresh()->subject);
+        $this->assertTrue($materials->fresh()->is_active);
+    }
+
     public function test_settings_page_requires_auth(): void
     {
         $this->get('/settings')->assertRedirect('/login');

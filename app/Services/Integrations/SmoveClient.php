@@ -147,17 +147,37 @@ class SmoveClient
      * ['name' => string, 'url' => string] — see class docblock for why this
      * is links, not attached files.
      */
-    public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject): string
+    /**
+     * $body is the business owner's rendered 'material_delivery' template;
+     * the links list and the "received" button (MaterialDelivery::acknowledge(),
+     * which also stops the reminder) replace their tokens, or are appended
+     * at the end.
+     */
+    public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject, string $body, string $acknowledgeUrl): string
     {
-        $linksHtml = collect($attachmentLinks)
+        $linksHtml = '<ul style="padding-inline-start:20px;">'.collect($attachmentLinks)
             ->map(fn (array $a) => '<li style="margin-bottom:8px;"><a href="'.e($a['url']).'" style="color:#286E9A; font-weight:600;">'.e($a['name']).'</a></li>')
-            ->implode('');
+            ->implode('').'</ul>';
 
-        return $this->sendCampaign(
-            $recipients,
-            $subject,
-            BrandedEmail::wrap('<p>שלום,</p><p>מצורפים קישורים לחומרי הלימוד:</p><ul style="padding-inline-start:20px;">'.$linksHtml.'</ul><p>בברכה, כפיים</p>'),
-        );
+        return $this->sendCampaign($recipients, $subject, BrandedEmail::wrap(self::textWithBlocks($body, [
+            EmailTemplate::MATERIALS_LIST_TOKEN => $linksHtml,
+            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'),
+        ])));
+    }
+
+    /**
+     * The reminder for materials not yet confirmed (materials:process-reminders),
+     * to every recipient of the delivery. $body is the business owner's
+     * rendered 'material_reminder' template; the "received" button replaces
+     * its EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN, or is appended at the end.
+     *
+     * @param  array<int, array{email: string, name: ?string}>  $recipients
+     */
+    public function sendMaterialReminderEmail(array $recipients, string $subject, string $body, string $acknowledgeUrl): string
+    {
+        $html = self::textWithBlock($body, EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN, BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'));
+
+        return $this->sendCampaign($recipients, $subject, BrandedEmail::wrap($html));
     }
 
     /**
@@ -173,7 +193,7 @@ class SmoveClient
         return $this->sendCampaign($recipients, $subject, $bodyHtml);
     }
 
-    /** Any single-recipient plain-text send: material/expense reminders (FR-5.16/FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. The text itself (EmailTemplate::render()'s output, editable by the business owner) is untouched; BrandedEmail::wrap() only adds the branded shell around it. */
+    /** Any single-recipient plain-text send: expense reminders (FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. The text itself (EmailTemplate::render()'s output, editable by the business owner) is untouched; BrandedEmail::wrap() only adds the branded shell around it. */
     public function sendTransactionalEmail(string $toEmail, string $toName, string $subject, string $body): string
     {
         return $this->sendCampaign(
@@ -260,12 +280,26 @@ class SmoveClient
     /** Plain text as escaped paragraphs, with $blockHtml where $token sits (or at the end when it doesn't). */
     private static function textWithBlock(string $body, string $token, string $blockHtml): string
     {
-        $paragraphs = array_map(
-            fn (string $text) => trim($text) === '' ? '' : '<p>'.nl2br(e(trim($text, "\n"))).'</p>',
-            explode($token, $body),
-        );
+        return self::textWithBlocks($body, [$token => $blockHtml]);
+    }
 
-        return count($paragraphs) > 1 ? implode($blockHtml, $paragraphs) : $paragraphs[0].$blockHtml;
+    /**
+     * Plain text as escaped paragraphs, each token replaced by its block's
+     * HTML — a block whose token the text doesn't place is appended at the
+     * end, in the given order.
+     *
+     * @param  array<string, string>  $blocks  token => HTML
+     */
+    private static function textWithBlocks(string $body, array $blocks): string
+    {
+        $missing = array_filter($blocks, fn (string $token) => ! str_contains($body, $token), ARRAY_FILTER_USE_KEY);
+        $pattern = '/('.implode('|', array_map(fn ($token) => preg_quote($token, '/'), array_keys($blocks))).')/u';
+
+        $html = collect(preg_split($pattern, $body, -1, PREG_SPLIT_DELIM_CAPTURE))
+            ->map(fn (string $part) => $blocks[$part] ?? (trim($part) === '' ? '' : '<p>'.nl2br(e(trim($part, "\n"))).'</p>'))
+            ->implode('');
+
+        return $html.implode('', $missing);
     }
 
     /** A SUMIT payment page link (PaymentLink::send()) — the payment button is the email's one action. */
