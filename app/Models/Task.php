@@ -25,7 +25,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 #[Fillable([
     'user_id', 'lead_id', 'customer_id', 'deal_id', 'task_type', 'status',
-    'title', 'description', 'due_at', 'completed_at',
+    'title', 'description', 'due_at', 'completed_at', 'reminder_sent_at',
 ])]
 class Task extends Model
 {
@@ -38,6 +38,7 @@ class Task extends Model
         return [
             'due_at' => 'datetime',
             'completed_at' => 'datetime',
+            'reminder_sent_at' => 'datetime',
         ];
     }
 

@@ -14,6 +14,12 @@ Artisan::command('inspire', function () {
 // App\Console\Commands\ProcessCollectionTasks.
 Schedule::command('collections:process')->daily();
 
+// The morning email of each user's reminders for the day — lead reminders
+// due today and newly opened collection tasks. Runs after collections:process
+// (midnight), so that day's new collection tasks are included. See
+// App\Console\Commands\SendTaskReminders.
+Schedule::command('tasks:send-reminders')->dailyAt('08:00');
+
 // Build-plan 10 (FR-5.16/FR-5.17) — logs a (stubbed) reminder for material
 // deliveries not opened within the configured window. See
 // App\Console\Commands\ProcessMaterialReminders.

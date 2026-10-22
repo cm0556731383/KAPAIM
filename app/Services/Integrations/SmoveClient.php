@@ -204,6 +204,29 @@ class SmoveClient
     }
 
     /**
+     * The morning email of a user's own reminders for the day
+     * (tasks:send-reminders) — an internal email to a staff member, so a
+     * fixed wording rather than an editable template. $tasks: one row per
+     * reminder, each with a link straight into its lead / deal.
+     *
+     * @param  array<int, array{title: string, subtitle: string, description: ?string, url: string}>  $tasks
+     */
+    public function sendTaskRemindersEmail(string $toEmail, string $toName, string $subject, string $intro, array $tasks): string
+    {
+        $items = collect($tasks)->map(fn (array $t) => '<li style="margin-bottom:14px;">'
+            .'<a href="'.e($t['url']).'" style="color:#286E9A; font-weight:700;">'.e($t['title']).'</a>'
+            .'<div style="font-size:14px; color:#555;">'.e($t['subtitle']).'</div>'
+            .($t['description'] ? '<div style="font-size:14px;">'.nl2br(e($t['description'])).'</div>' : '')
+            .'</li>')->implode('');
+
+        return $this->sendCampaign(
+            [['email' => $toEmail, 'name' => $toName]],
+            $subject,
+            BrandedEmail::wrap('<p>'.e($intro).'</p><ul style="padding-inline-start:20px;">'.$items.'</ul>'),
+        );
+    }
+
+    /**
      * Build-plan 12 follow-up (FR-4.2/FR-4.7): a document send (quote/order
      * form/contract/invoice/credit note) — $formUrl links to the online
      * form (documents.sign, no login required — view the content, fill in
