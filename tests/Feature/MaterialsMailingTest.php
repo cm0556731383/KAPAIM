@@ -7,6 +7,7 @@ use App\Models\Bundle;
 use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Deal;
+use App\Models\Document;
 use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\Lead;
@@ -168,7 +169,7 @@ class MaterialsMailingTest extends TestCase
     {
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
-        Deal::createForCustomer($customer, $program, null);
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
         $file = UploadedFile::fake()->create('doc.pdf', 10);
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
@@ -233,8 +234,8 @@ class MaterialsMailingTest extends TestCase
         $bundle = Bundle::create(['name' => 'מארז בדיקה', 'description' => null, 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
         $bundle->programs()->attach($inBundle->id);
 
-        Deal::createForCustomer($customer, $bought, null);
-        Deal::createForCustomer($customer, null, $bundle);
+        $this->signContract(Deal::createForCustomer($customer, $bought, null));
+        $this->signContract(Deal::createForCustomer($customer, null, $bundle));
         $cancelledDeal = Deal::createForCustomer($customer, $cancelled, null);
         $cancelledStatus = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => 'מבוטלת'], ['is_active' => true, 'sort_order' => 4]);
         $cancelledDeal->updateStatusWithLock($cancelledDeal->version, $cancelledStatus->id);
@@ -250,7 +251,7 @@ class MaterialsMailingTest extends TestCase
     {
         $customer = $this->createCustomerWithEmailContact();
         $subscriptionBundle = $this->createSubscriptionBundle();
-        $subscription = Deal::createForCustomer($customer, null, $subscriptionBundle)->subscription;
+        $subscription = $this->signContract(Deal::createForCustomer($customer, null, $subscriptionBundle))->subscription;
 
         // Named after their months the way the business owner types them — a plain " not ״.
         [$first, $second, $third] = collect([1, 2, 3])
@@ -283,6 +284,34 @@ class MaterialsMailingTest extends TestCase
         $this->assertSame(0, MaterialDelivery::count());
     }
 
+    public function test_materials_can_be_sent_only_once_the_deal_contract_is_signed(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram('תוכנית ללא חוזה חתום');
+        $deal = Deal::createForCustomer($customer, $program, null);
+        $status = StatusDefinition::firstOrCreate(['scope' => 'document', 'name' => Document::DEFAULT_STATUS_NAME], ['is_active' => true, 'sort_order' => 1]);
+        // A contract that was only sent, not signed, doesn't count.
+        Document::create(['deal_id' => $deal->id, 'document_type' => 'contract', 'status_id' => $status->id, 'sent_at' => now()]);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'materials')
+            ->assertSee('ממתינות לחתימה על חוזה העסקה: תוכנית ללא חוזה חתום')
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('doc.pdf', 10)])
+            ->call('sendMaterials')
+            ->assertSet('materialsError', 'ניתן לשלוח חומרים רק אחרי חתימה על חוזה העסקה.');
+        $this->assertSame(0, MaterialDelivery::count());
+        $this->assertNotContains($program->id, $component->instance()->materialsPrograms->pluck('id')->all());
+
+        $deal->documents()->where('document_type', 'contract')->first()->markSigned();
+
+        $ids = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'materials')
+            ->assertDontSee('ממתינות לחתימה על חוזה העסקה')
+            ->instance()->materialsPrograms->pluck('id')->all();
+        $this->assertSame([$program->id], $ids);
+    }
+
     public function test_materials_can_be_sent_as_a_link_with_or_without_a_file(): void
     {
         ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
@@ -290,7 +319,7 @@ class MaterialsMailingTest extends TestCase
         Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
-        Deal::createForCustomer($customer, $program, null);
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('materialsProgramId', (string) $program->id)
@@ -872,6 +901,15 @@ class MaterialsMailingTest extends TestCase
         $items = app(\App\Services\DashboardSummary::class)->attentionItems($limited);
 
         $this->assertFalse($items->contains(fn (array $item) => str_contains($item['label'], 'טרם אושרה קבלה')));
+    }
+
+    /** Materials go out only once the deal's contract is signed. */
+    private function signContract(Deal $deal): Deal
+    {
+        $status = StatusDefinition::firstOrCreate(['scope' => 'document', 'name' => Document::DEFAULT_STATUS_NAME], ['is_active' => true, 'sort_order' => 1]);
+        Document::create(['deal_id' => $deal->id, 'document_type' => 'contract', 'status_id' => $status->id, 'signed_at' => now()]);
+
+        return $deal;
     }
 
     private function createDelivery(): MaterialDelivery

@@ -127,6 +127,12 @@ class Deal extends Model
         return $this->hasMany(Document::class)->orderBy('id');
     }
 
+    /** Deals whose contract was signed (Document::markSigned()) — materials go out only after that. */
+    public function scopeWithSignedContract(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->whereHas('documents', fn ($d) => $d->where('document_type', 'contract')->whereNotNull('signed_at'));
+    }
+
     /**
      * The deal's latest invoice that was actually issued — sent (which,
      * for an invoice, only happens once Summit accepted it; see

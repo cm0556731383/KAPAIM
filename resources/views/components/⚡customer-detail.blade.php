@@ -863,16 +863,33 @@ class extends Component
      * subscription still counts for its months before the cancellation,
      * supplied or not — Subscription::programIdsBeforeCancellation()
      * (business owner's call, 2026-10-17).
+     *
+     * And only once that deal's contract is signed (business owner's call,
+     * 2026-10-23) — see materialsProgramsAwaitingContract() for the rest.
      */
     #[Computed]
     public function materialsPrograms()
     {
+        return $this->purchasedPrograms(signedContractOnly: true);
+    }
+
+    /** Programs she bought whose deal's contract isn't signed yet — named on the send form, not sendable. */
+    #[Computed]
+    public function materialsProgramsAwaitingContract()
+    {
+        return $this->purchasedPrograms(signedContractOnly: false)->whereNotIn('id', $this->materialsPrograms->pluck('id'))->values();
+    }
+
+    private function purchasedPrograms(bool $signedContractOnly)
+    {
         $deals = $this->customer->deals()
             ->whereDoesntHave('status', fn ($q) => $q->where('name', Deal::CANCELLED_STATUS_NAME))
+            ->when($signedContractOnly, fn ($q) => $q->withSignedContract())
             ->get(['id', 'program_id', 'bundle_id']);
 
         $beforeCancellation = $this->customer->subscriptions()
             ->whereNotNull('cancelled_from_month')
+            ->when($signedContractOnly, fn ($q) => $q->whereHas('deal', fn ($d) => $d->withSignedContract()))
             ->with(['deliveries', 'deal.bundle.programs'])
             ->get()
             ->flatMap->programIdsBeforeCancellation();
@@ -985,7 +1002,9 @@ class extends Component
         $program = $this->materialsPrograms->firstWhere('id', (int) $this->materialsProgramId);
 
         if (! $program) {
-            $this->materialsError = 'ניתן לשלוח חומרים רק עבור תוכנית שהלקוחה רכשה.';
+            $this->materialsError = $this->materialsProgramsAwaitingContract->contains('id', (int) $this->materialsProgramId)
+                ? 'ניתן לשלוח חומרים רק אחרי חתימה על חוזה העסקה.'
+                : 'ניתן לשלוח חומרים רק עבור תוכנית שהלקוחה רכשה.';
 
             return;
         }
@@ -1784,11 +1803,18 @@ class extends Component
                     <div class="full">
                         <label for="materialsProgramId">תוכנית</label>
                         <select id="materialsProgramId" wire:model="materialsProgramId">
-                            <option value="">{{ $this->materialsPrograms->isEmpty() ? 'הלקוחה עדיין לא רכשה תוכניות' : 'בחרו תוכנית' }}</option>
+                            <option value="">{{ match (true) {
+                                $this->materialsPrograms->isNotEmpty() => 'בחרו תוכנית',
+                                $this->materialsProgramsAwaitingContract->isNotEmpty() => 'אין תוכנית עם חוזה חתום',
+                                default => 'הלקוחה עדיין לא רכשה תוכניות',
+                            } }}</option>
                             @foreach ($this->materialsPrograms as $program)
                                 <option value="{{ $program->id }}">{{ $program->name }}</option>
                             @endforeach
                         </select>
+                        @if ($this->materialsProgramsAwaitingContract->isNotEmpty())
+                            <p class="note" style="margin-top:6px">ממתינות לחתימה על חוזה העסקה: {{ $this->materialsProgramsAwaitingContract->pluck('name')->implode(', ') }} — חומרים נשלחים רק אחרי שהחוזה נחתם.</p>
+                        @endif
                     </div>
 
                     {{-- Livewire uploads the files as soon as they're chosen: show it, and say so if it fails
