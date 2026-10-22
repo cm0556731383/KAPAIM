@@ -377,10 +377,35 @@ class SubscriptionsTest extends TestCase
 
         $row = fn (Subscription $s) => route('customer-detail', $s->customer_id);
         Livewire::actingAs($this->owner)->test('customers')
-            ->set('filterProgramId', (string) $program->id)
+            ->set('filterProgramIds', [(string) $program->id])
             ->assertSeeHtml($row($active))
             ->assertDontSeeHtml($row($cancelled))
             ->assertDontSeeHtml($row($other));
+    }
+
+    public function test_the_customers_filters_take_several_values_at_once(): void
+    {
+        $first = $this->openSubscription();
+        $second = $this->openSubscription();
+        $third = $this->openSubscription();
+        $first->customer->school->update(['city' => 'ירושלים']);
+        $second->customer->school->update(['city' => 'חיפה']);
+        $third->customer->school->update(['city' => 'אילת']);
+        $firstProgram = $this->createProgram('תוכנית א לסינון');
+        $secondProgram = $this->createProgram('תוכנית ב לסינון');
+        $first->deal->bundle->programs()->attach($firstProgram->id);
+        $second->deal->bundle->programs()->attach($secondProgram->id);
+
+        $row = fn (Subscription $s) => route('customer-detail', $s->customer_id);
+        Livewire::actingAs($this->owner)->test('customers')
+            ->set('filterProgramIds', [(string) $firstProgram->id, (string) $secondProgram->id])
+            ->assertSeeHtml($row($first))
+            ->assertSeeHtml($row($second))
+            ->assertDontSeeHtml($row($third))
+            ->set('filterCities', ['חיפה', 'אילת'])
+            ->assertSeeHtml($row($second))
+            ->assertDontSeeHtml($row($first))
+            ->assertDontSeeHtml($row($third));
     }
 
     public function test_customers_list_frames_only_subscribed_customers(): void

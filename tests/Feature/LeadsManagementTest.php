@@ -494,16 +494,51 @@ class LeadsManagementTest extends TestCase
         $row = fn (Lead $lead) => "window.location='".route('lead-detail', $lead)."'";
 
         Livewire::actingAs($this->owner)->test('leads')
-            ->set('filterItem', "program:{$program->id}")
+            ->set('filterItems', ["program:{$program->id}"])
             ->assertSeeHtml($row($programLead))
             ->assertDontSeeHtml($row($bundleLead))
             ->assertDontSeeHtml($row($otherLead))
-            ->set('filterItem', "bundle:{$bundle->id}")
+            ->set('filterItems', ["bundle:{$bundle->id}"])
             ->assertSeeHtml($row($bundleLead))
             ->assertDontSeeHtml($row($programLead))
             ->assertDontSeeHtml($row($otherLead))
-            ->set('filterItem', '')
+            ->set('filterItems', [])
             ->assertSeeHtml($row($otherLead));
+    }
+
+    public function test_each_leads_filter_takes_several_values_at_once(): void
+    {
+        $programLead = $this->createLead(schoolName: 'מתעניין בתוכנית');
+        $bundleLead = $this->createLead(schoolName: 'מתעניין במארז');
+        $otherLead = $this->createLead(schoolName: 'ללא בקשה');
+        $program = Program::create(['name' => 'תוכנית מבוקשת', 'price' => 500, 'is_premium' => false, 'is_active' => true]);
+        $bundle = \App\Models\Bundle::create(['name' => 'מארז מבוקש', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $programLead->interestedPrograms()->attach($program->id);
+        $bundleLead->interestedBundles()->attach($bundle->id);
+        $programLead->school->update(['city' => 'ירושלים']);
+        $bundleLead->school->update(['city' => 'חיפה']);
+        $otherLead->school->update(['city' => 'אילת']);
+
+        $row = fn (Lead $lead) => "window.location='".route('lead-detail', $lead)."'";
+
+        Livewire::actingAs($this->owner)->test('leads')
+            ->set('filterItems', ["program:{$program->id}", "bundle:{$bundle->id}"])
+            ->assertSeeHtml($row($programLead))
+            ->assertSeeHtml($row($bundleLead))
+            ->assertDontSeeHtml($row($otherLead))
+            ->assertSee('תוכנית מבוקשת, מארז מבוקש')
+            ->set('filterItems', [])
+            ->set('filterCities', ['ירושלים', 'אילת'])
+            ->assertSeeHtml($row($programLead))
+            ->assertSeeHtml($row($otherLead))
+            ->assertDontSeeHtml($row($bundleLead))
+            ->set('filterSchoolIds', [(string) $otherLead->school_id, (string) $bundleLead->school_id])
+            // Id-keyed filters show what's ticked and offer clearing it, like the text-keyed ones.
+            ->assertSee($otherLead->school->name.', '.$bundleLead->school->name)
+            ->assertSee('ניקוי — כל בתי הספר')
+            ->assertSeeHtml($row($otherLead))
+            ->assertDontSeeHtml($row($programLead))
+            ->assertDontSeeHtml($row($bundleLead));
     }
 
     public function test_filtering_leads_by_a_program_includes_leads_interested_in_a_bundle_that_holds_it(): void
@@ -520,7 +555,7 @@ class LeadsManagementTest extends TestCase
         $row = fn (Lead $lead) => "window.location='".route('lead-detail', $lead)."'";
 
         Livewire::actingAs($this->owner)->test('leads')
-            ->set('filterItem', "program:{$program->id}")
+            ->set('filterItems', ["program:{$program->id}"])
             ->assertSeeHtml($row($subscriberLead))
             ->assertDontSeeHtml($row($otherLead));
     }

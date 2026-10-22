@@ -18,7 +18,8 @@ class extends Component
 {
     use WithPagination;
 
-    public string $userFilter = '';
+    /** Several users at once — nothing ticked means everyone. */
+    public array $filterUserIds = [];
     public string $fromDate = '';
     public string $toDate = '';
 
@@ -35,7 +36,7 @@ class extends Component
         abort_unless(auth()->user()->can('activity-log.view'), 403);
     }
 
-    public function updatedUserFilter(): void
+    public function updatedFilterUserIds(): void
     {
         $this->resetPage();
     }
@@ -54,7 +55,7 @@ class extends Component
     public function entries()
     {
         return ActivityLog::with('user')
-            ->when($this->userFilter !== '', fn ($q) => $q->where('user_id', $this->userFilter))
+            ->when($this->filterUserIds, fn ($q) => $q->whereIn('user_id', array_map('intval', $this->filterUserIds)))
             ->when($this->fromDate !== '', fn ($q) => $q->whereDate('occurred_at', '>=', $this->fromDate))
             ->when($this->toDate !== '', fn ($q) => $q->whereDate('occurred_at', '<=', $this->toDate))
             ->orderByDesc('occurred_at')
@@ -77,15 +78,8 @@ class extends Component
     </div>
 
     <div class="filter-row">
-        <div>
-            <label for="userFilter">משתמשת</label>
-            <select id="userFilter" wire:model.live="userFilter">
-                <option value="">הכל</option>
-                @foreach ($this->filterUsers as $user)
-                    <option value="{{ $user->id }}">{{ $user->name }}</option>
-                @endforeach
-            </select>
-        </div>
+        <x-multi-filter model="filterUserIds" label="משתמשת" all-label="הכל" :selected="$filterUserIds"
+            :options="$this->filterUsers->pluck('name', 'id')->all()" />
         <div>
             <label for="fromDate">מתאריך</label>
             <input type="date" id="fromDate" wire:model.live="fromDate">

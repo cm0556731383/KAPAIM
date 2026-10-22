@@ -18,13 +18,13 @@ class extends Component
 {
     use Notifies;
 
-    // ===== סינון =====
-    public string $filterSchoolId = '';
-    public string $filterCity = '';
-    public string $filterSourceId = '';
-    public string $filterStatusId = '';
+    // ===== סינון ===== (each filter takes several values — nothing ticked means all)
+    public array $filterSchoolIds = [];
+    public array $filterCities = [];
+    public array $filterSourceIds = [];
+    public array $filterStatusIds = [];
     /** "program:{id}" / "bundle:{id}" — same encoding as ⚡lead-detail's itemToAttach. */
-    public string $filterItem = '';
+    public array $filterItems = [];
 
     // ===== ליד חדש (יצירה מהירה — FR-1.2: מייל+טלפון בלבד חובה) =====
     public string $newSchoolName = '';
@@ -158,26 +158,40 @@ class extends Component
             ->with(['school', 'status', 'source', 'assignedUser', 'interestedPrograms', 'interestedBundles', 'followUps'])
             ->whereNull('converted_at')
             ->when(! $user->can('leads-all.view'), fn ($q) => $q->where('assigned_user_id', $user->id))
-            ->when($this->filterSchoolId !== '', fn ($q) => $q->where('school_id', $this->filterSchoolId))
-            ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
-            ->when($this->filterSourceId !== '', fn ($q) => $q->where('lead_source_id', $this->filterSourceId))
-            // A program also matches a lead interested in a bundle (e.g. the annual subscription) that includes it.
-            ->when(str_starts_with($this->filterItem, 'program:'), fn ($q) => $q->where(fn ($outer) => $outer
-                ->whereHas('interestedPrograms', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8)))
-                ->orWhereHas('interestedBundles.programs', fn ($pq) => $pq->where('programs.id', (int) substr($this->filterItem, 8)))
-            ))
-            ->when(str_starts_with($this->filterItem, 'bundle:'), fn ($q) => $q->whereHas(
-                'interestedBundles', fn ($bq) => $bq->where('bundles.id', (int) substr($this->filterItem, 7))
-            ))
+            ->when($this->filterSchoolIds, fn ($q) => $q->whereIn('school_id', array_map('intval', $this->filterSchoolIds)))
+            ->when($this->filterCities, fn ($q) => $q->whereHas('school', fn ($sq) => $sq->whereIn('city', $this->filterCities)))
+            ->when($this->filterSourceIds, fn ($q) => $q->whereIn('lead_source_id', array_map('intval', $this->filterSourceIds)))
+            // Any of the ticked items. A program also matches a lead interested
+            // in a bundle (e.g. the annual subscription) that includes it.
+            ->when($this->filterItems, function ($q) {
+                $programIds = $this->filterItemIds('program:');
+                $bundleIds = $this->filterItemIds('bundle:');
+
+                $q->where(fn ($outer) => $outer
+                    ->when($programIds, fn ($o) => $o
+                        ->orWhereHas('interestedPrograms', fn ($pq) => $pq->whereIn('programs.id', $programIds))
+                        ->orWhereHas('interestedBundles.programs', fn ($pq) => $pq->whereIn('programs.id', $programIds)))
+                    ->when($bundleIds, fn ($o) => $o->orWhereHas('interestedBundles', fn ($bq) => $bq->whereIn('bundles.id', $bundleIds)))
+                    ->when(! $programIds && ! $bundleIds, fn ($o) => $o->whereRaw('1 = 0')));
+            })
             ->when(
-                $this->filterStatusId !== '',
-                fn ($q) => $q->where('status_id', $this->filterStatusId),
+                $this->filterStatusIds,
+                fn ($q) => $q->whereIn('status_id', array_map('intval', $this->filterStatusIds)),
                 // No status explicitly chosen: default to hiding closed-lost
                 // leads rather than showing every status unfiltered.
                 fn ($q) => $q->whereHas('status', fn ($sq) => $sq->where('name', '!=', Lead::CLOSED_NO_SALE_STATUS_NAME)),
             )
             ->orderByDesc('updated_at')
             ->get();
+    }
+
+    /** The ids of the ticked filterItems with this prefix ("program:" / "bundle:"). */
+    private function filterItemIds(string $prefix): array
+    {
+        return collect($this->filterItems)
+            ->filter(fn ($item) => str_starts_with((string) $item, $prefix))
+            ->map(fn ($item) => (int) substr($item, strlen($prefix)))
+            ->values()->all();
     }
 
     #[Computed]
@@ -281,62 +295,19 @@ class extends Component
 
     {{-- ===== סינון ===== --}}
     <div class="filter-row">
-        <div>
-            <label for="filterSchoolId">בית ספר</label>
-            <select id="filterSchoolId" wire:model.live="filterSchoolId">
-                <option value="">כל בתי הספר</option>
-                @foreach ($this->schools as $school)
-                    <option value="{{ $school->id }}">{{ $school->name }}</option>
-                @endforeach
-            </select>
-        </div>
-        <div>
-            <label for="filterCity">עיר</label>
-            <select id="filterCity" wire:model.live="filterCity">
-                <option value="">כל הערים</option>
-                @foreach ($this->cities as $city)
-                    <option value="{{ $city }}">{{ $city }}</option>
-                @endforeach
-            </select>
-        </div>
-        <div>
-            <label for="filterSourceId">מקור פנייה</label>
-            <select id="filterSourceId" wire:model.live="filterSourceId">
-                <option value="">כל המקורות</option>
-                @foreach ($this->sources as $source)
-                    <option value="{{ $source->id }}">{{ $source->name }}</option>
-                @endforeach
-            </select>
-        </div>
-        <div>
-            <label for="filterStatusId">סטטוס</label>
-            <select id="filterStatusId" wire:model.live="filterStatusId">
-                <option value="">כל הסטטוסים</option>
-                @foreach ($this->statuses as $status)
-                    <option value="{{ $status->id }}">{{ $status->name }}</option>
-                @endforeach
-            </select>
-        </div>
-        <div>
-            <label for="filterItem">תוכנית / מארז מבוקש</label>
-            <select id="filterItem" wire:model.live="filterItem">
-                <option value="">כל התוכניות והמארזים</option>
-                @if ($this->programs->isNotEmpty())
-                    <optgroup label="תוכניות">
-                        @foreach ($this->programs as $program)
-                            <option value="program:{{ $program->id }}">{{ $program->name }}</option>
-                        @endforeach
-                    </optgroup>
-                @endif
-                @if ($this->bundles->isNotEmpty())
-                    <optgroup label="מארזים">
-                        @foreach ($this->bundles as $bundle)
-                            <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }}</option>
-                        @endforeach
-                    </optgroup>
-                @endif
-            </select>
-        </div>
+        <x-multi-filter model="filterSchoolIds" label="בית ספר" all-label="כל בתי הספר" :selected="$filterSchoolIds"
+            :options="$this->schools->pluck('name', 'id')->all()" />
+        <x-multi-filter model="filterCities" label="עיר" all-label="כל הערים" :selected="$filterCities"
+            :options="$this->cities->combine($this->cities)->all()" />
+        <x-multi-filter model="filterSourceIds" label="מקור פנייה" all-label="כל המקורות" :selected="$filterSourceIds"
+            :options="$this->sources->pluck('name', 'id')->all()" />
+        <x-multi-filter model="filterStatusIds" label="סטטוס" all-label="כל הסטטוסים" :selected="$filterStatusIds"
+            :options="$this->statuses->pluck('name', 'id')->all()" />
+        <x-multi-filter model="filterItems" label="תוכנית / מארז מבוקש" all-label="כל התוכניות והמארזים" :selected="$filterItems"
+            :groups="[
+                'תוכניות' => $this->programs->mapWithKeys(fn ($p) => ['program:'.$p->id => $p->name])->all(),
+                'מארזים' => $this->bundles->mapWithKeys(fn ($b) => ['bundle:'.$b->id => $b->name])->all(),
+            ]" />
     </div>
 
     <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-lg)">

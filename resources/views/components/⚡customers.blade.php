@@ -19,12 +19,12 @@ new
 #[Layout('layouts.app', ['title' => 'לקוחות — כפיים'])]
 class extends Component
 {
-    // ===== סינון =====
+    // ===== סינון ===== (city/program/status take several values — nothing ticked means all)
     public string $filterName = '';
-    public string $filterCity = '';
-    public string $filterProgramId = '';
+    public array $filterCities = [];
+    public array $filterProgramIds = [];
     public string $filterSubscription = '';
-    public string $filterStatusId = '';
+    public array $filterStatusIds = [];
 
     public function mount(): void
     {
@@ -37,17 +37,18 @@ class extends Component
         return Customer::query()
             ->with(['school', 'status', 'contacts', 'subscriptions.status'])
             ->when($this->filterName !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('name', 'like', '%'.$this->filterName.'%')))
-            ->when($this->filterCity !== '', fn ($q) => $q->whereHas('school', fn ($sq) => $sq->where('city', $this->filterCity)))
-            ->when($this->filterProgramId !== '', function ($q) {
-                $programId = $this->filterProgramId;
+            ->when($this->filterCities, fn ($q) => $q->whereHas('school', fn ($sq) => $sq->whereIn('city', $this->filterCities)))
+            ->when($this->filterProgramIds, function ($q) {
+                $programIds = array_map('intval', $this->filterProgramIds);
 
-                // A program filter also catches a customer who bought it inside
-                // a bundle — an annual subscription or any other bundle — on a
-                // deal that wasn't cancelled, not only as its own standalone deal.
-                $q->where(function ($outer) use ($programId) {
-                    $outer->whereHas('deals', fn ($dq) => $dq->where('program_id', $programId))
+                // Bought any of the ticked programs. A program filter also
+                // catches a customer who bought it inside a bundle — an annual
+                // subscription or any other bundle — on a deal that wasn't
+                // cancelled, not only as its own standalone deal.
+                $q->where(function ($outer) use ($programIds) {
+                    $outer->whereHas('deals', fn ($dq) => $dq->whereIn('program_id', $programIds))
                         ->orWhereHas('deals', fn ($dq) => $dq
-                            ->whereHas('bundle.programs', fn ($pq) => $pq->where('programs.id', $programId))
+                            ->whereHas('bundle.programs', fn ($pq) => $pq->whereIn('programs.id', $programIds))
                             ->whereDoesntHave('status', fn ($stq) => $stq->where('name', Deal::CANCELLED_STATUS_NAME)));
                 });
             })
@@ -57,7 +58,7 @@ class extends Component
             ->when($this->filterSubscription === 'no', fn ($q) => $q->whereDoesntHave(
                 'subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
             ))
-            ->when($this->filterStatusId !== '', fn ($q) => $q->where('status_id', $this->filterStatusId))
+            ->when($this->filterStatusIds, fn ($q) => $q->whereIn('status_id', array_map('intval', $this->filterStatusIds)))
             ->orderByDesc('converted_at')
             ->get();
     }
@@ -97,24 +98,10 @@ class extends Component
             <label for="filterName">שם בית ספר</label>
             <input type="text" id="filterName" wire:model.live.debounce.400ms="filterName" placeholder="חיפוש לפי שם...">
         </div>
-        <div>
-            <label for="filterCity">עיר</label>
-            <select id="filterCity" wire:model.live="filterCity">
-                <option value="">כל הערים</option>
-                @foreach ($this->cities as $city)
-                    <option value="{{ $city }}">{{ $city }}</option>
-                @endforeach
-            </select>
-        </div>
-        <div>
-            <label for="filterProgramId">תכנית שנרכשה</label>
-            <select id="filterProgramId" wire:model.live="filterProgramId">
-                <option value="">כל התוכניות</option>
-                @foreach ($this->programs as $program)
-                    <option value="{{ $program->id }}">{{ $program->name }}</option>
-                @endforeach
-            </select>
-        </div>
+        <x-multi-filter model="filterCities" label="עיר" all-label="כל הערים" :selected="$filterCities"
+            :options="$this->cities->combine($this->cities)->all()" />
+        <x-multi-filter model="filterProgramIds" label="תכנית שנרכשה" all-label="כל התוכניות" :selected="$filterProgramIds"
+            :options="$this->programs->pluck('name', 'id')->all()" />
         <div>
             <label for="filterSubscription">מנוי</label>
             <select id="filterSubscription" wire:model.live="filterSubscription">
@@ -123,15 +110,8 @@ class extends Component
                 <option value="no">אין מנוי פעיל</option>
             </select>
         </div>
-        <div>
-            <label for="filterStatusId">סטטוס</label>
-            <select id="filterStatusId" wire:model.live="filterStatusId">
-                <option value="">כל הסטטוסים</option>
-                @foreach ($this->statuses as $status)
-                    <option value="{{ $status->id }}">{{ $status->name }}</option>
-                @endforeach
-            </select>
-        </div>
+        <x-multi-filter model="filterStatusIds" label="סטטוס" all-label="כל הסטטוסים" :selected="$filterStatusIds"
+            :options="$this->statuses->pluck('name', 'id')->all()" />
     </div>
 
     <div class="card" style="padding:0; overflow:hidden">

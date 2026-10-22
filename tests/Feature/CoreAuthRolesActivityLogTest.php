@@ -272,4 +272,21 @@ class CoreAuthRolesActivityLogTest extends TestCase
         $response->assertSee('תיאור ייחודי לבדיקה');
         $response->assertSee($this->owner->name);
     }
+
+    public function test_activity_log_filters_by_several_users_at_once(): void
+    {
+        $third = User::create(['name' => 'משתמשת שלישית', 'email' => 'third@kapaim.test', 'password' => 'password', 'role_id' => $this->owner->role_id, 'is_active' => true]);
+        $logger = app(ActivityLogger::class);
+        $logger->log('user.created', 'פעולה של בעלת העסק', ['user' => $this->owner]);
+        $logger->log('user.created', 'פעולה של המזכירה', ['user' => $this->secretary]);
+        $logger->log('user.created', 'פעולה של השלישית', ['user' => $third]);
+
+        Livewire::actingAs($this->owner)->test('activity-log')
+            ->set('filterUserIds', [(string) $this->owner->id, (string) $third->id])
+            ->assertSee('פעולה של בעלת העסק')
+            ->assertSee('פעולה של השלישית')
+            ->assertDontSee('פעולה של המזכירה')
+            ->assertSee($this->owner->name.', משתמשת שלישית')
+            ->assertSee('ניקוי — הכל');
+    }
 }
