@@ -146,6 +146,7 @@ class DashboardSummary
             ->merge($this->overdueCollectionItems($user))
             ->merge($this->awaitingReceiptItems($user))
             ->merge($this->materialsNotSentItems($user))
+            ->merge($this->materialsAwaitingAcknowledgementItems($user))
             ->merge($this->failedIntegrationItems($user))
             ->values();
     }
@@ -340,6 +341,36 @@ class DashboardSummary
                 'badge' => 'לשליחה',
                 'badgeClass' => 'badge-primary',
                 'url' => route('customer-detail', $deal->customer),
+            ])
+            ->values();
+    }
+
+    /**
+     * Materials emailed to a customer that she hasn't yet confirmed receiving
+     * (the "קיבלתי את החומרים" button) — opened or not — oldest send first.
+     * Gone once she confirms, or once staff mark it handled on the customer
+     * card ("סימון כטופל"). materials.view gated.
+     */
+    private function materialsAwaitingAcknowledgementItems(User $user): Collection
+    {
+        if (! $user->hasPermission('materials', 'view')) {
+            return collect();
+        }
+
+        return MaterialDelivery::whereNotNull('sent_at')
+            ->whereNull('acknowledged_at')
+            ->whereNull('handled_at')
+            ->with(['customer.school', 'program'])
+            ->orderBy('sent_at')
+            ->get()
+            ->filter(fn (MaterialDelivery $delivery) => $delivery->customer !== null)
+            ->map(fn (MaterialDelivery $delivery) => [
+                'label' => ($delivery->customer->school?->name ?? '—').' — נשלחו חומרים, טרם אושרה קבלה',
+                'subtitle' => ($delivery->program?->name ?? 'חומרים').' · נשלח ב-'.$delivery->sent_at->format('d/m/Y')
+                    .($delivery->opened_at ? ' · המייל נפתח' : ''),
+                'badge' => 'ממתין לאישור',
+                'badgeClass' => 'badge-warning',
+                'url' => route('customer-detail', ['customer' => $delivery->customer, 'tab' => 'materials']),
             ])
             ->values();
     }

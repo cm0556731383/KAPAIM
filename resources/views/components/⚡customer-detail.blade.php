@@ -221,6 +221,11 @@ class extends Component
         $this->customer = $customer->load(['school', 'lead']);
         $this->syncSchoolFields();
 
+        // ?tab=materials etc. — a dashboard item opens the card on the tab it's about.
+        if (in_array(request()->query('tab'), ['info', 'subscription', 'deals', 'billing', 'materials', 'activity'], true)) {
+            $this->activeTab = request()->query('tab');
+        }
+
         $namelessPrimary = $this->customer->contacts()->where('is_primary', true)->where('name', '')->first();
 
         if ($namelessPrimary) {

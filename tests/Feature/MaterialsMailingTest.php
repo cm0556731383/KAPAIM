@@ -837,6 +837,43 @@ class MaterialsMailingTest extends TestCase
             ->exists();
     }
 
+    public function test_the_dashboard_lists_sent_materials_not_yet_confirmed_received(): void
+    {
+        $waiting = $this->createDelivery();
+        $opened = $this->createDelivery();
+        $opened->markOpened();
+        $confirmed = $this->createDelivery();
+        $confirmed->acknowledge(app(ActivityLogger::class));
+        $handled = $this->createDelivery();
+        $handled->markHandled();
+
+        $items = app(\App\Services\DashboardSummary::class)->attentionItems($this->owner)
+            ->filter(fn (array $item) => str_contains($item['label'], 'טרם אושרה קבלה'));
+
+        $this->assertSame(
+            [$waiting->customer->school->name, $opened->customer->school->name],
+            $items->map(fn (array $item) => explode(' — ', $item['label'])[0])->values()->all(),
+        );
+        $this->assertStringContainsString('המייל נפתח', $items->last()['subtitle']);
+        $this->assertSame(route('customer-detail', ['customer' => $waiting->customer_id, 'tab' => 'materials']), $items->first()['url']);
+
+        $this->actingAs($this->owner)->get('/')->assertOk()->assertSee($waiting->customer->school->name.' — נשלחו חומרים, טרם אושרה קבלה');
+        $this->actingAs($this->owner)->get($items->first()['url'])->assertOk()->assertSee('היסטוריית משלוחים');
+    }
+
+    public function test_a_user_without_materials_access_does_not_see_unconfirmed_materials_on_the_dashboard(): void
+    {
+        $this->createDelivery();
+        $leadsOnly = Role::create(['name' => 'לידים בלבד', 'is_active' => true]);
+        $leadsOnly->permissions()->create(['resource' => 'leads', 'action' => 'view', 'is_allowed' => true]);
+        $limited = User::create(['name' => 'לידים בלבד', 'email' => 'leads-only@kapaim.test', 'password' => 'password', 'role_id' => $leadsOnly->id, 'is_active' => true]);
+        $this->assertFalse($limited->hasPermission('materials', 'view'));
+
+        $items = app(\App\Services\DashboardSummary::class)->attentionItems($limited);
+
+        $this->assertFalse($items->contains(fn (array $item) => str_contains($item['label'], 'טרם אושרה קבלה')));
+    }
+
     private function createDelivery(): MaterialDelivery
     {
         $customer = $this->createCustomer();
