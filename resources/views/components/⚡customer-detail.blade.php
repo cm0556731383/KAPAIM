@@ -79,6 +79,12 @@ class extends Component
     public string $schoolBusinessNumber = '';
     public string $schoolSyllable = '';
     public string $schoolClassesPerGrade = '';
+
+    public string $schoolOwnershipName = '';
+
+    public bool $schoolGefenBudget = false;
+
+    public string $schoolContentFormat = '';
     public string $schoolNotes = '';
     public $newLogo = null;
 
@@ -243,6 +249,9 @@ class extends Component
         $this->schoolBusinessNumber = $school?->business_number ?? '';
         $this->schoolSyllable = $school?->syllable ?? '';
         $this->schoolClassesPerGrade = (string) ($school?->classes_per_grade ?? '');
+        $this->schoolOwnershipName = $school?->ownership_name ?? '';
+        $this->schoolGefenBudget = (bool) $school?->gefen_budget;
+        $this->schoolContentFormat = $school?->content_format ?? '';
         $this->schoolNotes = $school?->notes ?? '';
     }
 
@@ -294,6 +303,9 @@ class extends Component
         $data = $this->validate([
             'schoolSyllable' => ['nullable', 'string', 'max:255'],
             'schoolClassesPerGrade' => ['nullable', 'integer', 'min:0'],
+            'schoolOwnershipName' => ['nullable', 'string', 'max:255'],
+            'schoolGefenBudget' => ['boolean'],
+            'schoolContentFormat' => ['nullable', \Illuminate\Validation\Rule::in(array_keys(\App\Models\School::CONTENT_FORMATS))],
             'newLogo' => ['nullable', 'image', 'max:5120'],
         ], [], ['schoolClassesPerGrade' => 'מספר כיתות בשנתון']);
 
@@ -304,6 +316,9 @@ class extends Component
             'classes_per_grade' => $data['schoolClassesPerGrade'] !== null && $data['schoolClassesPerGrade'] !== ''
                 ? (int) $data['schoolClassesPerGrade']
                 : null,
+            'ownership_name' => trim($data['schoolOwnershipName']) ?: null,
+            'gefen_budget' => $data['schoolGefenBudget'],
+            'content_format' => $data['schoolContentFormat'] ?: null,
         ];
 
         if ($this->newLogo) {
@@ -1410,6 +1425,25 @@ class extends Component
                                 <input type="text" id="schoolClassesPerGrade" wire:model="schoolClassesPerGrade" class="ltr-num" dir="ltr">
                                 @error('schoolClassesPerGrade') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                             </div>
+                            <div>
+                                <label for="schoolOwnershipName">שם הבעלות</label>
+                                <input type="text" id="schoolOwnershipName" wire:model="schoolOwnershipName">
+                                @error('schoolOwnershipName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                            <div>
+                                <label>תקציב גפן</label>
+                                <span class="checkbox-row"><input type="checkbox" id="schoolGefenBudget" wire:model="schoolGefenBudget"><label for="schoolGefenBudget" style="margin:0">יש תקציב גפן</label></span>
+                            </div>
+                            <div>
+                                <label>וידאו או שקופיות</label>
+                                <div style="display:flex; gap:var(--sp-md); flex-wrap:wrap">
+                                    @foreach (\App\Models\School::CONTENT_FORMATS as $value => $label)
+                                        <span class="checkbox-row"><input type="radio" id="schoolContentFormat-{{ $value }}" name="schoolContentFormat" value="{{ $value }}" wire:model="schoolContentFormat"><label for="schoolContentFormat-{{ $value }}" style="margin:0">{{ $label }}</label></span>
+                                    @endforeach
+                                    <span class="checkbox-row"><input type="radio" id="schoolContentFormat-none" name="schoolContentFormat" value="" wire:model="schoolContentFormat"><label for="schoolContentFormat-none" style="margin:0">לא נקבע</label></span>
+                                </div>
+                                @error('schoolContentFormat') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
                             <div class="full">
                                 <label for="newLogo">לוגו</label>
                                 <input type="file" id="newLogo" wire:model="newLogo" accept="image/*">
@@ -1434,6 +1468,18 @@ class extends Component
                             <div>
                                 <label>מספר כיתות בשנתון</label>
                                 <div class="field-box ltr-num">{{ $customer->school?->classes_per_grade ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>שם הבעלות</label>
+                                <div class="field-box">{{ $customer->school?->ownership_name ?? '—' }}</div>
+                            </div>
+                            <div>
+                                <label>תקציב גפן</label>
+                                <div class="field-box">{{ $customer->school?->gefen_budget ? '✓ כן' : '✗ לא' }}</div>
+                            </div>
+                            <div>
+                                <label>וידאו או שקופיות</label>
+                                <div class="field-box">{{ \App\Models\School::CONTENT_FORMATS[$customer->school?->content_format] ?? '—' }}</div>
                             </div>
                             <div class="full">
                                 <label>לוגו</label>

@@ -240,6 +240,39 @@ class LeadToCustomerTest extends TestCase
         $this->assertDatabaseHas('activity_logs', ['activity_type' => 'customer.school_updated', 'customer_id' => $customer->id]);
     }
 
+    public function test_owner_can_set_ownership_name_gefen_budget_and_content_format(): void
+    {
+        $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר לפרטים נוספים'));
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->assertSee('שם הבעלות')
+            ->set('editingSchoolDetails', true)
+            ->set('schoolOwnershipName', 'רשת אמי"ת')
+            ->set('schoolGefenBudget', true)
+            ->set('schoolContentFormat', 'slides')
+            ->call('saveSchoolDetails')
+            ->assertHasNoErrors()
+            ->assertSee('רשת אמי"ת')
+            ->assertSee('שקופיות');
+
+        $this->assertDatabaseHas('schools', [
+            'id' => $customer->school_id, 'ownership_name' => 'רשת אמי"ת', 'gefen_budget' => true, 'content_format' => 'slides',
+        ]);
+
+        $component->set('editingSchoolDetails', true)
+            ->set('schoolGefenBudget', false)
+            ->set('schoolContentFormat', '')
+            ->call('saveSchoolDetails')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('schools', ['id' => $customer->school_id, 'gefen_budget' => false, 'content_format' => null]);
+
+        $component->set('editingSchoolDetails', true)
+            ->set('schoolContentFormat', 'audio')
+            ->call('saveSchoolDetails')
+            ->assertHasErrors('schoolContentFormat');
+    }
+
     public function test_owner_can_edit_invoice_name_business_number_and_notes(): void
     {
         $customer = $this->convertLead($this->createLead(schoolName: 'בית ספר לפרטי חשבונית'));

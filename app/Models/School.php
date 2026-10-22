@@ -16,10 +16,20 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * CUSTOMER card for the lifetime of the relationship (build-plan 05) — see
  * customer() below.
  */
-#[Fillable(['name', 'phone', 'email', 'city', 'address', 'invoice_name', 'business_number', 'syllable', 'classes_per_grade', 'logo_path', 'notes'])]
+#[Fillable(['name', 'phone', 'email', 'city', 'address', 'invoice_name', 'business_number', 'syllable', 'classes_per_grade', 'ownership_name', 'gefen_budget', 'content_format', 'logo_path', 'notes'])]
 class School extends Model
 {
     use HasFactory;
+
+    /** content_format values — "וידאו או שקופיות" on the customer card. */
+    public const CONTENT_FORMATS = ['video' => 'וידאו', 'slides' => 'שקופיות'];
+
+    protected function casts(): array
+    {
+        return [
+            'gefen_budget' => 'boolean',
+        ];
+    }
 
     public function leads(): HasMany
     {
