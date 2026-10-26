@@ -173,7 +173,9 @@ class extends Component
     }
 
     /**
-     * FR-4.2: format (digital/pdf) is chosen at send time. FR-4.7: every
+     * FR-4.2: a quote/order form/contract always goes out as the online
+     * form with the PDF attached (Document::FORMAT_FORM_AND_PDF); an
+     * invoice/credit note is issued through SUMIT ('digital'). FR-4.7: every
      * send is logged (inside Document::sendTo()). FR-2.12/FR-2.13: the
      * recipient rows created here are a permanent snapshot — never derived
      * live from contacts.is_primary again.
@@ -215,16 +217,16 @@ class extends Component
         $this->notifySuccess('המסמך נשלח בהצלחה.');
     }
 
-    /** The email for a digital/PDF send exactly as it would go out — addressed to the first recipient with an email. */
-    public function previewEmail(string $format): void
+    /** The email exactly as it would go out — addressed to the first recipient with an email. */
+    public function previewEmail(): void
     {
         $recipients = array_values(array_filter($this->workingRecipients, fn (array $r) => filled($r['email'] ?? null)));
         $first = $recipients[0] ?? ['name' => $this->document->partyName(), 'email' => ''];
 
         $this->showEmailPreview(
-            $this->document->emailMessage($format, (string) $first['email'], (string) $first['name'], preview: true),
+            $this->document->emailMessage((string) $first['name'], preview: true),
             $recipients ? collect($recipients)->map(fn (array $r) => "{$r['name']} <{$r['email']}>")->implode(', ') : 'אין עדיין נמען עם כתובת דוא"ל',
-            ($format === 'digital' ? 'בתצוגה ובמייל הבדיקה הכפתורים אינם פעילים, כדי שלא ייחתם המסמך האמיתי. ' : '')
+            'בתצוגה ובמייל הבדיקה הכפתור אינו פעיל, כדי שלא ייחתם המסמך האמיתי. '
                 .(count($recipients) > 1 ? 'כל נמען מקבל מייל משלו, הפונה אליו בשמו.' : ''),
         );
     }
@@ -375,7 +377,7 @@ class extends Component
                     <h3>נמענים</h3>
 
                     @if ($document->sent_at)
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->format === 'pdf' ? 'קובץ PDF' : 'טופס דיגיטלי' }}.</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->sentFormatLabel() }}.</p>
                         <div class="recipients-row">
                             @foreach ($document->recipients as $recipient)
                                 <span class="chip-recipient">{{ $recipient->recipient_name }}</span>
@@ -395,13 +397,10 @@ class extends Component
                             <div><input type="text" wire:model="newRecipientEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל (אופציונלי)"></div>
                             <div class="full"><button type="button" wire:click="addRecipient" class="btn btn-ghost">+ הוספת נמען לשליחה זו</button></div>
                         </div>
-                        <div style="display:flex; gap:var(--sp-sm); margin-top:var(--sp-lg)">
-                            <button type="button" wire:click="send('digital')" class="btn btn-primary">שליחה כטופס דיגיטלי</button>
-                            <button type="button" wire:click="send('pdf')" class="btn btn-secondary">שליחה כ-PDF</button>
-                        </div>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-lg) 0 0">הלקוחה תקבל מייל עם קישור לטופס המקוון, והמסמך מצורף אליו גם כקובץ PDF.</p>
                         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-top:var(--sp-sm)">
-                            <button type="button" wire:click="previewEmail('digital')" class="btn btn-ghost btn-sm">תצוגה מקדימה — טופס דיגיטלי</button>
-                            <button type="button" wire:click="previewEmail('pdf')" class="btn btn-ghost btn-sm">תצוגה מקדימה — PDF</button>
+                            <button type="button" wire:click="send('{{ \App\Models\Document::FORMAT_FORM_AND_PDF }}')" class="btn btn-primary">שליחה ללקוחה</button>
+                            <button type="button" wire:click="previewEmail" class="btn btn-secondary">תצוגה מקדימה</button>
                         </div>
                     @endif
                 </div>

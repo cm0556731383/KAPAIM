@@ -381,11 +381,9 @@ class extends Component
     }
 
     /**
-     * 2026-09-08 request: a document sent as a plain PDF has no online sign
-     * form (signUrl() is only generated for a 'digital' send — see
-     * Document::sendTo()), so there's no way for confirm() to ever fire on
-     * its own; the customer signs on paper and staff records it here
-     * instead. Reuses Document::confirm() as-is (same confirmed_at/
+     * 2026-09-08 request: a document sent with a PDF (Document::
+     * canBeMarkedSignedByHand()) may come back signed on paper rather than
+     * through the online form, and staff records that here instead. Reuses Document::confirm() as-is (same confirmed_at/
      * received_at/signed_at side effects a real online confirmation would
      * have triggered) rather than a parallel "mark signed" concept.
      */
@@ -1287,10 +1285,8 @@ class extends Component
                             <td>
                                 @if (! $document->sent_at)
                                     <span class="text-text-secondary">—</span>
-                                @elseif ($document->format === 'pdf')
-                                    <span class="badge badge-neutral">קובץ PDF</span>
                                 @else
-                                    <span class="badge badge-neutral">טופס מקוון</span>
+                                    <span class="badge badge-neutral">{{ $document->sentFormatLabel() }}</span>
                                 @endif
                             </td>
                             <td>
@@ -1308,7 +1304,7 @@ class extends Component
                                 @if ($document->isDeletableDraft())
                                     <button type="button" wire:click="deleteDocument({{ $document->id }})" wire:confirm="למחוק את הטיוטה?" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                                 @endif
-                                @if ($document->format === 'pdf' && $document->sent_at && ! $document->confirmed_at && ! in_array($document->document_type, ['invoice', 'credit_note'], true))
+                                @if ($document->canBeMarkedSignedByHand())
                                     <button type="button" wire:click="markDocumentSigned({{ $document->id }})" wire:confirm="לסמן את המסמך כנחתם? פעולה זו מדמה חתימה מקוונת של הלקוחה." class="btn btn-secondary btn-sm">סמן כנחתם</button>
                                 @endif
                             </td>

@@ -40,6 +40,13 @@ class Document extends Model
 
     public const DEFAULT_STATUS_NAME = 'טיוטה';
 
+    /**
+     * How every quote/order form/contract is sent (owner's call, 2026-10-27):
+     * one email with the online form button and the PDF attached. 'digital'
+     * and 'pdf' remain on documents sent before that.
+     */
+    public const FORMAT_FORM_AND_PDF = 'digital_pdf';
+
     public const TYPE_LABELS = [
         'quote' => 'הצעת מחיר',
         'order_form' => 'טופס הזמנה',
@@ -553,8 +560,9 @@ class Document extends Model
     }
 
     /**
-     * The "קבלת המסמך כ-PDF" button on a digital-form send (SmoveClient::
-     * sendDocumentEmail()'s $requestPdfUrl) — hits documents.email-pdf,
+     * The "קבלת המסמך כ-PDF" button on a digital-form send made before
+     * 2026-10-27 — kept so that button still works in emails already sent;
+     * a new send attaches the PDF itself (emailMessage()). Hits documents.email-pdf,
      * which sends $email a brand-new Smove campaign with the PDF actually
      * attached (see requestPdfBySmove() and smoveAttachmentUrl()). The
      * recipient isn't logged in when clicking this, so who to send to
@@ -997,11 +1005,11 @@ class Document extends Model
                 'smove',
                 'document_send',
                 'app_action',
-                function () use ($smove, $emailRecipients, $format) {
+                function () use ($smove, $emailRecipients) {
                     $reference = '';
 
                     foreach ($emailRecipients as $recipient) {
-                        $reference = $smove->send([['email' => $recipient['email'], 'name' => $recipient['name']]], $this->emailMessage($format, $recipient['email'], $recipient['name']));
+                        $reference = $smove->send([['email' => $recipient['email'], 'name' => $recipient['name']]], $this->emailMessage($recipient['name']));
                     }
 
                     return $reference;
@@ -1018,26 +1026,41 @@ class Document extends Model
     }
 
     /**
-     * The email a recipient gets for a 'digital' or 'pdf' send (not an
-     * invoice/credit note — SUMIT emails those itself). $preview: the
-     * document-view preview — its buttons lead nowhere, since a working
-     * form link would let the test copy sign the real document; the PDF is
-     * still attached for real.
+     * The email a recipient gets for a document send (not an invoice/credit
+     * note — SUMIT emails those itself): the online form button, with the
+     * PDF attached too (FORMAT_FORM_AND_PDF). $preview: the document-view
+     * preview — its button leads nowhere, since a working form link would
+     * let the test copy sign the real document; the PDF is still attached
+     * for real.
      */
-    public function emailMessage(string $format, string $toEmail, string $toName, bool $preview = false): EmailMessage
+    public function emailMessage(string $toName, bool $preview = false): EmailMessage
     {
         $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
-        $intro = $format === 'pdf'
-            ? "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שהוכן עבורך."
-            : "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
 
         return EmailMessage::document(
             $toName,
             $typeLabel,
-            $intro,
-            $format === 'digital' ? ($preview ? '#' : $this->signUrl()) : null,
-            $format === 'pdf' ? [['name' => "{$typeLabel}.pdf", 'url' => $this->smoveAttachmentUrl()]] : [],
-            $format === 'digital' ? ($preview ? '#' : $this->emailPdfUrl($toEmail, $toName)) : null,
+            "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך, לצפייה, למילוי פרטים ולאישור מקוון. המסמך מצורף למייל גם כקובץ PDF.",
+            $preview ? '#' : $this->signUrl(),
+            [['name' => "{$typeLabel}.pdf", 'url' => $this->smoveAttachmentUrl()]],
         );
+    }
+
+    /** How a sent document went out — for the deal's documents table and the document screen. */
+    public function sentFormatLabel(): string
+    {
+        return match ($this->format) {
+            'pdf' => 'קובץ PDF',
+            self::FORMAT_FORM_AND_PDF => 'טופס מקוון + PDF',
+            default => 'טופס מקוון',
+        };
+    }
+
+    /** Sent with a PDF the customer may sign on paper, so staff can mark it signed by hand. */
+    public function canBeMarkedSignedByHand(): bool
+    {
+        return in_array($this->format, ['pdf', self::FORMAT_FORM_AND_PDF], true)
+            && $this->sent_at && ! $this->confirmed_at
+            && ! in_array($this->document_type, ['invoice', 'credit_note'], true);
     }
 }

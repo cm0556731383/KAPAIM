@@ -967,16 +967,53 @@ class DocumentsEngineTest extends TestCase
         $component = Livewire::actingAs($this->owner)->test('document-view', ['document' => $quote])
             ->set('workingRecipients', [['contact_id' => null, 'name' => 'רחל כהן', 'email' => 'rachel@example.com']]);
 
-        $digital = $component->call('previewEmail', 'digital')->assertDispatched('open-modal', name: 'email-preview')->get('emailPreview');
-        $this->assertStringContainsString('שלום רחל כהן', $digital['html']);
-        $this->assertStringContainsString('לצפייה במסמך, מילוי פרטים ואישור מקוון', $digital['html']);
-        $this->assertStringNotContainsString('signature=', $digital['html']);
-        $this->assertSame([], $digital['attachments']);
-
-        $pdf = $component->call('previewEmail', 'pdf')->get('emailPreview');
-        $this->assertCount(1, $pdf['attachments']);
-        $this->assertNotNull(Document::verifySmoveAttachmentToken(basename($pdf['attachments'][0]['url'])));
+        $preview = $component->call('previewEmail')->assertDispatched('open-modal', name: 'email-preview')->get('emailPreview');
+        $this->assertStringContainsString('שלום רחל כהן', $preview['html']);
+        $this->assertStringContainsString('לצפייה במסמך, מילוי פרטים ואישור מקוון', $preview['html']);
+        $this->assertStringNotContainsString('signature=', $preview['html']);
+        $this->assertCount(1, $preview['attachments']);
+        $this->assertNotNull(Document::verifySmoveAttachmentToken(basename($preview['attachments'][0]['url'])));
         $this->assertNull($quote->fresh()->sent_at);
+    }
+
+    /** 2026-10-27: one email — the online form button with the PDF attached, and no "request a PDF" button. */
+    public function test_a_document_email_has_the_form_link_and_the_pdf_attached(): void
+    {
+        $quote = $this->generateQuote($this->createDeal());
+        $message = $quote->emailMessage('רחל כהן');
+
+        $this->assertStringContainsString('לצפייה במסמך, מילוי פרטים ואישור מקוון', $message->html);
+        $this->assertStringContainsString(e($quote->signUrl()), $message->html);
+        $this->assertStringNotContainsString('חסומה', $message->html);
+        $this->assertStringNotContainsString('/email-pdf', $message->html);
+        $this->assertCount(1, $message->attachments);
+        $this->assertSame('הצעת מחיר.pdf', $message->attachments[0]['name']);
+        $this->assertNotNull(Document::verifySmoveAttachmentToken(basename($message->attachments[0]['url'])));
+    }
+
+    public function test_sending_from_the_document_screen_sends_the_form_and_the_pdf(): void
+    {
+        $quote = $this->generateQuote($this->createDeal());
+
+        Livewire::actingAs($this->owner)->test('document-view', ['document' => $quote])
+            ->assertDontSee('שליחה כ-PDF')
+            ->set('workingRecipients', [['contact_id' => null, 'name' => 'רחל כהן', 'email' => 'rachel@example.com']])
+            ->call('send', Document::FORMAT_FORM_AND_PDF)
+            ->assertSet('sendError', null);
+
+        $this->assertNotNull($quote->fresh()->sent_at);
+        $this->assertSame(Document::FORMAT_FORM_AND_PDF, $quote->fresh()->format);
+    }
+
+    /** It went out with a PDF too, so it may come back signed on paper. */
+    public function test_a_document_sent_as_form_and_pdf_can_be_marked_signed(): void
+    {
+        $deal = $this->createDeal();
+        $document = $this->generateQuote($deal);
+        $document->update(['sent_at' => now(), 'format' => Document::FORMAT_FORM_AND_PDF]);
+
+        $this->actingAs($this->owner)->get("/deals/{$deal->id}")
+            ->assertOk()->assertSee('סמן כנחתם')->assertSee('טופס מקוון + PDF');
     }
 
     private function createDeal(): Deal
