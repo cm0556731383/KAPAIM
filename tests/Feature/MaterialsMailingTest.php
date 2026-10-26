@@ -465,7 +465,7 @@ class MaterialsMailingTest extends TestCase
 
         // The preview stored the attachments once; the send reuses them.
         $this->assertSame(2, \App\Models\MailingListSendAttachment::count());
-        $component->call('send')->assertSet('sendError', null)->assertSet('sendFiles', [])->assertSet('sendLinks', []);
+        $component->call('send', true)->assertSet('sendError', null)->assertSet('sendFiles', [])->assertSet('sendLinks', []);
         $this->assertSame(2, \App\Models\MailingListSendAttachment::count());
 
         $send = \App\Models\MailingListSend::firstOrFail();
@@ -978,7 +978,7 @@ class MaterialsMailingTest extends TestCase
             ->set('sendListIds', [(string) MailingList::primaryList()->id])
             ->set('sendSubject', 'עדכון חודשי')
             ->set('sendBody', "שלום לכולם,\nיש לנו תוכנית חדשה!")
-            ->call('send')
+            ->call('send', true)
             ->assertHasNoErrors()
             ->assertSet('sendError', null);
 
@@ -988,6 +988,44 @@ class MaterialsMailingTest extends TestCase
         $this->assertStringContainsString('יש לנו תוכנית חדשה!', $send->body_html);
         $this->assertStringContainsString('images/logo.png', $send->body_html); // the branded shell
         \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendMailingListEmail::class, fn ($job) => $job->sendId === $send->id);
+    }
+
+    public function test_sending_with_no_list_ticked_pops_a_warning_and_sends_nothing(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        MailingMembership::addCustomer(MailingList::primaryList(), $this->createCustomerWithEmailContact());
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום')
+            ->call('send', true)
+            ->assertDispatched('notify', type: 'warning', message: 'לא נבחרה רשימת תפוצה. יש לסמן לפחות רשימה אחת לפני שליחת המייל.', sticky: true);
+
+        $this->assertSame(0, \App\Models\MailingListSend::count());
+        \Illuminate\Support\Facades\Queue::assertNothingPushed();
+    }
+
+    /** The send button first asks in the app's confirm dialog; only "אישור" (send(true)) sends. */
+    public function test_sending_asks_for_confirmation_before_anything_goes_out(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        MailingMembership::addCustomer(MailingList::primaryList(), $this->createCustomerWithEmailContact());
+
+        $component = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום')
+            ->call('send');
+
+        $js = collect($component->effects['xjs'] ?? [])->pluck('expression')->implode("\n");
+        $this->assertStringContainsString('confirmDialog(', $js);
+        $this->assertStringContainsString('הודעות המייל יישלחו לכל הנמענים ברשימות התפוצה', $js);
+        $this->assertStringContainsString('$wire.send(true)', $js);
+        $this->assertSame(0, \App\Models\MailingListSend::count());
+        \Illuminate\Support\Facades\Queue::assertNothingPushed();
+
+        $component->call('send', true)->assertSet('sendError', null);
+        $this->assertSame(1, \App\Models\MailingListSend::count());
     }
 
     public function test_one_send_can_target_several_lists_and_each_address_gets_it_once(): void
@@ -1001,13 +1039,11 @@ class MaterialsMailingTest extends TestCase
         MailingMembership::addCustomer(MailingList::forProgram($program), $both);
 
         Livewire::actingAs($this->owner)->test('mailing-lists')
-            ->call('send')
-            ->assertHasErrors(['sendListIds'])
             ->set('sendListIds', [(string) MailingList::primaryList()->id, (string) MailingList::forProgram($program)->id])
             ->assertSet('selectedRecipientCount', 2)
             ->set('sendSubject', 'לשתי רשימות')
             ->set('sendBody', 'שלום')
-            ->call('send')
+            ->call('send', true)
             ->assertSet('sendError', null);
 
         $send = \App\Models\MailingListSend::firstOrFail();
@@ -1031,7 +1067,7 @@ class MaterialsMailingTest extends TestCase
             ->call('send')
             ->assertSet('sendError', 'ברשימה "ספקים" אין עדיין נמענים עם כתובת דוא"ל.')
             ->set('sendListIds', [(string) MailingList::primaryList()->id])
-            ->call('send')
+            ->call('send', true)
             ->assertSet('sendError', null);
 
         $this->assertSame($html, \App\Models\MailingListSend::firstOrFail()->body_html);

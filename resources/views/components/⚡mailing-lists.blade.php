@@ -100,11 +100,22 @@ class extends Component
         $this->showEmailPreview(new EmailMessage($this->sendSubject, $html), $to);
     }
 
-    public function send(ActivityLogger $activityLogger): void
+    /**
+     * No list ticked pops a warning up and sends nothing. Otherwise, once the
+     * email is valid, the app's confirm dialog asks first, and only its
+     * "אישור" calls send(true) — the real send.
+     */
+    public function send(ActivityLogger $activityLogger, bool $confirmed = false): void
     {
         abort_unless(auth()->user()->can('mailing-lists.manage'), 403);
 
         $this->sendError = null;
+
+        if (! $this->sendListIds) {
+            $this->notifyWarning('לא נבחרה רשימת תפוצה. יש לסמן לפחות רשימה אחת לפני שליחת המייל.', sticky: true);
+
+            return;
+        }
 
         $data = $this->validate([
             'sendListIds' => ['required', 'array', 'min:1'],
@@ -126,6 +137,13 @@ class extends Component
             $this->sendError = $lists->count() === 1
                 ? "ברשימה \"{$names}\" אין עדיין נמענים עם כתובת דוא\"ל."
                 : 'ברשימות שנבחרו אין עדיין נמענים עם כתובת דוא"ל.';
+
+            return;
+        }
+
+        if (! $confirmed) {
+            $question = "הודעות המייל יישלחו לכל הנמענים ברשימות התפוצה ({$names} — {$recipientCount} נמענים). האם לשלוח?";
+            $this->js('confirmDialog('.json_encode($question, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).').then((ok) => ok && $wire.send(true))');
 
             return;
         }
@@ -438,8 +456,7 @@ class extends Component
                 <button type="button" wire:click="addSendLink" class="btn btn-ghost btn-sm">+ הוספת קישור</button>
             </div>
             <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile, sendFiles"
-                    wire:confirm="לשלוח את המייל לכל הנמענים ברשימות שנבחרו?">שליחה לרשימות</button>
+                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile, sendFiles">שליחה לרשימות</button>
                 <button type="button" class="btn btn-secondary" wire:click="preview" wire:loading.attr="disabled" wire:target="preview, htmlFile, sendFiles">תצוגה מקדימה</button>
             </div>
         </form>
