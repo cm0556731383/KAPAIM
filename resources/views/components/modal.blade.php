@@ -1,4 +1,4 @@
-@props(['triggerLabel' => null, 'triggerClass' => 'btn btn-primary', 'title' => null, 'name' => null])
+@props(['triggerLabel' => null, 'triggerClass' => 'btn btn-primary', 'title' => null, 'name' => null, 'width' => null])
 
 <span
     x-data="{ open: false }"
@@ -12,7 +12,7 @@
 
     <template x-teleport="body">
         <div class="modal-overlay" x-show="open" x-cloak @click.self="open = false" @keydown.escape.window="open = false" style="display:none">
-            <div class="modal-panel" @click.stop>
+            <div class="modal-panel" @click.stop @if ($width) style="max-width:{{ $width }}" @endif>
                 <div class="modal-header">
                     @if ($title)<h2>{{ $title }}</h2>@endif
                     <button type="button" class="modal-close" @click="open = false" aria-label="סגירה">&times;</button>

@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Concerns\PreviewsEmails;
 use App\Models\BusinessEntity;
 use App\Models\Deal;
 use App\Models\Document;
@@ -40,6 +41,7 @@ new
 class extends Component
 {
     use Notifies;
+    use PreviewsEmails;
 
     public Deal $deal;
 
@@ -898,6 +900,21 @@ class extends Component
         $this->notifySuccess("הקישור לתשלום (₪{$data['linkAmount']}) נשלח אל {$data['linkEmail']}.");
     }
 
+    /** The payment-link email exactly as it would go out — the link itself is only created on send. */
+    public function previewPaymentLinkEmail(): void
+    {
+        $data = $this->validate([
+            'linkAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'linkEmail' => ['required', 'email'],
+        ], [], ['linkAmount' => 'סכום לתשלום', 'linkEmail' => 'דוא"ל הנמענת']);
+
+        $this->showEmailPreview(
+            PaymentLink::emailMessage($this->deal, (float) $data['linkAmount'], $this->payType() === 'recurring', now()->addHours(PaymentLink::EXPIRATION_HOURS), $this->recipientName($data['linkEmail']), '#'),
+            $data['linkEmail'],
+            'בתצוגה ובמייל הבדיקה כפתור התשלום אינו פעיל — דף התשלום נוצר ב-SUMIT רק בשליחה עצמה.',
+        );
+    }
+
     public function resendPaymentLink(int $linkId, ExternalOperationRunner $runner, SmoveClient $smove): void
     {
         $this->paymentError = null;
@@ -1430,6 +1447,7 @@ class extends Component
                                 <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="sendPaymentLink" @disabled(! $hasInvoice)>
                                     {{ $type === 'recurring' ? 'שליחת קישור להקמת הוראת קבע' : 'שליחת קישור לתשלום' }}
                                 </button>
+                                <button type="button" class="btn btn-secondary" wire:click="previewPaymentLinkEmail" wire:loading.attr="disabled" wire:target="previewPaymentLinkEmail">תצוגה מקדימה</button>
                                 @unless ($hasInvoice)
                                     <span class="note">יש להפיק חשבונית לעסקה תחילה.</span>
                                 @endunless
@@ -1668,4 +1686,5 @@ class extends Component
             @endif
         </div>
     </div>
+    <x-email-preview />
 </div>

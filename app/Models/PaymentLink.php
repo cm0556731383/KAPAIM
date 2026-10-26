@@ -6,6 +6,8 @@ use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
+use App\Support\EmailMessage;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -190,6 +192,30 @@ class PaymentLink extends Model
     }
 
     /**
+     * The payment-link email exactly as it goes out — send() and the deal
+     * card's preview (before the link exists, so with $url = '#') both
+     * build it here.
+     */
+    public static function emailMessage(Deal $deal, float $amount, bool $standingOrder, CarbonInterface $expiresAt, string $name, string $url): EmailMessage
+    {
+        $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
+        $amountText = number_format($amount, 2);
+
+        if ($standingOrder) {
+            $plan = $deal->standingOrderPlan($amount);
+            $subject = "הקמת הוראת קבע — {$item}";
+            $intro = "להקמת הוראת קבע עבור \"{$item}\": ₪{$amountText} לחודש, {$plan['months']} חודשים. "
+                ."התשלום הראשון מתבצע עכשיו בכרטיס אשראי בדף התשלום המאובטח של SUMIT, והתשלומים הבאים יחויבו אוטומטית מאותו כרטיס בכל חודש. "
+                .'על כל תשלום תישלח אלייך קבלה במייל.';
+        } else {
+            $subject = "קישור לתשלום — {$item}";
+            $intro = "לתשלום עבור \"{$item}\" בסך ₪{$amountText}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.";
+        }
+
+        return EmailMessage::paymentLink($name, $subject, $intro, $url, 'הקישור בתוקף עד '.$expiresAt->format('d/m/Y').'.');
+    }
+
+    /**
      * Emails the link to $email through Smove.
      *
      * @throws RuntimeException when the email couldn't be sent.
@@ -200,31 +226,9 @@ class PaymentLink extends Model
             throw new RuntimeException('כתובת הדוא"ל של הנמענת אינה תקינה.');
         }
 
-        $deal = $this->deal;
-        $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
-        $amount = number_format((float) $this->amount, 2);
-
-        if ($this->isStandingOrder()) {
-            $plan = $deal->standingOrderPlan((float) $this->amount);
-            $subject = "הקמת הוראת קבע — {$item}";
-            $intro = "להקמת הוראת קבע עבור \"{$item}\": ₪{$amount} לחודש, {$plan['months']} חודשים. "
-                ."התשלום הראשון מתבצע עכשיו בכרטיס אשראי בדף התשלום המאובטח של SUMIT, והתשלומים הבאים יחויבו אוטומטית מאותו כרטיס בכל חודש. "
-                .'על כל תשלום תישלח אלייך קבלה במייל.';
-        } else {
-            $subject = "קישור לתשלום — {$item}";
-            $intro = "לתשלום עבור \"{$item}\" בסך ₪{$amount}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.";
-        }
-
         $operation = $runner->run('smove', 'payment_link_send', 'app_action',
-            fn () => $smove->sendPaymentLinkEmail(
-                $email,
-                $name,
-                $subject,
-                $intro,
-                $this->url,
-                'הקישור בתוקף עד '.$this->expires_at->format('d/m/Y').'.',
-            ),
-            ['deal_id' => $deal->id, 'description' => "שליחת קישור לתשלום במייל עבור עסקה #{$deal->id}"],
+            fn () => $smove->send([['email' => $email, 'name' => $name]], self::emailMessage($this->deal, (float) $this->amount, $this->isStandingOrder(), $this->expires_at, $name, $this->url)),
+            ['deal_id' => $this->deal_id, 'description' => "שליחת קישור לתשלום במייל עבור עסקה #{$this->deal_id}"],
         );
 
         if ($operation->failed()) {

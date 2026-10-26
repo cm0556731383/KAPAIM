@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Concerns\PreviewsEmails;
 use App\Console\Commands\ProcessMaterialReminders;
 use App\Models\AppSetting;
 use App\Models\BusinessEntity;
@@ -23,6 +24,7 @@ new
 class extends Component
 {
     use Notifies;
+    use PreviewsEmails;
 
     // ===== מקורות ליד (LEAD_SOURCE) =====
     public string $leadSourceName = '';
@@ -569,6 +571,30 @@ class extends Component
         };
     }
 
+    /**
+     * The open template's email exactly as it goes out (the same
+     * EmailMessage builder as the real send), with the example values and
+     * buttons that lead nowhere — in the preview window, with "שליחת בדיקה אליי".
+     */
+    public function previewEmailTemplateEmail(): void
+    {
+        $rendered = $this->emailTemplatePreview();
+        $example = fn (string $name) => ['name' => $name, 'url' => '#'];
+
+        $message = match ($this->emailTemplateType) {
+            EmailTemplate::SUPPLIER_INVOICE_REQUEST => \App\Support\EmailMessage::invoiceRequest($rendered['subject'], $rendered['content'], '#'),
+            EmailTemplate::SUPPLIER_INVOICES_REQUEST => \App\Support\EmailMessage::invoicesRequest($rendered['subject'], $rendered['content'], [
+                ['label' => 'תשלום מתאריך 03/09/2026 · ₪1,250', 'url' => '#'],
+                ['label' => 'תשלום מתאריך 21/09/2026 · ₪480', 'url' => '#'],
+            ]),
+            EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')], '#'),
+            EmailTemplate::MATERIAL_REMINDER => \App\Support\EmailMessage::materialReminder($rendered['subject'], $rendered['content'], '#'),
+            default => \App\Support\EmailMessage::transactional($rendered['subject'], $rendered['content']),
+        };
+
+        $this->showEmailPreview($message, null, 'הנוסח כפי שהוא כרגע בעורך (גם לפני שמירה), עם פרטים לדוגמה. בתצוגה ובמייל הבדיקה הכפתורים והקישורים אינם פעילים.');
+    }
+
     /** The open template filled with the example values. */
     public function emailTemplatePreview(): array
     {
@@ -992,7 +1018,10 @@ class extends Component
                             {!! $this->emailTemplatePreviewHtml() !!}
                         </div>
                     </div>
-                    <div class="full"><button type="submit" class="btn btn-primary">שמירת נוסח המייל</button></div>
+                    <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                        <button type="submit" class="btn btn-primary">שמירת נוסח המייל</button>
+                        <button type="button" class="btn btn-secondary" wire:click="previewEmailTemplateEmail">תצוגה מקדימה מדויקת ושליחת בדיקה</button>
+                    </div>
                 </form>
             </div>
         @endif
@@ -1157,4 +1186,5 @@ class extends Component
         </div>
     </section>
     @endif
+    <x-email-preview />
 </div>

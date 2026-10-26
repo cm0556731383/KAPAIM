@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Concerns\PreviewsEmails;
 use App\Models\Expense;
 use App\Models\Program;
 use App\Models\Supplier;
@@ -28,6 +29,7 @@ new
 class extends Component
 {
     use Notifies;
+    use PreviewsEmails;
     use WithFileUploads;
 
     public string $supplierId = '';
@@ -138,6 +140,41 @@ class extends Component
         $operation->succeeded()
             ? $this->notifySuccess("בקשה לחשבונית נשלחה לספק ({$expense->supplier->email}).")
             : $this->notifyError('שליחת המייל לספק נכשלה: '.$operation->error_message);
+    }
+
+    /** The invoice-request email for this expense, exactly as the supplier would get it. */
+    public function previewInvoiceRequest(int $expenseId): void
+    {
+        $expense = Expense::with(['supplier', 'program', 'document'])->findOrFail($expenseId);
+
+        try {
+            $message = $expense->invoiceRequestEmail(preview: true);
+        } catch (\RuntimeException $e) {
+            $this->notifyError($e->getMessage());
+
+            return;
+        }
+
+        $this->showEmailPreview($message, "{$expense->supplier?->name} <{$expense->supplier?->email}>", 'בתצוגה ובמייל הבדיקה כפתור העלאת החשבונית אינו פעיל.');
+    }
+
+    /** The first supplier's email of "בקשת חשבוניות מכל הספקים". */
+    public function previewAllMissingInvoices(): void
+    {
+        try {
+            $preview = Expense::previewAllMissingInvoicesEmail();
+        } catch (\RuntimeException $e) {
+            $this->notifyError($e->getMessage());
+
+            return;
+        }
+
+        $others = $preview['supplier_count'] - 1;
+        $this->showEmailPreview(
+            $preview['message'],
+            "{$preview['supplier']->name} <{$preview['supplier']->email}>",
+            ($others > 0 ? "כל ספק מקבל מייל משלו עם ההוצאות שלו — זה המייל לספק הראשון, ועוד {$others} ספקים יקבלו מייל דומה. " : '').'בתצוגה ובמייל הבדיקה כפתורי ההעלאה אינם פעילים.',
+        );
     }
 
     /**
@@ -292,6 +329,7 @@ class extends Component
                 <span wire:loading.remove wire:target="requestAllMissingInvoices">בקשת חשבוניות מכל הספקים ({{ $missing->filter(fn ($e) => $e->supplier?->email)->count() }})</span>
                 <span wire:loading wire:target="requestAllMissingInvoices">שולח...</span>
             </button>
+            <button type="button" wire:click="previewAllMissingInvoices" class="btn btn-ghost">תצוגה מקדימה</button>
         @endif
         <a href="{{ route('expenses.export') }}" class="btn btn-secondary">ייצוא לאקסל</a>
         <x-modal trigger-label="+ הוצאה חדשה" title="הוצאה חדשה">
@@ -417,6 +455,7 @@ class extends Component
                                     </label>
                                     @if ($expense->supplier?->email)
                                         <button type="button" wire:click="requestInvoice({{ $expense->id }})" wire:confirm="לשלוח לספק {{ $expense->supplier->name }} ({{ $expense->supplier->email }}) מייל עם בקשה לחשבונית וקישור להעלאתה?" wire:loading.attr="disabled" wire:target="requestInvoice({{ $expense->id }})" class="btn btn-ghost btn-sm">{{ $expense->invoice_requested_at ? 'שליחה חוזרת לספק' : 'בקשה מהספק במייל' }}</button>
+                                        <button type="button" wire:click="previewInvoiceRequest({{ $expense->id }})" class="btn btn-ghost btn-sm" title="תצוגה מקדימה של המייל לספק">תצוגה</button>
                                     @else
                                         <button type="button" class="btn btn-ghost btn-sm" style="opacity:.5; cursor:not-allowed" disabled title="לספק אין כתובת מייל — אפשר להוסיף אותה בכרטיס הספק">בקשה מהספק במייל</button>
                                     @endif
@@ -446,4 +485,5 @@ class extends Component
         </div>
     </div>
 
+    <x-email-preview />
 </div>

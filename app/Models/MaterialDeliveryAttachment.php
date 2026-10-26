@@ -21,6 +21,9 @@ class MaterialDeliveryAttachment extends Model
 {
     use HasFactory;
 
+    /** Upload limits for an attached file (materials and mailing-list emails) — 95MB: Cloudflare (in front of the site) refuses an upload over 100MB; bigger videos go as a link instead. */
+    public const FILE_RULES = ['file', 'max:97280', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mov,mp3'];
+
     public function materialDelivery(): BelongsTo
     {
         return $this->belongsTo(MaterialDelivery::class);

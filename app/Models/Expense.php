@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
+use App\Support\EmailMessage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -207,19 +208,13 @@ class Expense extends Model
             throw new RuntimeException('לספק אין כתובת מייל — יש להוסיף אותה בכרטיס הספק.');
         }
 
-        $template = EmailTemplate::supplierInvoiceRequest();
-
-        if (! $template?->is_active) {
-            throw new RuntimeException('לא נמצאה תבנית פעילה למייל בקשת חשבונית — יש להגדיר אותה במסך תבניות מסמכים.');
-        }
-
-        $rendered = $template->render($this->invoiceRequestData());
+        $message = $this->invoiceRequestEmail();
 
         $operation = $runner->run(
             'smove',
             'expense_invoice_request',
             'app_action',
-            fn () => $smove->sendInvoiceRequestEmail($supplier->email, $supplier->name, $rendered['subject'], $rendered['content'], $this->invoiceUploadUrl()),
+            fn () => $smove->send([['email' => $supplier->email, 'name' => $supplier->name]], $message),
             [
                 'expense_id' => $this->id,
                 'description' => "שליחת בקשת חשבונית לספק \"{$supplier->name}\" (הוצאה #{$this->id})",
@@ -231,6 +226,57 @@ class Expense extends Model
         }
 
         return $operation;
+    }
+
+    /**
+     * The single-expense request email exactly as it goes out — requestInvoice()
+     * and the expenses page's preview ($preview: the upload button leads
+     * nowhere) both build it here.
+     *
+     * @throws RuntimeException when the template is missing or inactive.
+     */
+    public function invoiceRequestEmail(bool $preview = false): EmailMessage
+    {
+        $template = EmailTemplate::supplierInvoiceRequest();
+
+        if (! $template?->is_active) {
+            throw new RuntimeException('לא נמצאה תבנית פעילה למייל בקשת חשבונית — יש להגדיר אותה במסך תבניות מסמכים.');
+        }
+
+        $rendered = $template->render($this->invoiceRequestData());
+
+        return EmailMessage::invoiceRequest($rendered['subject'], $rendered['content'], $preview ? '#' : $this->invoiceUploadUrl());
+    }
+
+    /**
+     * The preview of "שליחת בקשות לכל הספקים": the first supplier's email
+     * (one per supplier is sent), with how many suppliers get one.
+     *
+     * @return array{message: EmailMessage, supplier: Supplier, supplier_count: int}
+     *
+     * @throws RuntimeException when no supplier would get an email, or a needed template is missing or inactive.
+     */
+    public static function previewAllMissingInvoicesEmail(): array
+    {
+        $groups = self::withoutInvoiceFile()->groupBy('supplier_id')->filter(fn ($expenses) => $expenses->first()->supplier?->email)->values();
+
+        if ($groups->isEmpty()) {
+            throw new RuntimeException('אין ספק עם כתובת מייל שחסרה לו חשבונית.');
+        }
+
+        $expenses = $groups->first();
+        $supplier = $expenses->first()->supplier;
+        $template = EmailTemplate::supplierInvoicesRequest();
+
+        if ($expenses->count() > 1 && ! $template?->is_active) {
+            throw new RuntimeException('לא נמצאה תבנית פעילה למייל בקשת חשבונית — יש להגדיר אותה במסך תבניות מסמכים.');
+        }
+
+        return [
+            'message' => $expenses->count() === 1 ? $expenses->first()->invoiceRequestEmail(preview: true) : self::invoicesRequestEmail($supplier, $expenses, $template, preview: true),
+            'supplier' => $supplier,
+            'supplier_count' => $groups->count(),
+        ];
     }
 
     /**
@@ -295,22 +341,13 @@ class Expense extends Model
     /** One email for several of a supplier's missing invoices — see requestAllMissingInvoices(). */
     private static function requestInvoicesFromSupplier(Supplier $supplier, Collection $expenses, EmailTemplate $template, ExternalOperationRunner $runner, SmoveClient $smove): ExternalOperation
     {
-        $total = (float) $expenses->sum('amount');
-        $rendered = $template->render([
-            'supplier_name' => $supplier->name,
-            'expense_count' => (string) $expenses->count(),
-            'total_amount' => number_format($total, floor($total) == $total ? 0 : 2),
-        ]);
-        $list = $expenses->map(fn (self $expense) => [
-            'label' => "תשלום מתאריך {$expense->expense_date->format('d/m/Y')} · ₪{$expense->invoiceRequestData()['amount']}",
-            'url' => $expense->invoiceUploadUrl(),
-        ])->all();
+        $message = self::invoicesRequestEmail($supplier, $expenses, $template);
 
         $operation = $runner->run(
             'smove',
             'expense_invoice_request',
             'app_action',
-            fn () => $smove->sendInvoicesRequestEmail($supplier->email, $supplier->name, $rendered['subject'], $rendered['content'], $list),
+            fn () => $smove->send([['email' => $supplier->email, 'name' => $supplier->name]], $message),
             ['description' => "שליחת בקשה ל-{$expenses->count()} חשבוניות לספק \"{$supplier->name}\" (הוצאות #".$expenses->pluck('id')->implode(', #').')'],
         );
 
@@ -319,6 +356,22 @@ class Expense extends Model
         }
 
         return $operation;
+    }
+
+    /** The several-invoices email exactly as it goes out ($preview: the upload buttons lead nowhere). */
+    private static function invoicesRequestEmail(Supplier $supplier, Collection $expenses, EmailTemplate $template, bool $preview = false): EmailMessage
+    {
+        $total = (float) $expenses->sum('amount');
+        $rendered = $template->render([
+            'supplier_name' => $supplier->name,
+            'expense_count' => (string) $expenses->count(),
+            'total_amount' => number_format($total, floor($total) == $total ? 0 : 2),
+        ]);
+
+        return EmailMessage::invoicesRequest($rendered['subject'], $rendered['content'], $expenses->map(fn (self $expense) => [
+            'label' => "תשלום מתאריך {$expense->expense_date->format('d/m/Y')} · ₪{$expense->invoiceRequestData()['amount']}",
+            'url' => $preview ? '#' : $expense->invoiceUploadUrl(),
+        ])->all());
     }
 
     /** This row's values for EmailTemplate::EXPENSE_PLACEHOLDERS. */

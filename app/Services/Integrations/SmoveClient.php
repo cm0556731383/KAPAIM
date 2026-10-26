@@ -4,7 +4,7 @@ namespace App\Services\Integrations;
 
 use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
-use App\Support\BrandedEmail;
+use App\Support\EmailMessage;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -146,23 +146,16 @@ class SmoveClient
      * FR-5.7: the materials-delivery send. $attachmentLinks is a list of
      * ['name' => string, 'url' => string] — see class docblock for why this
      * is links, not attached files.
+     *
+     * $body is the business owner's text (the 'material_delivery' template,
+     * possibly edited for this send) inside the branded shell — or, when
+     * $isHtml, her own uploaded HTML used as is. Either way the links list
+     * and the "received" button (MaterialDelivery::acknowledge(), which also
+     * stops the reminder) replace their tokens, or are added at the end.
      */
-    /**
-     * $body is the business owner's rendered 'material_delivery' template;
-     * the links list and the "received" button (MaterialDelivery::acknowledge(),
-     * which also stops the reminder) replace their tokens, or are appended
-     * at the end.
-     */
-    public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject, string $body, string $acknowledgeUrl): string
+    public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject, string $body, string $acknowledgeUrl, bool $isHtml = false): string
     {
-        $linksHtml = '<ul style="padding-inline-start:20px;">'.collect($attachmentLinks)
-            ->map(fn (array $a) => '<li style="margin-bottom:8px;"><a href="'.e($a['url']).'" style="color:#286E9A; font-weight:600;">'.e($a['name']).'</a></li>')
-            ->implode('').'</ul>';
-
-        return $this->sendCampaign($recipients, $subject, BrandedEmail::wrap(self::textWithBlocks($body, [
-            EmailTemplate::MATERIALS_LIST_TOKEN => $linksHtml,
-            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'),
-        ])));
+        return $this->send($recipients, EmailMessage::materials($subject, $body, $attachmentLinks, $acknowledgeUrl, $isHtml));
     }
 
     /**
@@ -175,9 +168,7 @@ class SmoveClient
      */
     public function sendMaterialReminderEmail(array $recipients, string $subject, string $body, string $acknowledgeUrl): string
     {
-        $html = self::textWithBlock($body, EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN, BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'));
-
-        return $this->sendCampaign($recipients, $subject, BrandedEmail::wrap($html));
+        return $this->send($recipients, EmailMessage::materialReminder($subject, $body, $acknowledgeUrl));
     }
 
     /**
@@ -190,17 +181,13 @@ class SmoveClient
      */
     public function sendListEmail(array $recipients, string $subject, string $bodyHtml): string
     {
-        return $this->sendCampaign($recipients, $subject, $bodyHtml);
+        return $this->send($recipients, new EmailMessage($subject, $bodyHtml));
     }
 
     /** Any single-recipient plain-text send: expense reminders (FR-6.9), lead confirmation (FR-1.18) — all business email goes through Smove, never Laravel Mail. The text itself (EmailTemplate::render()'s output, editable by the business owner) is untouched; BrandedEmail::wrap() only adds the branded shell around it. */
     public function sendTransactionalEmail(string $toEmail, string $toName, string $subject, string $body): string
     {
-        return $this->sendCampaign(
-            [['email' => $toEmail, 'name' => $toName]],
-            $subject,
-            BrandedEmail::wrap('<p>'.nl2br(e($body)).'</p>'),
-        );
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::transactional($subject, $body));
     }
 
     /**
@@ -213,17 +200,7 @@ class SmoveClient
      */
     public function sendTaskRemindersEmail(string $toEmail, string $toName, string $subject, string $intro, array $tasks): string
     {
-        $items = collect($tasks)->map(fn (array $t) => '<li style="margin-bottom:14px;">'
-            .'<a href="'.e($t['url']).'" style="color:#286E9A; font-weight:700;">'.e($t['title']).'</a>'
-            .'<div style="font-size:14px; color:#555;">'.e($t['subtitle']).'</div>'
-            .($t['description'] ? '<div style="font-size:14px;">'.nl2br(e($t['description'])).'</div>' : '')
-            .'</li>')->implode('');
-
-        return $this->sendCampaign(
-            [['email' => $toEmail, 'name' => $toName]],
-            $subject,
-            BrandedEmail::wrap('<p>'.e($intro).'</p><ul style="padding-inline-start:20px;">'.$items.'</ul>'),
-        );
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::taskReminders($subject, $intro, $tasks));
     }
 
     /**
@@ -246,24 +223,9 @@ class SmoveClient
      */
     public function sendDocumentEmail(string $toEmail, string $toName, string $subject, string $introText, ?string $formUrl, ?string $attachmentUrl, ?string $requestPdfUrl = null): string
     {
-        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
+        $attachments = $attachmentUrl ? [['name' => "{$subject}.pdf", 'url' => $attachmentUrl]] : [];
 
-        if ($formUrl) {
-            $body .= BrandedEmail::primaryButton($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון');
-        }
-
-        $body .= '<p>בברכה, כפיים</p>';
-
-        if ($requestPdfUrl) {
-            $body .= BrandedEmail::subtleButton($requestPdfUrl, 'חסומה? קבלי את המסמך כקובץ PDF');
-        }
-
-        return $this->sendCampaign(
-            [['email' => $toEmail, 'name' => $toName]],
-            $subject,
-            BrandedEmail::wrap($body),
-            $attachmentUrl ? [$attachmentUrl] : [],
-        );
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::document($toName, $subject, $introText, $formUrl, $attachments, $requestPdfUrl));
     }
 
     /**
@@ -274,9 +236,7 @@ class SmoveClient
      */
     public function sendInvoiceRequestEmail(string $toEmail, string $toName, string $subject, string $body, string $uploadUrl): string
     {
-        $html = self::textWithBlock($body, EmailTemplate::UPLOAD_BUTTON_TOKEN, BrandedEmail::primaryButton($uploadUrl, 'להעלאת החשבונית'));
-
-        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($html));
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::invoiceRequest($subject, $body, $uploadUrl));
     }
 
     /**
@@ -288,51 +248,13 @@ class SmoveClient
      */
     public function sendInvoicesRequestEmail(string $toEmail, string $toName, string $subject, string $body, array $expenses): string
     {
-        $rows = collect($expenses)->map(fn (array $expense) => '<tr>'
-            .'<td style="padding:12px 8px; border-bottom:1px solid #DAD7C7; font-family:Heebo, Arial, sans-serif; font-size:15px; color:#20241F;">'.e($expense['label']).'</td>'
-            .'<td style="padding:12px 8px; border-bottom:1px solid #DAD7C7; text-align:left; white-space:nowrap;">'
-            .'<a href="'.e($expense['url']).'" target="_blank" style="display:inline-block; padding:9px 20px; background-color:#286E9A; border-radius:24px; font-family:Heebo, Arial, sans-serif; font-size:14px; font-weight:700; color:#FFFFFF; text-decoration:none;">להעלאת החשבונית</a>'
-            .'</td></tr>')->implode('');
-        $list = '<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin:20px 0; border-collapse:collapse;">'.$rows.'</table>';
-
-        $html = self::textWithBlock($body, EmailTemplate::EXPENSE_LIST_TOKEN, $list);
-
-        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($html));
-    }
-
-    /** Plain text as escaped paragraphs, with $blockHtml where $token sits (or at the end when it doesn't). */
-    private static function textWithBlock(string $body, string $token, string $blockHtml): string
-    {
-        return self::textWithBlocks($body, [$token => $blockHtml]);
-    }
-
-    /**
-     * Plain text as escaped paragraphs, each token replaced by its block's
-     * HTML — a block whose token the text doesn't place is appended at the
-     * end, in the given order.
-     *
-     * @param  array<string, string>  $blocks  token => HTML
-     */
-    private static function textWithBlocks(string $body, array $blocks): string
-    {
-        $missing = array_filter($blocks, fn (string $token) => ! str_contains($body, $token), ARRAY_FILTER_USE_KEY);
-        $pattern = '/('.implode('|', array_map(fn ($token) => preg_quote($token, '/'), array_keys($blocks))).')/u';
-
-        $html = collect(preg_split($pattern, $body, -1, PREG_SPLIT_DELIM_CAPTURE))
-            ->map(fn (string $part) => $blocks[$part] ?? (trim($part) === '' ? '' : '<p>'.nl2br(e(trim($part, "\n"))).'</p>'))
-            ->implode('');
-
-        return $html.implode('', $missing);
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::invoicesRequest($subject, $body, $expenses));
     }
 
     /** A SUMIT payment page link (PaymentLink::send()) — the payment button is the email's one action. */
     public function sendPaymentLinkEmail(string $toEmail, string $toName, string $subject, string $introText, string $paymentUrl, string $footerText): string
     {
-        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>'
-            .BrandedEmail::primaryButton($paymentUrl, 'לתשלום מאובטח בכרטיס אשראי')
-            .'<p>'.e($footerText).'</p><p>בברכה, כפיים</p>';
-
-        return $this->sendCampaign([['email' => $toEmail, 'name' => $toName]], $subject, BrandedEmail::wrap($body));
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::paymentLink($toName, $subject, $introText, $paymentUrl, $footerText));
     }
 
     /**
@@ -344,14 +266,18 @@ class SmoveClient
      */
     public function sendDocumentAttachmentEmail(string $toEmail, string $toName, string $typeLabel, string $introText, string $attachmentUrl): string
     {
-        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p><p>בברכה, כפיים</p>';
+        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::documentAttachment($toName, $typeLabel, $introText, $attachmentUrl));
+    }
 
-        return $this->sendCampaign(
-            [['email' => $toEmail, 'name' => $toName]],
-            "{$typeLabel} — קובץ PDF",
-            BrandedEmail::wrap($body),
-            [$attachmentUrl],
-        );
+    /**
+     * Sends a built EmailMessage (the same one a "תצוגה מקדימה" window shows)
+     * — every send* method above is this plus its EmailMessage builder.
+     *
+     * @param  array<int, array{email: string, name: ?string}>  $recipients
+     */
+    public function send(array $recipients, EmailMessage $message): string
+    {
+        return $this->sendCampaign($recipients, $message->subject, $message->html, $message->attachmentUrls());
     }
 
     /**

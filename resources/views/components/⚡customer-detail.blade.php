@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Concerns\PreviewsEmails;
 use App\Models\ActivityLog;
 use App\Models\Bundle;
 use App\Models\Contact;
@@ -58,6 +59,7 @@ new
 class extends Component
 {
     use WithFileUploads;
+    use PreviewsEmails;
     use Notifies;
 
     public Customer $customer;
@@ -192,6 +194,20 @@ class extends Component
     /** [{name, url}, ...] — links sent with the files, e.g. a video too big to upload. */
     public array $materialsLinks = [];
 
+    /**
+     * The email's wording: text = the 'material_delivery' template (settings
+     * → תבניות דואר), editable for this send, inside the branded shell;
+     * html = an uploaded HTML file, as is. Tokens ({{תוכנית}},
+     * {{רשימת_החומרים}}…) are filled in when it is sent.
+     */
+    public string $materialsMode = 'text';
+
+    public string $materialsSubject = '';
+
+    public string $materialsBody = '';
+
+    public $materialsHtmlFile = null;
+
     /** Business-rule error from MaterialDelivery::sendFor() (FR-5.2/FR-5.3/FR-8.13/FR-8.14). */
     public ?string $materialsError = null;
 
@@ -211,8 +227,7 @@ class extends Component
      * content-based scan to matter, and `extensions` is what Livewire's own
      * temporary-upload test doubles reliably report.
      */
-    /** 95MB — Cloudflare (in front of the site) refuses an upload over 100MB; bigger videos go as a link instead. */
-    private const MATERIALS_FILE_RULES = ['file', 'max:97280', 'extensions:pdf,doc,docx,ppt,pptx,jpg,jpeg,png,gif,mp4,mov,mp3'];
+    private const MATERIALS_FILE_RULES = \App\Models\MaterialDeliveryAttachment::FILE_RULES;
 
     public function mount(Customer $customer): void
     {
@@ -240,6 +255,103 @@ class extends Component
             ->map(fn (Contact $contact) => ['contact_id' => $contact->id, 'name' => $contact->name, 'email' => $contact->email])
             ->values()
             ->all();
+        $this->resetMaterialsWording();
+    }
+
+    /** The materials email exactly as it would go out, in the preview window. */
+    public function previewMaterialsEmail(): void
+    {
+        $email = $this->materialsEmail();
+
+        if ($email === null) {
+            return;
+        }
+
+        $program = $this->materialsPrograms->firstWhere('id', (int) $this->materialsProgramId);
+        $links = [
+            ...array_map(fn ($file) => ['name' => $file->getClientOriginalName(), 'url' => '#'], $this->materialsFiles),
+            ...array_map(fn (array $link) => [
+                'name' => trim((string) ($link['name'] ?? '')) ?: (parse_url(trim((string) $link['url']), PHP_URL_HOST) ?: trim((string) $link['url'])),
+                'url' => trim((string) $link['url']) ?: '#',
+            ], $this->materialsLinks),
+        ];
+
+        $this->showEmailPreview(
+            MaterialDelivery::emailMessage($this->customer, $program?->name ?? '(התוכנית שתיבחר)', $links, '#', $email),
+            collect($this->materialsRecipients)->map(fn (array $r) => $r['name'] === $r['email'] ? $r['email'] : "{$r['name']} <{$r['email']}>")->implode(', ') ?: null,
+            'בתצוגה ובמייל הבדיקה הקישורים לקבצים והכפתור "קיבלתי את החומרים" אינם פעילים — הם נוצרים בשליחה עצמה.',
+        );
+    }
+
+    /** The edit-email window's "שמירה" — checks the wording, then closes the window. */
+    public function saveMaterialsWording(): void
+    {
+        if ($this->materialsEmail() !== null) {
+            $this->dispatch('close-modals');
+        }
+    }
+
+    /** The edit-email window's "חזרה לתבנית" — back to the template in settings. */
+    public function restoreMaterialsTemplate(): void
+    {
+        $this->resetErrorBag(['materialsSubject', 'materialsBody', 'materialsHtmlFile']);
+        $this->resetMaterialsWording();
+    }
+
+    /** Whether this send's wording differs from the template in settings. */
+    public function materialsWordingEdited(): bool
+    {
+        $template = MaterialDelivery::emailTemplate();
+
+        return $this->materialsMode === 'html' || $this->materialsSubject !== $template->subject || $this->materialsBody !== $template->content;
+    }
+
+    /**
+     * This send's wording for MaterialDelivery::sendFor() — or null (with the
+     * edit-email window reopened on the error) when it is incomplete.
+     *
+     * @return array{subject: string, content: string, is_html: bool}|null
+     */
+    private function materialsEmail(): ?array
+    {
+        $this->resetErrorBag(['materialsSubject', 'materialsBody', 'materialsHtmlFile']);
+        $isHtml = $this->materialsMode === 'html';
+        $validator = validator(
+            ['materialsSubject' => $this->materialsSubject, 'materialsBody' => $this->materialsBody, 'materialsHtmlFile' => $this->materialsHtmlFile],
+            [
+                'materialsSubject' => ['required', 'string', 'max:255'],
+                ...($isHtml
+                    ? ['materialsHtmlFile' => ['required', 'file', 'max:2048', 'mimes:html,htm']]
+                    : ['materialsBody' => ['required', 'string']]),
+            ],
+            [],
+            ['materialsSubject' => 'נושא', 'materialsHtmlFile' => 'קובץ HTML', 'materialsBody' => 'תוכן המייל'],
+        );
+        $content = ! $validator->fails() && $isHtml ? (string) file_get_contents($this->materialsHtmlFile->getRealPath()) : $this->materialsBody;
+
+        $validator->after(function ($validator) use ($isHtml, $content) {
+            if ($isHtml && trim(strip_tags($content)) === '' && ! str_contains($content, '<img')) {
+                $validator->errors()->add('materialsHtmlFile', 'קובץ ה-HTML ריק.');
+            }
+        });
+
+        if ($validator->fails()) {
+            $this->setErrorBag($this->getErrorBag()->merge($validator->errors()));
+            $this->dispatch('open-modal', name: 'materials-email');
+
+            return null;
+        }
+
+        return ['subject' => $this->materialsSubject, 'content' => $content, 'is_html' => $isHtml];
+    }
+
+    private function resetMaterialsWording(): void
+    {
+        $template = MaterialDelivery::emailTemplate();
+        $this->materialsMode = 'text';
+        $this->materialsSubject = $template->subject;
+        $this->materialsBody = $template->content;
+        $this->materialsHtmlFile = null;
     }
 
     private function syncSchoolFields(): void
@@ -993,6 +1105,12 @@ class extends Component
             'materialsLinks.*.name' => ['nullable', 'string', 'max:255'],
         ], [], ['materialsLinks.*.url' => 'קישור', 'materialsLinks.*.name' => 'שם הקישור']);
 
+        $email = $this->materialsEmail();
+
+        if ($email === null) {
+            return;
+        }
+
         // A link without a name is shown by its address.
         $links = array_map(fn (array $link) => [
             'url' => trim($link['url']),
@@ -1018,7 +1136,7 @@ class extends Component
         );
 
         try {
-            $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove, $links);
+            $delivery = MaterialDelivery::sendFor($this->customer, $program, $this->materialsRecipients, $attachments, $activityLogger, $runner, $smove, $links, $email);
         } catch (\RuntimeException $e) {
             // Nothing was recorded, so the stored copies would be orphans.
             \Illuminate\Support\Facades\Storage::disk('local')->delete(array_column($attachments, 'file_reference'));
@@ -1040,6 +1158,7 @@ class extends Component
         $this->materialsFiles = [];
         $this->materialsLinks = [];
         $this->materialsProgramId = '';
+        $this->resetMaterialsWording();
         unset($this->materialDeliveries);
 
         $this->notifySuccess("חומרי הלימוד עבור \"{$program?->name}\" נשלחו בהצלחה.");
@@ -1860,6 +1979,73 @@ class extends Component
                     </div>
 
                     <div class="full">
+                        <label>נוסח המייל</label>
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--sp-sm); flex-wrap:wrap">
+                            <span class="text-text-secondary">
+                                @if ($materialsMode === 'html')
+                                    קובץ HTML משלי{{ $materialsHtmlFile ? ': '.$materialsHtmlFile->getClientOriginalName() : '' }}
+                                @elseif ($this->materialsWordingEdited())
+                                    נוסח שנערך לשליחה זו
+                                @else
+                                    לפי תבנית "שליחת חומרים" בהגדרות
+                                @endif
+                            </span>
+                            <x-modal name="materials-email" trigger-label="עריכת המייל" trigger-class="btn btn-secondary btn-sm" title="עריכת המייל">
+                                {{-- Field buttons insert at the cursor of the last focused field — same as settings → תבניות דואר. --}}
+                                <div class="form-grid" x-data="{ target: null, insert(token) {
+                                        const el = this.target ?? $refs.materialsBody ?? $refs.materialsSubject;
+                                        const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? start;
+                                        el.value = el.value.slice(0, start) + token + el.value.slice(end);
+                                        el.focus();
+                                        el.setSelectionRange(start + token.length, start + token.length);
+                                        el.dispatchEvent(new Event('input'));
+                                    } }">
+                                    <div class="full">
+                                        <label for="materialsSubject">נושא</label>
+                                        <input type="text" id="materialsSubject" x-ref="materialsSubject" wire:model="materialsSubject" x-on:focus="target = $el">
+                                        @error('materialsSubject') <div class="field-error">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div class="full" role="radiogroup" aria-label="סוג התוכן" style="display:flex; gap:var(--sp-xl); flex-wrap:wrap">
+                                        <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="text" wire:model.live="materialsMode" style="width:auto; margin:0">טקסט בתבנית המיילים של המערכת</label>
+                                        <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="html" wire:model.live="materialsMode" style="width:auto; margin:0">קובץ HTML משלי</label>
+                                    </div>
+                                    @if ($materialsMode === 'html')
+                                        <div class="full">
+                                            <label for="materialsHtmlFile">קובץ HTML</label>
+                                            <input type="file" id="materialsHtmlFile" wire:model="materialsHtmlFile" accept=".html,.htm,text/html">
+                                            @error('materialsHtmlFile') <div class="field-error">{{ $message }}</div> @enderror
+                                        </div>
+                                    @else
+                                        <div class="full">
+                                            <label for="materialsBody">תוכן המייל</label>
+                                            <textarea id="materialsBody" x-ref="materialsBody" wire:model="materialsBody" x-on:focus="target = $el" rows="12"></textarea>
+                                            @error('materialsBody') <div class="field-error">{{ $message }}</div> @enderror
+                                        </div>
+                                    @endif
+                                    <div class="full">
+                                        <label>הוספת שדה (נכנס במקום הסמן)</label>
+                                        <div style="display:flex; flex-wrap:wrap; gap:6px">
+                                            @foreach (['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'] as $token => $label)
+                                                <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}')">+ {{ $label }}</button>
+                                            @endforeach
+                                            @if ($materialsMode !== 'html')
+                                                @foreach ([\App\Models\EmailTemplate::MATERIALS_LIST_TOKEN => 'רשימת החומרים', \App\Models\EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => 'כפתור "קיבלתי את החומרים"'] as $token => $label)
+                                                    <button type="button" class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ $token }}')">+ {{ $label }}</button>
+                                                @endforeach
+                                            @endif
+                                        </div>
+                                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">רשימת החומרים וכפתור "קיבלתי את החומרים" שלא מופיעים {{ $materialsMode === 'html' ? 'בקובץ' : 'בטקסט' }} יתווספו בסוף המייל. השינוי חל על שליחה זו בלבד.</div>
+                                    </div>
+                                    <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                                        <button type="button" class="btn btn-primary" wire:click="saveMaterialsWording" wire:loading.attr="disabled" wire:target="saveMaterialsWording, materialsHtmlFile">שמירה</button>
+                                        <button type="button" class="btn btn-ghost" wire:click="restoreMaterialsTemplate">חזרה לתבנית מההגדרות</button>
+                                    </div>
+                                </div>
+                            </x-modal>
+                        </div>
+                    </div>
+
+                    <div class="full">
                         <label>נמענים</label>
                         <div class="chip-row" style="display:flex; flex-wrap:wrap; gap:var(--sp-sm); margin-bottom:var(--sp-sm)">
                             @foreach ($materialsRecipients as $index => $recipient)
@@ -1876,7 +2062,10 @@ class extends Component
                         </div>
                     </div>
 
-                    <div class="full"><button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="materialsFiles, sendMaterials">שליחה באמצעות Smove</button></div>
+                    <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                        <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="materialsFiles, materialsHtmlFile, sendMaterials">שליחה באמצעות Smove</button>
+                        <button type="button" class="btn btn-secondary" wire:click="previewMaterialsEmail" wire:loading.attr="disabled" wire:target="materialsFiles, materialsHtmlFile, previewMaterialsEmail">תצוגה מקדימה</button>
+                    </div>
                 </form>
             </div>
 
@@ -1932,4 +2121,5 @@ class extends Component
             </div>
         </div>
     @endif
+    <x-email-preview />
 </div>

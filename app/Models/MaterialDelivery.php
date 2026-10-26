@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
+use App\Support\EmailMessage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -162,6 +163,9 @@ class MaterialDelivery extends Model
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      * @param  array<int, array{file_reference: string, file_name: string}>  $attachments
      * @param  array<int, array{name: string, url: string}>  $links  sent as-is — e.g. a video on YouTube/Drive too big to upload
+     * @param  array{subject: string, content: string, is_html: bool}|null  $email  this send's wording, as edited on the
+     *                                                                             customer card (or an uploaded HTML file) — tokens still unrendered;
+     *                                                                             null = the 'material_delivery' template as is
      *
      * Build-plan 12: the actual outbound Smove send now happens here too,
      * via $runner/$smove — non-blocking (see ExternalOperationRunner's
@@ -181,6 +185,7 @@ class MaterialDelivery extends Model
         ExternalOperationRunner $runner,
         SmoveClient $smove,
         array $links = [],
+        ?array $email = null,
     ): self {
         $validRecipients = array_values(array_filter(
             $recipients,
@@ -252,23 +257,19 @@ class MaterialDelivery extends Model
             ],
         );
 
-        // The business owner's wording (settings → תבניות דואר); the seeded default if it's ever missing.
-        $email = (EmailTemplate::materialDelivery() ?? new EmailTemplate([
-            'subject' => 'חומרי לימוד: {{תוכנית}}',
-            'content' => "שלום,\n\nמצורפים קישורים לחומרי הלימוד:\n\n".EmailTemplate::MATERIALS_LIST_TOKEN."\n\n".EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN."\n\nבברכה, כפיים",
-        ]))->render(['school_name' => (string) $customer->school?->name, 'program_name' => $program->name]);
+        $message = self::emailMessage(
+            $customer,
+            $program->name,
+            array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->downloadUrl()], $attachmentModels),
+            $delivery->acknowledgeUrl(),
+            $email,
+        );
 
         $runner->run(
             'smove',
             'materials_send',
             'app_action',
-            fn () => $smove->sendMaterialsEmail(
-                array_map(fn (array $r) => ['email' => $r['email'], 'name' => $r['name']], $validRecipients),
-                array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->downloadUrl()], $attachmentModels),
-                $email['subject'],
-                $email['content'],
-                $delivery->acknowledgeUrl(),
-            ),
+            fn () => $smove->send(array_map(fn (array $r) => ['email' => $r['email'], 'name' => $r['name']], $validRecipients), $message),
             [
                 'material_delivery_id' => $delivery->id,
                 'customer_id' => $customer->id,
@@ -277,6 +278,30 @@ class MaterialDelivery extends Model
         );
 
         return $delivery->refresh();
+    }
+
+    /**
+     * The materials email exactly as it goes out — sendFor() and the
+     * customer card's preview both build it here.
+     *
+     * @param  array<int, array{name: string, url: string}>  $links
+     * @param  array{subject: string, content: string, is_html: bool}|null  $email  see sendFor()
+     */
+    public static function emailMessage(Customer $customer, string $programName, array $links, string $acknowledgeUrl, ?array $email = null): EmailMessage
+    {
+        $rendered = ($email ? new EmailTemplate(['subject' => $email['subject'], 'content' => $email['content']]) : self::emailTemplate())
+            ->render(['school_name' => (string) $customer->school?->name, 'program_name' => $programName]);
+
+        return EmailMessage::materials($rendered['subject'], $rendered['content'], $links, $acknowledgeUrl, (bool) ($email['is_html'] ?? false));
+    }
+
+    /** The business owner's wording (settings → תבניות דואר); the seeded default if it's ever missing. */
+    public static function emailTemplate(): EmailTemplate
+    {
+        return EmailTemplate::materialDelivery() ?? new EmailTemplate([
+            'subject' => 'חומרי לימוד: {{תוכנית}}',
+            'content' => "שלום,\n\nמצורפים קישורים לחומרי הלימוד:\n\n".EmailTemplate::MATERIALS_LIST_TOKEN."\n\n".EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN."\n\nבברכה, כפיים",
+        ]);
     }
 
     /**

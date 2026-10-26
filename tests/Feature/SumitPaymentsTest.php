@@ -128,6 +128,25 @@ class SumitPaymentsTest extends TestCase
         $this->assertSame(PaymentLink::STATUS_PENDING, $this->newLink($deal->fresh(), 100)->status);
     }
 
+    public function test_the_payment_link_preview_shows_the_email_without_creating_a_link(): void
+    {
+        $this->actingAsOwner();
+        $deal = $this->cardDealWithInvoice();
+
+        $preview = Livewire::test('deal-detail', ['deal' => $deal])
+            ->set('linkAmount', '150')
+            ->set('linkEmail', 'pay@example.com')
+            ->call('previewPaymentLinkEmail')
+            ->assertDispatched('open-modal', name: 'email-preview')
+            ->get('emailPreview');
+
+        $this->assertStringStartsWith('קישור לתשלום — ', $preview['subject']);
+        $this->assertStringContainsString('₪150.00', $preview['html']);
+        $this->assertStringContainsString('לתשלום מאובטח בכרטיס אשראי', $preview['html']);
+        $this->assertSame('pay@example.com', $preview['to']);
+        $this->assertSame(0, PaymentLink::count());
+    }
+
     public function test_returning_from_a_paid_page_records_the_payment_and_sumits_receipt_once(): void
     {
         $deal = $this->cardDealWithInvoice();

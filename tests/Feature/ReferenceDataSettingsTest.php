@@ -162,6 +162,21 @@ class ReferenceDataSettingsTest extends TestCase
         ]);
     }
 
+    public function test_an_email_template_previews_as_the_real_email_from_the_editor(): void
+    {
+        $template = \App\Models\EmailTemplate::materialReminder();
+
+        $preview = Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'email-templates')
+            ->call('selectEmailTemplate', $template->id)
+            ->set('emailTemplateContent', "תזכורת ל{{שם_בית_הספר}}")
+            ->call('previewEmailTemplateEmail')
+            ->assertDispatched('open-modal', name: 'email-preview')
+            ->get('emailPreview');
+
+        $this->assertSame(\App\Support\EmailMessage::materialReminder($preview['subject'], 'תזכורת לבית ספר אורות', '#')->html, $preview['html']);
+    }
+
     public function test_email_and_document_templates_cannot_be_created_from_the_screen(): void
     {
         $this->actingAs($this->owner)->get('/settings?tab=email-templates')->assertOk()->assertDontSee('+ תבנית חדשה');

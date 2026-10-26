@@ -344,6 +344,228 @@ class MaterialsMailingTest extends TestCase
             ->assertRedirect('https://youtu.be/abc123');
     }
 
+    public function test_the_materials_wording_can_be_edited_for_one_send(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+        $template = MaterialDelivery::emailTemplate();
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            // Starts from the template in settings.
+            ->assertSet('materialsSubject', $template->subject)
+            ->assertSet('materialsBody', $template->content)
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
+            ->set('materialsSubject', 'מיוחד: {{תוכנית}}')
+            ->set('materialsBody', "היי צוות\n{{רשימת_החומרים}}\nתודה")
+            ->call('sendMaterials')
+            ->assertSet('materialsError', null)
+            ->assertSet('materialsBody', $template->content);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
+            && $request['subject'] === 'מיוחד: '.$program->name
+            && str_contains($request['body'], 'היי צוות')
+            && str_contains($request['body'], 'a.pdf')
+            && str_contains($request['body'], 'קיבלתי את החומרים'));
+    }
+
+    public function test_the_materials_email_window_checks_the_wording_and_can_restore_the_template(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $template = MaterialDelivery::emailTemplate();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'materials')
+            ->assertSee('לפי תבנית "שליחת חומרים" בהגדרות', false)
+            // Insert-field buttons, as in settings → תבניות דואר.
+            ->assertSee(['+ שם בית הספר', '+ תוכנית', '+ רשימת החומרים', '+ כפתור "קיבלתי את החומרים"'])
+            ->set('materialsBody', '')
+            ->call('saveMaterialsWording')
+            ->assertHasErrors(['materialsBody'])
+            ->assertDispatched('open-modal', name: 'materials-email')
+            ->set('materialsBody', 'נוסח אחר')
+            ->call('saveMaterialsWording')
+            ->assertHasNoErrors()
+            ->assertDispatched('close-modals')
+            ->assertSee('נוסח שנערך לשליחה זו');
+
+        $this->assertTrue($component->instance()->materialsWordingEdited());
+        $component->call('restoreMaterialsTemplate')->assertSet('materialsBody', $template->content);
+        $this->assertFalse($component->instance()->materialsWordingEdited());
+    }
+
+    public function test_sending_materials_with_an_incomplete_wording_reopens_the_email_window(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
+            ->set('materialsMode', 'html')
+            ->call('sendMaterials')
+            ->assertHasErrors(['materialsHtmlFile'])
+            ->assertDispatched('open-modal', name: 'materials-email');
+
+        $this->assertSame(0, MaterialDelivery::count());
+    }
+
+    public function test_materials_can_be_sent_in_an_uploaded_html_file(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+        $html = '<html><body><h1>חומרים ל{{תוכנית}}</h1><div>{{רשימת_החומרים}}</div></body></html>';
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->call('addMaterialsLink')
+            ->set('materialsLinks.0', ['name' => 'סרטון', 'url' => 'https://youtu.be/abc123'])
+            ->set('materialsMode', 'html')
+            ->call('sendMaterials')
+            ->assertHasErrors(['materialsHtmlFile'])
+            ->set('materialsHtmlFile', UploadedFile::fake()->createWithContent('mail.html', $html))
+            ->call('sendMaterials')
+            ->assertSet('materialsError', null);
+
+        Http::assertSent(function ($request) use ($program) {
+            if (! str_contains($request->url(), '/Campaigns')) {
+                return false;
+            }
+            $body = $request['body'];
+
+            // Used as is (no branded shell), tokens filled; the button, unplaced, goes before </body>.
+            return str_starts_with($body, '<html><body><h1>חומרים ל'.$program->name.'</h1><div><ul')
+                && str_contains($body, 'https://youtu.be/abc123')
+                && preg_match('/קיבלתי את החומרים.*<\/body><\/html>$/su', $body) === 1;
+        });
+    }
+
+    public function test_materials_can_be_attached_to_a_mailing_list_email(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        $component = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום לכולם')
+            ->set('sendFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
+            ->call('addSendLink')
+            ->set('sendLinks.0', ['name' => '', 'url' => 'https://youtu.be/abc123'])
+            ->call('preview');
+
+        // The preview stored the attachments once; the send reuses them.
+        $this->assertSame(2, \App\Models\MailingListSendAttachment::count());
+        $component->call('send')->assertSet('sendError', null)->assertSet('sendFiles', [])->assertSet('sendLinks', []);
+        $this->assertSame(2, \App\Models\MailingListSendAttachment::count());
+
+        $send = \App\Models\MailingListSend::firstOrFail();
+        $attachments = $send->attachments()->orderBy('id')->get();
+        $this->assertSame(['guide.pdf', 'youtu.be'], $attachments->pluck('file_name')->all());
+        $this->assertStringContainsString('חומרים מצורפים:', $send->body_html);
+        $this->assertStringContainsString(e($attachments->first()->downloadUrl()), $send->body_html);
+        $this->assertStringContainsString('https://youtu.be/abc123', $send->body_html);
+
+        $this->get($attachments->first()->downloadUrl())->assertOk()->assertDownload('guide.pdf');
+        $this->get(route('mailing-lists.attachment.download', $attachments->first()))->assertForbidden();
+    }
+
+    public function test_changing_the_attached_files_drops_the_stale_stored_copies(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+
+        $component = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום')
+            ->set('sendFiles', [UploadedFile::fake()->create('old.pdf', 10), UploadedFile::fake()->create('new.pdf', 10)])
+            ->call('preview')
+            ->call('removeSendFile', 0)
+            ->call('preview');
+
+        $this->assertSame(['new.pdf'], \App\Models\MailingListSendAttachment::pluck('file_name')->all());
+        $this->assertCount(1, \Illuminate\Support\Facades\Storage::disk('local')->allFiles('mailing-list-attachments'));
+        $this->assertStringContainsString('new.pdf', $component->get('emailPreview')['html']);
+    }
+
+    public function test_an_uploaded_html_list_email_gets_the_materials_where_it_places_them(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $html = '<html><body><p>פתיח</p>{{רשימת_החומרים}}<p>סיום</p></body></html>';
+
+        $preview = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendSubject', 'ניוזלטר')
+            ->set('sendMode', 'html')
+            ->set('htmlFile', UploadedFile::fake()->createWithContent('news.html', $html))
+            ->call('addSendLink')
+            ->set('sendLinks.0', ['name' => 'סרטון', 'url' => 'https://youtu.be/abc123'])
+            ->call('preview')
+            ->get('emailPreview')['html'];
+
+        $this->assertMatchesRegularExpression('/פתיח<\/p><ul.*סרטון.*<\/ul><p>סיום/su', $preview);
+        $this->assertStringNotContainsString('חומרים מצורפים:', $preview);
+    }
+
+    public function test_the_materials_preview_shows_the_exact_email_and_a_test_copy_goes_only_to_me(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
+            ->call('previewMaterialsEmail')
+            ->assertDispatched('open-modal', name: 'email-preview');
+
+        $preview = $component->get('emailPreview');
+        $expected = MaterialDelivery::emailMessage($customer, $program->name, [['name' => 'guide.pdf', 'url' => '#']], '#');
+        $this->assertSame($expected->subject, $preview['subject']);
+        $this->assertSame($expected->html, $preview['html']);
+
+        $component->call('sendEmailPreviewToMe');
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns') && $request['subject'] === '[בדיקה] '.$expected->subject && $request['body'] === $expected->html);
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Contacts') && $request->method() === 'POST' && $request['email'] === $this->owner->email);
+        $this->assertSame(0, MaterialDelivery::count());
+    }
+
+    public function test_the_previewed_email_cannot_be_swapped_from_the_browser(): void
+    {
+        $this->expectException(\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException::class);
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('emailPreview', ['subject' => 'x', 'html' => '<p>x</p>', 'attachments' => [], 'to' => null, 'note' => null]);
+    }
+
+    public function test_the_mailing_list_preview_opens_the_preview_window(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        $preview = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
+            ->set('sendSubject', 'עדכון חודשי')
+            ->set('sendBody', 'שלום לכולם')
+            ->call('preview')
+            ->assertDispatched('open-modal', name: 'email-preview')
+            ->get('emailPreview');
+
+        $this->assertSame('עדכון חודשי', $preview['subject']);
+        $this->assertStringContainsString('שלום לכולם', $preview['html']);
+        $this->assertStringContainsString('(1 כתובות)', $preview['to']);
+    }
+
     public function test_a_materials_link_must_be_a_web_address(): void
     {
         $customer = $this->createCustomerWithEmailContact();

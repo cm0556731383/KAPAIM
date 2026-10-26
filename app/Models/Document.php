@@ -7,6 +7,7 @@ use App\Services\DocumentLinkedFields;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
+use App\Support\EmailMessage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -317,13 +318,14 @@ class Document extends Model
         }
 
         if ($documentType === 'invoice') {
-            $hasSignedContract = self::where('deal_id', $deal->id)
+            // The contract only has to exist, not be signed yet — the business
+            // owner's 2026-10-23 call, so an invoice can go out before signing.
+            $hasContract = self::where('deal_id', $deal->id)
                 ->where('document_type', 'contract')
-                ->whereNotNull('signed_at')
                 ->exists();
 
-            if (! $hasSignedContract) {
-                throw new RuntimeException('לא ניתן להפיק חשבונית לפני שהתקבל חוזה חתום עבור עסקה זו.');
+            if (! $hasContract) {
+                throw new RuntimeException('לא ניתן להפיק חשבונית לפני שהופק חוזה עבור עסקה זו.');
             }
 
             $alreadyHasInvoice = self::where('deal_id', $deal->id)->where('document_type', 'invoice')->exists();
@@ -532,7 +534,7 @@ class Document extends Model
         $this->update(['received_at' => now()]);
     }
 
-    /** FR-4.4/FR-8.8's prerequisite: a contract is "signed" once this is set. */
+    /** A contract is "signed" once this is set. */
     public function markSigned(): void
     {
         $this->update(['signed_at' => now()]);
@@ -991,22 +993,15 @@ class Document extends Model
         ));
 
         if (! empty($emailRecipients) && ! in_array($this->document_type, ['invoice', 'credit_note'], true)) {
-            $intro = $format === 'pdf'
-                ? "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שהוכן עבורך."
-                : "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
-            $formUrl = $format === 'digital' ? $this->signUrl() : null;
-            $attachmentUrl = $format === 'pdf' ? $this->smoveAttachmentUrl() : null;
-
             $operations['smove'] = $runner->run(
                 'smove',
                 'document_send',
                 'app_action',
-                function () use ($smove, $emailRecipients, $typeLabel, $intro, $formUrl, $attachmentUrl, $format) {
+                function () use ($smove, $emailRecipients, $format) {
                     $reference = '';
 
                     foreach ($emailRecipients as $recipient) {
-                        $requestPdfUrl = $format === 'digital' ? $this->emailPdfUrl($recipient['email'], $recipient['name']) : null;
-                        $reference = $smove->sendDocumentEmail($recipient['email'], $recipient['name'], $typeLabel, $intro, $formUrl, $attachmentUrl, $requestPdfUrl);
+                        $reference = $smove->send([['email' => $recipient['email'], 'name' => $recipient['name']]], $this->emailMessage($format, $recipient['email'], $recipient['name']));
                     }
 
                     return $reference;
@@ -1020,5 +1015,29 @@ class Document extends Model
         }
 
         return $operations;
+    }
+
+    /**
+     * The email a recipient gets for a 'digital' or 'pdf' send (not an
+     * invoice/credit note — SUMIT emails those itself). $preview: the
+     * document-view preview — its buttons lead nowhere, since a working
+     * form link would let the test copy sign the real document; the PDF is
+     * still attached for real.
+     */
+    public function emailMessage(string $format, string $toEmail, string $toName, bool $preview = false): EmailMessage
+    {
+        $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+        $intro = $format === 'pdf'
+            ? "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שהוכן עבורך."
+            : "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך.";
+
+        return EmailMessage::document(
+            $toName,
+            $typeLabel,
+            $intro,
+            $format === 'digital' ? ($preview ? '#' : $this->signUrl()) : null,
+            $format === 'pdf' ? [['name' => "{$typeLabel}.pdf", 'url' => $this->smoveAttachmentUrl()]] : [],
+            $format === 'digital' ? ($preview ? '#' : $this->emailPdfUrl($toEmail, $toName)) : null,
+        );
     }
 }

@@ -65,4 +65,62 @@ final class BrandedEmail
             </table>
             HTML;
     }
+
+    /**
+     * Plain text as escaped paragraphs, each token replaced by its block's
+     * HTML — a block whose token the text doesn't place is appended at the
+     * end, in the given order.
+     *
+     * @param  array<string, string>  $blocks  token => HTML
+     */
+    public static function textWithBlocks(string $body, array $blocks): string
+    {
+        $missing = array_filter($blocks, fn (string $token) => ! str_contains($body, $token), ARRAY_FILTER_USE_KEY);
+        $parts = $blocks
+            ? preg_split('/('.implode('|', array_map(fn ($token) => preg_quote($token, '/'), array_keys($blocks))).')/u', $body, -1, PREG_SPLIT_DELIM_CAPTURE)
+            : [$body];
+
+        $html = collect($parts)
+            ->map(fn (string $part) => $blocks[$part] ?? (trim($part) === '' ? '' : '<p>'.nl2br(e(trim($part, "\n"))).'</p>'))
+            ->implode('');
+
+        return $html.implode('', $missing);
+    }
+
+    /**
+     * The owner's own uploaded HTML, used as is, with each token replaced by
+     * its block — a block whose token the file doesn't place goes just
+     * before </body> (or at the very end when there is none).
+     *
+     * @param  array<string, string>  $blocks  token => HTML
+     */
+    public static function htmlWithBlocks(string $html, array $blocks): string
+    {
+        $missing = '';
+
+        foreach ($blocks as $token => $block) {
+            str_contains($html, $token) ? $html = str_replace($token, $block, $html) : $missing .= $block;
+        }
+
+        if ($missing === '') {
+            return $html;
+        }
+
+        $bodyEnd = strripos($html, '</body>');
+
+        return $bodyEnd === false ? $html.$missing : substr_replace($html, $missing, $bodyEnd, 0);
+    }
+
+    /**
+     * The attached materials as a list of links (files are kept on our side
+     * and linked — see MaterialDeliveryAttachment::downloadUrl()).
+     *
+     * @param  array<int, array{name: string, url: string}>  $links
+     */
+    public static function linksList(array $links): string
+    {
+        return '<ul style="padding-inline-start:20px;">'.collect($links)
+            ->map(fn (array $a) => '<li style="margin-bottom:8px;"><a href="'.e($a['url']).'" style="color:#286E9A; font-weight:600;">'.e($a['name']).'</a></li>')
+            ->implode('').'</ul>';
+    }
 }

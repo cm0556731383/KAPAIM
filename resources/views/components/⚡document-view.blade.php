@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\Notifies;
+use App\Concerns\PreviewsEmails;
 use App\Models\Contact;
 use App\Models\Document;
 use App\Models\ExternalOperation;
@@ -18,7 +19,7 @@ use Livewire\Component;
  * section) — this component never creates one, only displays/progresses it:
  * filling the digital-form field values (FR-4.10-FR-4.13), editing invoice
  * lines before sending (FR-4.17-FR-4.19), marking an order form
- * received/a contract signed (the FR-4.3/FR-4.4 gate's prerequisites), and
+ * received (the FR-4.3 gate's prerequisite)/a contract signed, and
  * sending (FR-4.2/FR-4.7/FR-4.8/FR-4.9).
  *
  * Build-plan 12 follow-up: there's now also a real external customer portal
@@ -32,6 +33,7 @@ new
 class extends Component
 {
     use Notifies;
+    use PreviewsEmails;
 
     public Document $document;
 
@@ -96,7 +98,6 @@ class extends Component
         ]);
     }
 
-    /** FR-4.4/FR-8.8's prerequisite for an invoice. */
     public function markSigned(ActivityLogger $activityLogger): void
     {
         $this->document->markSigned();
@@ -212,6 +213,20 @@ class extends Component
         }
 
         $this->notifySuccess('המסמך נשלח בהצלחה.');
+    }
+
+    /** The email for a digital/PDF send exactly as it would go out — addressed to the first recipient with an email. */
+    public function previewEmail(string $format): void
+    {
+        $recipients = array_values(array_filter($this->workingRecipients, fn (array $r) => filled($r['email'] ?? null)));
+        $first = $recipients[0] ?? ['name' => $this->document->partyName(), 'email' => ''];
+
+        $this->showEmailPreview(
+            $this->document->emailMessage($format, (string) $first['email'], (string) $first['name'], preview: true),
+            $recipients ? collect($recipients)->map(fn (array $r) => "{$r['name']} <{$r['email']}>")->implode(', ') : 'אין עדיין נמען עם כתובת דוא"ל',
+            ($format === 'digital' ? 'בתצוגה ובמייל הבדיקה הכפתורים אינם פעילים, כדי שלא ייחתם המסמך האמיתי. ' : '')
+                .(count($recipients) > 1 ? 'כל נמען מקבל מייל משלו, הפונה אליו בשמו.' : ''),
+        );
     }
 
     #[Computed]
@@ -384,6 +399,10 @@ class extends Component
                             <button type="button" wire:click="send('digital')" class="btn btn-primary">שליחה כטופס דיגיטלי</button>
                             <button type="button" wire:click="send('pdf')" class="btn btn-secondary">שליחה כ-PDF</button>
                         </div>
+                        <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-top:var(--sp-sm)">
+                            <button type="button" wire:click="previewEmail('digital')" class="btn btn-ghost btn-sm">תצוגה מקדימה — טופס דיגיטלי</button>
+                            <button type="button" wire:click="previewEmail('pdf')" class="btn btn-ghost btn-sm">תצוגה מקדימה — PDF</button>
+                        </div>
                     @endif
                 </div>
             @endif
@@ -408,4 +427,5 @@ class extends Component
             </div>
         </div>
     </div>
+    <x-email-preview />
 </div>

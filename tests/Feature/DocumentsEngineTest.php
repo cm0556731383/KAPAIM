@@ -139,9 +139,9 @@ class DocumentsEngineTest extends TestCase
 
     /**
      * FR-4.4/FR-8.8 — the other critical gate test: an invoice can never be
-     * generated before a contract for the same deal has been signed.
+     * generated before a contract for the same deal has been generated.
      */
-    public function test_invoice_generation_is_blocked_without_a_signed_contract(): void
+    public function test_invoice_generation_is_blocked_without_a_contract(): void
     {
         $deal = $this->createDeal();
         $invoiceTemplate = $this->createTemplate('invoice');
@@ -153,7 +153,8 @@ class DocumentsEngineTest extends TestCase
         Document::generateFor($deal, $invoiceTemplate, 'digital', $businessEntity->id);
     }
 
-    public function test_invoice_generation_is_still_blocked_when_contract_exists_but_not_signed(): void
+    /** FR-4.4 (2026-10-23): the contract only has to exist — an invoice can go out before it's signed. */
+    public function test_invoice_generation_is_allowed_when_contract_exists_but_not_signed(): void
     {
         $deal = $this->createDeal();
         $invoiceTemplate = $this->createTemplate('invoice');
@@ -161,10 +162,15 @@ class DocumentsEngineTest extends TestCase
 
         $orderForm = Document::generateFor($deal, $this->createTemplate('order_form'));
         $orderForm->markReceived();
-        Document::generateFor($deal, $this->createTemplate('contract')); // generated, but not marked signed
+        $contract = Document::generateFor($deal, $this->createTemplate('contract')); // generated, but not marked signed
 
-        $this->expectException(RuntimeException::class);
-        Document::generateFor($deal, $invoiceTemplate, 'digital', $businessEntity->id);
+        $this->assertTrue(Document::canGenerate($deal, 'invoice'));
+
+        $invoice = Document::generateFor($deal, $invoiceTemplate, 'digital', $businessEntity->id);
+
+        $this->assertSame('invoice', $invoice->document_type);
+        $this->assertNull($contract->fresh()->signed_at);
+        $this->assertSame($contract->id, $invoice->preceding_document_id);
     }
 
     public function test_invoice_generation_succeeds_once_contract_is_signed_and_business_entity_chosen(): void
@@ -954,6 +960,24 @@ class DocumentsEngineTest extends TestCase
     }
 
     // ----- helpers -----
+
+    public function test_the_document_email_preview_has_no_working_sign_link_and_the_pdf_attached(): void
+    {
+        $quote = $this->generateQuote($this->createDeal());
+        $component = Livewire::actingAs($this->owner)->test('document-view', ['document' => $quote])
+            ->set('workingRecipients', [['contact_id' => null, 'name' => 'רחל כהן', 'email' => 'rachel@example.com']]);
+
+        $digital = $component->call('previewEmail', 'digital')->assertDispatched('open-modal', name: 'email-preview')->get('emailPreview');
+        $this->assertStringContainsString('שלום רחל כהן', $digital['html']);
+        $this->assertStringContainsString('לצפייה במסמך, מילוי פרטים ואישור מקוון', $digital['html']);
+        $this->assertStringNotContainsString('signature=', $digital['html']);
+        $this->assertSame([], $digital['attachments']);
+
+        $pdf = $component->call('previewEmail', 'pdf')->get('emailPreview');
+        $this->assertCount(1, $pdf['attachments']);
+        $this->assertNotNull(Document::verifySmoveAttachmentToken(basename($pdf['attachments'][0]['url'])));
+        $this->assertNull($quote->fresh()->sent_at);
+    }
 
     private function createDeal(): Deal
     {

@@ -71,6 +71,17 @@ Route::get('/materials/attachments/{attachment}/download', function (
     return \Illuminate\Support\Facades\Storage::disk('local')->download($attachment->file_reference, $attachment->file_name);
 })->middleware('signed')->name('materials.attachment.download');
 
+/** The same, for a file attached to a mailing-list email (MailingListSendAttachment::downloadUrl()). */
+Route::get('/mailing-lists/attachments/{attachment}/download', function (
+    \App\Models\MailingListSendAttachment $attachment,
+) {
+    if ($attachment->isLink()) {
+        return redirect()->away($attachment->url);
+    }
+
+    return \Illuminate\Support\Facades\Storage::disk('local')->download($attachment->file_reference, $attachment->file_name);
+})->middleware('signed')->name('mailing-lists.attachment.download');
+
 /**
  * Build-plan 12 follow-up (FR-4.2) — the online form embedded in a
  * "digital" document send (Document::signUrl()). Same outside-auth +

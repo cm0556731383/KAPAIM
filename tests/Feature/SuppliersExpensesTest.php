@@ -339,6 +339,29 @@ class SuppliersExpensesTest extends TestCase
         $this->assertLessThan(strpos($body, 'תודה'), strpos($body, 'להעלאת החשבונית'));
     }
 
+    public function test_the_invoice_request_previews_show_the_supplier_email_without_sending_it(): void
+    {
+        $this->fakeSmove();
+        $supplier = $this->createSupplier();
+        $expense = Expense::createForSupplier($supplier, 1250.5, '2026-09-10');
+        Expense::createForSupplier($other = $this->createSupplier(), 100, '2026-09-11');
+        Expense::createForSupplier($other, 200, '2026-09-12');
+
+        $component = Livewire::actingAs($this->owner)->test('expenses')
+            ->call('previewInvoiceRequest', $expense->id)
+            ->assertDispatched('open-modal', name: 'email-preview');
+        $preview = $component->get('emailPreview');
+        $this->assertStringContainsString('להעלאת החשבונית', $preview['html']);
+        $this->assertStringNotContainsString('/supplier-invoice/', $preview['html']);
+        $this->assertStringContainsString($supplier->email, $preview['to']);
+
+        $all = $component->call('previewAllMissingInvoices')->get('emailPreview');
+        $this->assertStringContainsString('ועוד 1 ספקים', $all['note']);
+
+        Http::assertNothingSent();
+        $this->assertNull($expense->fresh()->invoice_requested_at);
+    }
+
     public function test_an_invoice_is_not_requested_when_the_supplier_has_no_email_or_it_is_already_uploaded(): void
     {
         $this->fakeSmove();
