@@ -72,7 +72,10 @@ class AppServiceProvider extends ServiceProvider
         DB::beforeExecuting(fn (string $query) => ReadOnlyGuard::check($query));
 
         Livewire::listen('hydrate', function (Component $component) {
-            $page = PagePermissions::COMPONENT_PAGES[$component->getName()] ?? null;
+            // A component whose page depends on the record says so itself (⚡document-view: a lead's quote).
+            $page = method_exists($component, 'permissionPage')
+                ? $component->permissionPage()
+                : (PagePermissions::COMPONENT_PAGES[$component->getName()] ?? null);
 
             if ($page && PagePermissions::hasEdit($page) && ! auth()->user()?->hasPermission($page, 'edit')) {
                 ReadOnlyGuard::enable($page);

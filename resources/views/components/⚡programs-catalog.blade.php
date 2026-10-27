@@ -2,6 +2,7 @@
 
 use App\Concerns\Notifies;
 use App\Models\Bundle;
+use App\Models\DocumentTemplate;
 use App\Models\Program;
 use App\Services\ActivityLogger;
 use Livewire\Attributes\Computed;
@@ -19,12 +20,14 @@ class extends Component
     public string $programDescription = '';
     public string $programPrice = '';
     public bool $programIsPremium = false;
+    public string $programContractTemplateId = '';
 
     // ===== מארזים (BUNDLE) =====
     public string $bundleName = '';
     public string $bundleDescription = '';
     public string $bundlePrice = '';
     public bool $bundleIsSubscriptionType = false;
+    public string $bundleContractTemplateId = '';
 
     // ===== עריכה =====
     /** "program:{id}" / "bundle:{id}" being edited inline. */
@@ -33,6 +36,7 @@ class extends Component
     public string $editDescription = '';
     public string $editPrice = '';
     public bool $editFlag = false;
+    public string $editContractTemplateId = '';
 
     // ===== שיוך תוכניות למארז =====
     public ?int $membershipBundleId = null;
@@ -47,6 +51,26 @@ class extends Component
     public function mount(): void
     {
         abort_unless(auth()->user()->can('catalog.view'), 403);
+
+        $this->resetContractDefaults();
+    }
+
+    /** A new item's default contract starts as "חוזה סטנדרטי" — changeable (2026-10-27). */
+    private function resetContractDefaults(): void
+    {
+        $this->programContractTemplateId = $this->bundleContractTemplateId = (string) (DocumentTemplate::standardContract()?->id ?? '');
+    }
+
+    /** The default-contract picker's options — the active contract templates. */
+    #[Computed]
+    public function contractTemplates()
+    {
+        return DocumentTemplate::where('is_active', true)->where('document_type', 'contract')->orderBy('name')->orderBy('id')->get();
+    }
+
+    private function contractTemplateRule(): array
+    {
+        return ['nullable', \Illuminate\Validation\Rule::exists('document_templates', 'id')->where('document_type', 'contract')];
     }
 
     // ----- תוכניות -----
@@ -60,6 +84,7 @@ class extends Component
             'programDescription' => ['nullable', 'string'],
             'programPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'programIsPremium' => ['boolean'],
+            'programContractTemplateId' => $this->contractTemplateRule(),
         ], [], [
             'programName' => 'שם התוכנית',
             'programPrice' => 'מחיר',
@@ -70,12 +95,14 @@ class extends Component
             'description' => $data['programDescription'] ?: null,
             'price' => $data['programPrice'],
             'is_premium' => $data['programIsPremium'],
+            'contract_template_id' => $data['programContractTemplateId'] ?: null,
             'is_active' => true,
         ]);
 
         $activityLogger->log('program.created', "נוצרה תוכנית חדשה: {$program->name}");
 
         $this->reset(['programName', 'programDescription', 'programPrice', 'programIsPremium']);
+        $this->resetContractDefaults();
         unset($this->programs);
 
         $this->dispatch('close-modals');
@@ -114,11 +141,12 @@ class extends Component
         $this->editDescription = (string) $item->description;
         $this->editPrice = (string) (float) $item->price;
         $this->editFlag = (bool) ($type === 'program' ? $item->is_premium : $item->is_subscription_type);
+        $this->editContractTemplateId = (string) ($item->contract_template_id ?? '');
     }
 
     public function cancelItemEdit(): void
     {
-        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editFlag']);
+        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editFlag', 'editContractTemplateId']);
     }
 
     public function saveItem(ActivityLogger $activityLogger): void
@@ -132,7 +160,8 @@ class extends Component
             'editDescription' => ['nullable', 'string'],
             'editPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editFlag' => ['boolean'],
-        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר']);
+            'editContractTemplateId' => $this->contractTemplateRule(),
+        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר', 'editContractTemplateId' => 'חוזה ברירת מחדל']);
 
         if ($type === 'program') {
             $item = Program::findOrFail((int) $id);
@@ -142,6 +171,7 @@ class extends Component
                 'description' => $data['editDescription'] ?: null,
                 'price' => $data['editPrice'],
                 'is_premium' => $data['editFlag'],
+                'contract_template_id' => $data['editContractTemplateId'] ?: null,
             ]);
 
             // The program's own mailing list is named after it.
@@ -160,6 +190,7 @@ class extends Component
                 'description' => $data['editDescription'] ?: null,
                 'price' => $data['editPrice'],
                 'is_subscription_type' => $data['editFlag'],
+                'contract_template_id' => $data['editContractTemplateId'] ?: null,
             ]);
         }
 
@@ -174,7 +205,7 @@ class extends Component
     #[Computed]
     public function programs()
     {
-        return Program::orderBy('name')->get();
+        return Program::with('contractTemplate')->orderBy('name')->get();
     }
 
     // ----- מארזים -----
@@ -188,6 +219,7 @@ class extends Component
             'bundleDescription' => ['nullable', 'string'],
             'bundlePrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'bundleIsSubscriptionType' => ['boolean'],
+            'bundleContractTemplateId' => $this->contractTemplateRule(),
         ], [], [
             'bundleName' => 'שם המארז',
             'bundlePrice' => 'מחיר',
@@ -204,12 +236,14 @@ class extends Component
             'description' => $data['bundleDescription'] ?: null,
             'price' => $data['bundlePrice'],
             'is_subscription_type' => $data['bundleIsSubscriptionType'],
+            'contract_template_id' => $data['bundleContractTemplateId'] ?: null,
             'is_active' => true,
         ]);
 
         $activityLogger->log('bundle.created', "נוצר מארז חדש: {$bundle->name}");
 
         $this->reset(['bundleName', 'bundleDescription', 'bundlePrice', 'bundleIsSubscriptionType']);
+        $this->resetContractDefaults();
         unset($this->bundles);
 
         $this->dispatch('close-modals');
@@ -304,7 +338,7 @@ class extends Component
     #[Computed]
     public function bundles()
     {
-        return Bundle::with('programs')->orderBy('name')->get();
+        return Bundle::with(['programs', 'contractTemplate'])->orderBy('name')->get();
     }
 };
 ?>
@@ -346,6 +380,17 @@ class extends Component
                             <span class="checkbox-row"><input type="checkbox" id="programIsPremium" wire:model="programIsPremium"><label for="programIsPremium" style="margin:0">תוכנית פרימיום</label></span>
                         </div>
                     </div>
+                    <div class="full">
+                        <label for="programContractTemplateId">חוזה ברירת מחדל</label>
+                            <select id="programContractTemplateId" wire:model="programContractTemplateId">
+                                <option value="">— החוזה הסטנדרטי —</option>
+                                @foreach ($this->contractTemplates as $template)
+                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
+                            @error('programContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
                     <div class="full"><button type="submit" class="btn btn-primary">יצירת תוכנית</button></div>
                 </form>
             </x-modal>
@@ -353,17 +398,26 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table>
-                <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->programs as $program)
                         @if ($editingItem === "program:{$program->id}")
                         <tr>
-                            <td colspan="5">
+                            <td colspan="6">
                                 <form wire:submit="saveItem" class="form-grid">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
                                     <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום</label></span></div>
+                                    <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
+                            <select id="editContractTemplateId" wire:model="editContractTemplateId">
+                                <option value="">— החוזה הסטנדרטי —</option>
+                                @foreach ($this->contractTemplates as $template)
+                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
+                            @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full" style="display:flex; gap:var(--sp-sm)">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
@@ -378,6 +432,7 @@ class extends Component
                             <td>{{ $program->name }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $program->price, 0) }}</td>
                             <td>@if ($program->is_premium)<span class="badge badge-primary">פרימיום</span>@else —@endif</td>
+                            <td>{{ $program->contractTemplate?->is_active ? $program->contractTemplate->name : 'החוזה הסטנדרטי' }}</td>
                             <td>
                                 @if ($program->is_active)
                                     <span class="badge badge-success">פעיל</span>
@@ -420,6 +475,17 @@ class extends Component
                         <div class="full">
                             <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי</label></span>
                         </div>
+                        <div class="full">
+                            <label for="bundleContractTemplateId">חוזה ברירת מחדל</label>
+                            <select id="bundleContractTemplateId" wire:model="bundleContractTemplateId">
+                                <option value="">— החוזה הסטנדרטי —</option>
+                                @foreach ($this->contractTemplates as $template)
+                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
+                            @error('bundleContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
                         <div class="full"><button type="submit" class="btn btn-primary">יצירת מארז</button></div>
                     </form>
                 </x-modal>
@@ -453,17 +519,26 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table>
-                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->bundles as $bundle)
                         @if ($editingItem === "bundle:{$bundle->id}")
                         <tr>
-                            <td colspan="6">
+                            <td colspan="7">
                                 <form wire:submit="saveItem" class="form-grid">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
                                     <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
+                                    <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
+                            <select id="editContractTemplateId" wire:model="editContractTemplateId">
+                                <option value="">— החוזה הסטנדרטי —</option>
+                                @foreach ($this->contractTemplates as $template)
+                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
+                            @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full" style="display:flex; gap:var(--sp-sm)">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
@@ -487,6 +562,7 @@ class extends Component
                                     @endforelse
                                 </div>
                             </td>
+                            <td>{{ $bundle->contractTemplate?->is_active ? $bundle->contractTemplate->name : 'החוזה הסטנדרטי' }}</td>
                             <td>
                                 @if ($bundle->is_active)
                                     <span class="badge badge-success">פעיל</span>

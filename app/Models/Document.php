@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use RuntimeException;
 
@@ -30,9 +31,9 @@ use RuntimeException;
  * business-record convention in this codebase).
  */
 #[Fillable([
-    'deal_id', 'expense_id', 'document_template_id', 'business_entity_id', 'preceding_document_id',
+    'deal_id', 'expense_id', 'lead_id', 'lead_offer', 'document_template_id', 'business_entity_id', 'preceding_document_id',
     'document_type', 'status_id', 'format', 'file_reference', 'rendered_content',
-    'field_values', 'sent_at', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at',
+    'field_values', 'sent_at', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at', 'confirmation_noticed_at',
 ])]
 class Document extends Model
 {
@@ -73,17 +74,52 @@ class Document extends Model
     {
         return [
             'field_values' => 'array',
+            'lead_offer' => 'array',
             'sent_at' => 'datetime',
             'received_at' => 'datetime',
             'signed_at' => 'datetime',
             'confirmed_at' => 'datetime',
             'viewed_at' => 'datetime',
+            'confirmation_noticed_at' => 'datetime',
         ];
     }
 
     public function deal(): BelongsTo
     {
         return $this->belongsTo(Deal::class);
+    }
+
+    /**
+     * A quote sent from the lead card, before there is a customer or a deal
+     * (generateForLead()). Once the recipient confirms it the lead converts
+     * and the quote moves onto the new deal (deal_id); lead_id stays.
+     */
+    public function lead(): BelongsTo
+    {
+        return $this->belongsTo(Lead::class);
+    }
+
+    /** A lead's quote not yet confirmed into a deal — the lead card is still where it lives. */
+    public function isPendingLeadQuote(): bool
+    {
+        return $this->lead_id !== null && $this->deal_id === null;
+    }
+
+    /**
+     * A lead's quote not yet confirmed lives on the lead card, so it follows
+     * the leads page's permissions; every other document the customers page's.
+     */
+    public function isViewableBy(User $user): bool
+    {
+        return $this->isPendingLeadQuote()
+            ? $user->can('leads.view') && $user->can('view', $this->lead)
+            : $user->can('documents.view');
+    }
+
+    /** "עסקה #5" / "ליד #12" — what activity-log entries about this document refer to. */
+    public function subjectLabel(): string
+    {
+        return $this->deal_id ? "עסקה #{$this->deal_id}" : ($this->lead_id ? "ליד #{$this->lead_id}" : "מסמך #{$this->id}");
     }
 
     /**
@@ -275,6 +311,228 @@ class Document extends Model
         return $document;
     }
 
+    /**
+     * A quote from the lead card (business owner's call, 2026-10-27): the
+     * first purchase is offered before the lead is a customer. It belongs to
+     * the lead, and what it offers — exactly one program or bundle, its
+     * amount, the student count — is kept in lead_offer until the recipient
+     * confirms it; confirm() then converts the lead and opens the deal from
+     * it. An existing customer buying again gets her quote from the deal, as
+     * before.
+     *
+     * @throws RuntimeException on a business-rule violation.
+     */
+    public static function generateForLead(
+        Lead $lead,
+        DocumentTemplate $template,
+        ?Program $program,
+        ?Bundle $bundle,
+        ?float $agreedAmount = null,
+        ?int $studentsCount = null,
+    ): self {
+        if ($template->document_type !== 'quote' || ! $template->is_active) {
+            throw new RuntimeException('יש לבחור תבנית פעילה של הצעת מחיר.');
+        }
+
+        if ($lead->customer()->exists()) {
+            throw new RuntimeException('ליד זה כבר הומר ללקוחה — הצעת מחיר לרכישה נוספת נשלחת מכרטיס העסקה בכרטיס הלקוחה.');
+        }
+
+        if (! $lead->school_id) {
+            throw new RuntimeException('יש להשלים פרטי בית ספר עבור הליד לפני שליחת הצעת מחיר.');
+        }
+
+        if (($program === null) === ($bundle === null)) {
+            throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור הצעת המחיר — לא שניהם ולא אף אחד.');
+        }
+
+        if (($program && ! $program->is_active) || ($bundle && ! $bundle->is_active)) {
+            throw new RuntimeException('לא ניתן לשלוח הצעת מחיר עבור תוכנית או מארז שהושבתו.');
+        }
+
+        $amount = $agreedAmount ?? (float) ($program->price ?? $bundle->price);
+
+        if ($amount <= 0) {
+            throw new RuntimeException('יש להזין סכום להצעת המחיר.');
+        }
+
+        $document = new self([
+            'lead_id' => $lead->id,
+            'lead_offer' => [
+                'program_id' => $program?->id,
+                'bundle_id' => $bundle?->id,
+                'agreed_amount' => round($amount, 2),
+                'students_count' => $studentsCount,
+            ],
+        ]);
+        $document->setRelation('lead', $lead);
+        $fieldValues = self::buildInitialFieldValues($template, $document->leadOfferDeal(), null);
+
+        return self::createDocumentRow([
+            'deal_id' => null,
+            'expense_id' => null,
+            'lead_id' => $lead->id,
+            'lead_offer' => $document->lead_offer,
+            'document_template_id' => $template->id,
+            'business_entity_id' => null,
+            'preceding_document_id' => null,
+            'document_type' => 'quote',
+            'status_id' => self::defaultDraftStatus()->id,
+            'format' => 'digital',
+            'field_values' => $fieldValues,
+            'rendered_content' => $template->renderContent(collect($fieldValues)->map(fn ($v) => $v['value'])->all()),
+        ]);
+    }
+
+    /**
+     * The deal a lead's quote offers, as it would look once confirmed —
+     * never saved. The linked template fields (DocumentLinkedFields, which
+     * read a Deal) resolve against it: the lead's school and contacts, the
+     * offered item and amount. With no contact on the school yet, the lead's
+     * own email/phone stand in for the primary contact, as on conversion.
+     */
+    public function leadOfferDeal(): Deal
+    {
+        $lead = $this->lead;
+        $offer = $this->lead_offer ?? [];
+        $program = isset($offer['program_id']) ? Program::find($offer['program_id']) : null;
+        $bundle = isset($offer['bundle_id']) ? Bundle::find($offer['bundle_id']) : null;
+
+        $contacts = Contact::where('school_id', $lead->school_id)->get();
+
+        if ($contacts->isEmpty()) {
+            $contacts = new \Illuminate\Database\Eloquent\Collection([
+                new Contact(['name' => '', 'email' => $lead->email, 'phone' => $lead->phone, 'is_primary' => true]),
+            ]);
+        }
+
+        $customer = new Customer(['school_id' => $lead->school_id, 'lead_id' => $lead->id]);
+        $customer->setRelation('school', $lead->school);
+        $customer->setRelation('contacts', $contacts);
+        $customer->setRelation('lead', $lead);
+        $customer->setRelation('status', null);
+
+        $deal = new Deal([
+            'program_id' => $program?->id,
+            'bundle_id' => $bundle?->id,
+            'agreed_amount' => $offer['agreed_amount'] ?? 0,
+            'students_count' => $offer['students_count'] ?? null,
+            'program_price_snapshot' => $program?->price,
+            'bundle_price_snapshot' => $bundle?->price,
+            'program_name_snapshot' => $program?->name,
+            'bundle_name_snapshot' => $bundle?->name,
+        ]);
+
+        foreach (['status', 'paymentMethod', 'subscription'] as $relation) {
+            $deal->setRelation($relation, null);
+        }
+
+        return $deal->setRelation('customer', $customer);
+    }
+
+    /** The offered program/bundle's name — "מארז: …" for a bundle. */
+    public function leadOfferItemName(): ?string
+    {
+        $offer = $this->lead_offer ?? [];
+
+        if (isset($offer['program_id'])) {
+            return Program::find($offer['program_id'])?->name;
+        }
+
+        return isset($offer['bundle_id']) && ($bundle = Bundle::find($offer['bundle_id'])) ? "מארז: {$bundle->name}" : null;
+    }
+
+    /** The deal the linked fields read from — the real one, or a pending lead quote's offer (leadOfferDeal()). */
+    private function fieldsDeal(): ?Deal
+    {
+        return $this->deal ?? ($this->isPendingLeadQuote() ? $this->leadOfferDeal() : null);
+    }
+
+    /**
+     * A lead's quote is confirmed: the lead converts (unless it already did)
+     * and a deal opens from the offer, exactly as one opened on the customer
+     * card would — the quote then belongs to that deal, first in its chain.
+     *
+     * @throws RuntimeException when the deal can't be opened (e.g. the
+     *                          offered item was disabled since the quote went out).
+     */
+    private function openDealFromLeadQuote(ActivityLogger $logger): void
+    {
+        $lead = $this->lead;
+        $customer = $lead->customer()->first() ?? $lead->convertToCustomer($logger);
+        $offer = $this->lead_offer ?? [];
+
+        try {
+            $deal = Deal::createForCustomer(
+                $customer,
+                isset($offer['program_id']) ? Program::find($offer['program_id']) : null,
+                isset($offer['bundle_id']) ? Bundle::find($offer['bundle_id']) : null,
+                (float) ($offer['agreed_amount'] ?? 0) ?: null,
+            );
+        } catch (RuntimeException $e) {
+            throw new RuntimeException('לא ניתן להשלים את אישור הצעת המחיר כרגע — נא ליצור איתנו קשר. ('.$e->getMessage().')');
+        }
+
+        if (isset($offer['students_count'])) {
+            $deal->update(['students_count' => (int) $offer['students_count']]);
+        }
+
+        $this->update(['deal_id' => $deal->id]);
+        $this->setRelation('deal', $deal);
+
+        $logger->log('deal.created', "נוצרה עסקה #{$deal->id} מאישור הצעת המחיר שנשלחה לליד #{$lead->id}: ".($deal->program_name_snapshot ?? $deal->bundle_name_snapshot), [
+            'deal_id' => $deal->id, 'customer_id' => $customer->id, 'lead_id' => $lead->id, 'document_id' => $this->id, 'user' => null,
+        ]);
+    }
+
+    /** Set only inside generateOrderFormAndContract(): its contract needn't wait for the order form to be received. */
+    private static bool $generatingWithOrderForm = false;
+
+    /**
+     * The order form and the contract, generated together to go out in one
+     * email (business owner's call, 2026-10-27 — they used to be generated
+     * and sent one after the other). The contract is chained to this order
+     * form (preceding_document_id), which is what makes them a pair: sending
+     * the order form sends the contract with it (sendCompanions()). The
+     * "order form received first" gate (FR-4.3) is waived for such a contract
+     * only — both reach the customer at once. With no template given, the
+     * order form is the first active one (by name) and the contract is the
+     * deal's program/bundle default (DocumentTemplate::defaultContractFor()),
+     * as the automatic send after a lead's quote can't ask.
+     *
+     * @return array{order_form: self, contract: self}
+     *
+     * @throws RuntimeException before anything is created.
+     */
+    public static function generateOrderFormAndContract(Deal $deal, ?DocumentTemplate $orderFormTemplate = null, ?DocumentTemplate $contractTemplate = null): array
+    {
+        $first = fn (string $type) => DocumentTemplate::where('is_active', true)->where('document_type', $type)->orderBy('name')->orderBy('id')->first();
+        $orderFormTemplate ??= $first('order_form');
+        $contractTemplate ??= DocumentTemplate::defaultContractFor($deal);
+
+        if (! $orderFormTemplate?->is_active || ! $contractTemplate?->is_active) {
+            throw new RuntimeException('לא נמצאה תבנית פעילה של טופס הזמנה ושל חוזה — יש להגדיר אותן תחילה בהגדרות, בלשונית תבניות מסמכים.');
+        }
+
+        if (self::where('deal_id', $deal->id)->where('document_type', 'contract')->exists()) {
+            throw new RuntimeException('לעסקה זו כבר הופק חוזה.');
+        }
+
+        return DB::transaction(function () use ($deal, $orderFormTemplate, $contractTemplate) {
+            $orderForm = self::generateFor($deal, $orderFormTemplate);
+
+            self::$generatingWithOrderForm = true;
+
+            try {
+                $contract = self::generateFor($deal, $contractTemplate);
+            } finally {
+                self::$generatingWithOrderForm = false;
+            }
+
+            return ['order_form' => $orderForm, 'contract' => $contract];
+        });
+    }
+
     /** Shared by every generateFor()/generateCreditNoteFor() branch above — the sole INSERT point for this table. */
     private static function createDocumentRow(array $attributes): self
     {
@@ -313,7 +571,7 @@ class Document extends Model
 
         $deal = $subject;
 
-        if ($documentType === 'contract') {
+        if ($documentType === 'contract' && ! self::$generatingWithOrderForm) {
             $hasReceivedOrderForm = self::where('deal_id', $deal->id)
                 ->where('document_type', 'order_form')
                 ->whereNotNull('received_at')
@@ -501,6 +759,7 @@ class Document extends Model
         }
 
         $stored = [];
+        $deal = $this->fieldsDeal();
 
         foreach ($this->templateFields() as $field) {
             $value = trim((string) ($valuesByFieldId[$field->id] ?? ($this->field_values[$field->id]['value'] ?? '')));
@@ -516,8 +775,14 @@ class Document extends Model
                 'value' => $value,
             ];
 
-            if ($field->field_type === 'linked' && $field->linked_field && $value !== '') {
-                DocumentLinkedFields::applyBack($field->linked_field, $this->deal, $value);
+            if ($field->field_type === 'linked' && $field->linked_field && $value !== '' && $deal) {
+                DocumentLinkedFields::applyBack($field->linked_field, $deal, $value);
+
+                // A pending lead quote's deal exists only as its offer, so a
+                // student count given for it is kept there.
+                if ($this->isPendingLeadQuote() && $field->linked_field === 'deal.students_count' && ctype_digit($value)) {
+                    $this->lead_offer = [...$this->lead_offer, 'students_count' => (int) $value];
+                }
             }
         }
 
@@ -648,7 +913,7 @@ class Document extends Model
      */
     public function renderPdfBinary(): array
     {
-        $this->loadMissing(['deal.customer.school', 'businessEntity', 'lines']);
+        $this->loadMissing(['deal.customer.school', 'lead.school', 'businessEntity', 'lines']);
 
         $fileName = (self::TYPE_LABELS[$this->document_type] ?? $this->document_type).'-'.$this->id.'.pdf';
 
@@ -683,9 +948,10 @@ class Document extends Model
             $email, $name, $typeLabel, "מצורף בזאת קובץ ה-PDF של \"{$typeLabel}\" שביקשת.", $this->smoveAttachmentUrl(),
         );
 
-        $logger->log('document.pdf_emailed', "נשלח קובץ PDF של \"{$typeLabel}\" למייל {$email} עבור עסקה #{$this->deal_id}", [
+        $logger->log('document.pdf_emailed', "נשלח קובץ PDF של \"{$typeLabel}\" למייל {$email} עבור {$this->subjectLabel()}", [
             'document_id' => $this->id,
             'deal_id' => $this->deal_id,
+            'lead_id' => $this->lead_id,
             'user' => null,
         ]);
     }
@@ -711,12 +977,13 @@ class Document extends Model
     {
         $stored = collect($this->field_values ?? []);
         $values = [];
+        $deal = null;
 
         foreach ($this->templateFields() as $field) {
             $value = trim((string) ($stored[$field->id]['value'] ?? ''));
 
-            if ($value === '' && $this->deal && $field->field_type === 'linked' && $field->linked_field) {
-                $value = trim((string) (DocumentLinkedFields::resolve($field->linked_field, $this->deal) ?? ''));
+            if ($value === '' && $field->field_type === 'linked' && $field->linked_field && ($deal ??= $this->fieldsDeal())) {
+                $value = trim((string) (DocumentLinkedFields::resolve($field->linked_field, $deal) ?? ''));
             }
 
             $values[$field->id] = $value;
@@ -743,11 +1010,39 @@ class Document extends Model
             return;
         }
 
-        if ($this->templateFields()->isNotEmpty()) {
-            $this->submitFieldValues($fieldValues);
-        }
+        $openedDeal = false;
 
-        $this->update(['confirmed_at' => now()]);
+        // Row-locked: a double click on a lead's quote must open one deal.
+        $confirmed = DB::transaction(function () use ($fieldValues, $logger, &$openedDeal) {
+            $fresh = self::whereKey($this->id)->lockForUpdate()->first();
+
+            if ($fresh->confirmed_at) {
+                return false;
+            }
+
+            $this->setRawAttributes($fresh->getAttributes(), true);
+
+            // A lead's quote: the lead becomes a customer with the offered
+            // deal first, so the confirmed values are written to them.
+            if ($this->isPendingLeadQuote()) {
+                $this->openDealFromLeadQuote($logger);
+                $openedDeal = true;
+            }
+
+            if ($this->templateFields()->isNotEmpty()) {
+                $this->submitFieldValues($fieldValues);
+            }
+
+            $this->update(['confirmed_at' => now()]);
+
+            return true;
+        });
+
+        if (! $confirmed) {
+            $this->refresh();
+
+            return;
+        }
 
         if ($this->document_type === 'order_form' && ! $this->received_at) {
             $this->markReceived();
@@ -759,11 +1054,81 @@ class Document extends Model
 
         $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
 
-        $logger->log('document.confirmed', "הלקוחה אישרה את \"{$typeLabel}\" דרך הטופס המקוון עבור עסקה #{$this->deal_id}", [
+        $logger->log('document.confirmed', "הלקוחה אישרה את \"{$typeLabel}\" דרך הטופס המקוון עבור {$this->subjectLabel()}", [
             'document_id' => $this->id,
             'deal_id' => $this->deal_id,
+            'lead_id' => $this->lead_id,
             'user' => null,
         ]);
+
+        // Outside the transaction: the email is an external call, and the
+        // confirmation stands whatever happens to it.
+        if ($openedDeal) {
+            $this->sendOrderFormAndContractAfterQuote($logger);
+        }
+    }
+
+    /**
+     * Right after a lead's quote is confirmed (business owner's call,
+     * 2026-10-27): the new deal's order form and contract are generated and
+     * sent together, in one email, to whoever the quote went to — the
+     * customer's primary contacts if it went to no one with an email. Never
+     * throws: a failure (no active template, no recipient) is logged, and the
+     * home screen's confirmed-quote notice shows the two weren't sent, to be
+     * sent from the deal card.
+     */
+    private function sendOrderFormAndContractAfterQuote(ActivityLogger $logger): void
+    {
+        $deal = $this->deal;
+
+        $recipients = $this->recipients()->get()
+            ->filter(fn (DocumentRecipient $r) => filled($r->recipient_email) && filter_var($r->recipient_email, FILTER_VALIDATE_EMAIL))
+            ->map(fn (DocumentRecipient $r) => ['contact_id' => Contact::whereKey($r->contact_id)->exists() ? $r->contact_id : null, 'name' => $r->recipient_name, 'email' => $r->recipient_email])
+            ->unique('email')->values()->all();
+
+        if (empty($recipients)) {
+            $recipients = Contact::where('customer_id', $deal->customer_id)->where('is_primary', true)->get()
+                ->filter(fn (Contact $c) => filled($c->email))
+                ->map(fn (Contact $c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])
+                ->values()->all();
+        }
+
+        try {
+            if (empty($recipients)) {
+                throw new RuntimeException('אין נמען עם כתובת דוא"ל.');
+            }
+
+            ['order_form' => $orderForm] = self::generateOrderFormAndContract($deal);
+            $operations = $orderForm->sendTo($recipients, self::FORMAT_FORM_AND_PDF, $logger, app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+
+            if ($operations['smove']?->status === ExternalOperation::STATUS_FAILED) {
+                throw new RuntimeException('שליחת המייל דרך Smove נכשלה: '.$operations['smove']->error_message);
+            }
+
+            $this->recordFollowUpSend(null);
+        } catch (RuntimeException $e) {
+            $this->recordFollowUpSend($e->getMessage());
+            $logger->log('document.auto_send_failed', "טופס ההזמנה והחוזה לא נשלחו אוטומטית אחרי אישור הצעת המחיר בעסקה #{$deal->id}: {$e->getMessage()}", [
+                'document_id' => $this->id, 'deal_id' => $deal->id, 'lead_id' => $this->lead_id, 'user' => null,
+            ]);
+        }
+    }
+
+    /** What happened to the automatic order form + contract send — kept with the offer, for the home screen's notice. */
+    private function recordFollowUpSend(?string $error): void
+    {
+        $this->update(['lead_offer' => [...($this->lead_offer ?? []), 'follow_up_sent' => $error === null, 'follow_up_error' => $error]]);
+    }
+
+    /**
+     * Confirmed lead quotes not yet marked handled — the home screen's notice
+     * (business owner's call, 2026-10-27), newest first.
+     */
+    public static function unnoticedConfirmedLeadQuotes(): \Illuminate\Database\Eloquent\Collection
+    {
+        return self::whereNotNull('lead_id')->whereNotNull('deal_id')->where('document_type', 'quote')
+            ->whereNotNull('confirmed_at')->whereNull('confirmation_noticed_at')
+            ->with(['deal.customer.school'])->orderByDesc('confirmed_at')->get();
     }
 
     /** Set the first time the public sign form is opened (⚡document-sign.blade.php's mount()) — idempotent, a second visit never overwrites it. */
@@ -851,6 +1216,21 @@ class Document extends Model
      */
     public function defaultRecipients(): Collection
     {
+        // A lead's quote goes to the school's primary contacts — any contact
+        // with an email when none is flagged, else the lead's own email.
+        if ($this->isPendingLeadQuote()) {
+            $contacts = Contact::where('school_id', $this->lead->school_id)->orderByDesc('is_primary')->orderBy('id')->get()
+                ->filter(fn (Contact $c) => filled($c->email));
+            $primary = $contacts->where('is_primary', true);
+
+            return match (true) {
+                $primary->isNotEmpty() => $primary->values(),
+                $contacts->isNotEmpty() => $contacts->values(),
+                filled($this->lead->email) => collect([new Contact(['name' => $this->lead->school?->name ?? $this->lead->email, 'email' => $this->lead->email])]),
+                default => new Collection,
+            };
+        }
+
         // An expense invoice is incoming (from a supplier) — nobody to send it to.
         if (! $this->deal) {
             return new Collection;
@@ -862,7 +1242,11 @@ class Document extends Model
     /** Who the document is with — the customer's school, or an expense invoice's supplier. */
     public function partyName(): ?string
     {
-        return $this->deal ? $this->deal->customer?->school?->name : $this->expense?->supplier?->name;
+        return match (true) {
+            (bool) $this->deal => $this->deal->customer?->school?->name,
+            (bool) $this->lead => $this->lead->school?->name,
+            default => $this->expense?->supplier?->name,
+        };
     }
 
     /**
@@ -924,6 +1308,10 @@ class Document extends Model
                 throw new RuntimeException('המסמך כבר נשלח — נא לרענן את הדף.');
             }
 
+            if ($this->pairedOrderForm()) {
+                throw new RuntimeException('החוזה נשלח יחד עם טופס ההזמנה, במייל אחד — שולחים אותו ממסך טופס ההזמנה.');
+            }
+
             return $this->sendToRecipients($recipients, $format, $logger, $runner, $summit, $smove);
         } finally {
             $lock->release();
@@ -971,25 +1359,33 @@ class Document extends Model
         }
 
         $now = now();
+        // An order form generated with its contract goes out with it, in the
+        // same email (generateOrderFormAndContract()) — both are recorded sent.
+        $companions = $this->sendCompanions();
 
-        foreach ($recipients as $recipient) {
-            $this->recipients()->create([
-                'contact_id' => $recipient['contact_id'] ?? null,
-                'recipient_name' => $recipient['name'],
-                'recipient_email' => $recipient['email'] ?? null,
-                'sent_at' => $now,
+        foreach ([$this, ...$companions] as $document) {
+            foreach ($recipients as $recipient) {
+                $document->recipients()->create([
+                    'contact_id' => $recipient['contact_id'] ?? null,
+                    'recipient_name' => $recipient['name'],
+                    'recipient_email' => $recipient['email'] ?? null,
+                    'sent_at' => $now,
+                ]);
+            }
+
+            $document->update(['sent_at' => $now, 'format' => $format]);
+
+            $documentLabel = self::TYPE_LABELS[$document->document_type] ?? $document->document_type;
+
+            $logger->log('document.sent', "נשלח מסמך \"{$documentLabel}\" עבור {$document->subjectLabel()}".($companions ? ' (טופס הזמנה וחוזה במייל אחד)' : ''), [
+                'document_id' => $document->id,
+                'deal_id' => $document->deal_id,
+                'lead_id' => $document->lead_id,
+                'metadata' => ['format' => $format, 'recipient_count' => count($recipients)],
             ]);
         }
 
-        $this->update(['sent_at' => $now, 'format' => $format]);
-
-        $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
-
-        $logger->log('document.sent', "נשלח מסמך \"{$typeLabel}\" עבור עסקה #{$this->deal_id}", [
-            'document_id' => $this->id,
-            'deal_id' => $this->deal_id,
-            'metadata' => ['format' => $format, 'recipient_count' => count($recipients)],
-        ]);
+        $typeLabel = $this->emailSubject($companions);
 
         if ($this->document_type === 'invoice' && $this->totalAmount() > 0) {
             $this->deal?->markInvoiceSent($logger);
@@ -1005,11 +1401,11 @@ class Document extends Model
                 'smove',
                 'document_send',
                 'app_action',
-                function () use ($smove, $emailRecipients) {
+                function () use ($smove, $emailRecipients, $companions) {
                     $reference = '';
 
                     foreach ($emailRecipients as $recipient) {
-                        $reference = $smove->send([['email' => $recipient['email'], 'name' => $recipient['name']]], $this->emailMessage($recipient['name']));
+                        $reference = $smove->send([['email' => $recipient['email'], 'name' => $recipient['name']]], $this->emailMessage($recipient['name'], companions: $companions));
                     }
 
                     return $reference;
@@ -1017,7 +1413,7 @@ class Document extends Model
                 [
                     'document_id' => $this->id,
                     'deal_id' => $this->deal_id,
-                    'description' => "שליחת {$typeLabel} במייל עבור עסקה #{$this->deal_id}",
+                    'description' => "שליחת {$typeLabel} במייל עבור {$this->subjectLabel()}",
                 ],
             );
         }
@@ -1033,9 +1429,22 @@ class Document extends Model
      * let the test copy sign the real document; the PDF is still attached
      * for real.
      */
-    public function emailMessage(string $toName, bool $preview = false): EmailMessage
+    public function emailMessage(string $toName, bool $preview = false, ?array $companions = null): EmailMessage
     {
+        $companions ??= $this->sendCompanions();
         $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+
+        if ($companions) {
+            $documents = [$this, ...$companions];
+
+            return EmailMessage::documents(
+                $toName,
+                $this->emailSubject($companions),
+                'מצורפים בהמשך קישורים ל'.collect($documents)->map(fn (self $d) => '"'.self::TYPE_LABELS[$d->document_type].'"')->implode(' ול').' שהוכנו עבורך, לצפייה, למילוי פרטים ולאישור מקוון. כל מסמך מאושר בקישור שלו. המסמכים מצורפים למייל גם כקובצי PDF.',
+                collect($documents)->map(fn (self $d) => ['label' => self::TYPE_LABELS[$d->document_type], 'url' => $preview ? '#' : $d->signUrl()])->all(),
+                collect($documents)->map(fn (self $d) => ['name' => self::TYPE_LABELS[$d->document_type].'.pdf', 'url' => $d->smoveAttachmentUrl()])->all(),
+            );
+        }
 
         return EmailMessage::document(
             $toName,
@@ -1044,6 +1453,39 @@ class Document extends Model
             $preview ? '#' : $this->signUrl(),
             [['name' => "{$typeLabel}.pdf", 'url' => $this->smoveAttachmentUrl()]],
         );
+    }
+
+    /** "טופס הזמנה וחוזה" — the subject of a send, with whatever goes out with it. */
+    private function emailSubject(array $companions): string
+    {
+        return collect([$this, ...$companions])->map(fn (self $d) => self::TYPE_LABELS[$d->document_type] ?? $d->document_type)->implode(' ו');
+    }
+
+    /**
+     * Documents that go out with this one, in its email: an unsent order
+     * form's contract generated together with it (generateOrderFormAndContract()).
+     *
+     * @return list<self>
+     */
+    public function sendCompanions(): array
+    {
+        if ($this->document_type !== 'order_form' || $this->sent_at) {
+            return [];
+        }
+
+        return self::where('preceding_document_id', $this->id)->where('document_type', 'contract')->whereNull('sent_at')->orderBy('id')->get()->all();
+    }
+
+    /** For a contract going out with its order form (sendCompanions()) — that order form. */
+    public function pairedOrderForm(): ?self
+    {
+        if ($this->document_type !== 'contract' || $this->sent_at || ! $this->preceding_document_id) {
+            return null;
+        }
+
+        $orderForm = $this->precedingDocument()->first();
+
+        return $orderForm?->document_type === 'order_form' && ! $orderForm->sent_at ? $orderForm : null;
     }
 
     /** How a sent document went out — for the deal's documents table and the document screen. */

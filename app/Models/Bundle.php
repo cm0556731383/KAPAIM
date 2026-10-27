@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
@@ -15,10 +16,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * which case purchasing it opens a real SUBSCRIPTION instead of a plain deal
  * — see Deal::createForCustomer()/openSubscriptionIfApplicable().
  */
-#[Fillable(['name', 'description', 'price', 'is_subscription_type', 'is_active'])]
+#[Fillable(['name', 'description', 'price', 'is_subscription_type', 'is_active', 'contract_template_id'])]
 class Bundle extends Model
 {
     use HasFactory;
+
+    /** The contract its order form + contract pair is generated with (Document::generateOrderFormAndContract()). */
+    public function contractTemplate(): BelongsTo
+    {
+        return $this->belongsTo(DocumentTemplate::class, 'contract_template_id');
+    }
 
     protected function casts(): array
     {

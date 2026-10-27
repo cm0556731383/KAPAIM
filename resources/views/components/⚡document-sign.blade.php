@@ -49,7 +49,7 @@ class extends Component
     {
         abort_if(in_array($document->document_type, ['invoice', 'credit_note'], true), 404);
 
-        $this->document = $document->load(['deal.customer.school', 'documentTemplate.fields', 'businessEntity', 'lines']);
+        $this->document = $document->load(['deal.customer.school', 'lead.school', 'documentTemplate.fields', 'businessEntity', 'lines']);
         $this->document->markViewed();
 
         $this->fieldValues = $this->document->currentFieldValues();
@@ -129,7 +129,7 @@ class extends Component
 <div>
     <h1>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
     <p class="meta">
-        {{ $document->deal->customer->school?->name }}
+        {{ $document->partyName() }}
         @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
     </p>
 

@@ -58,9 +58,9 @@ class extends Component
 
     public function mount(Document $document): void
     {
-        abort_unless(auth()->user()->can('documents.view'), 403);
+        abort_unless($document->isViewableBy(auth()->user()), 403);
 
-        $this->document = $document->load(['deal.customer.school', 'expense.supplier', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
+        $this->document = $document->load(['deal.customer.school', 'lead.school', 'expense.supplier', 'documentTemplate.fields', 'businessEntity', 'status', 'lines', 'recipients']);
 
         $this->fieldValues = $this->document->currentFieldValues();
 
@@ -69,6 +69,12 @@ class extends Component
                 ->map(fn (Contact $c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])
                 ->all();
         }
+    }
+
+    /** Whose edit permission applies here (AppServiceProvider's read-only guard) — see Document::isViewableBy(). */
+    public function permissionPage(): string
+    {
+        return $this->document->isPendingLeadQuote() ? 'leads' : 'customers';
     }
 
     // ----- שדות טופס דיגיטלי -----
@@ -214,7 +220,9 @@ class extends Component
             return;
         }
 
-        $this->notifySuccess('המסמך נשלח בהצלחה.');
+        $this->notifySuccess($this->document->document_type === 'order_form' && $this->document->deal?->documents()->where('preceding_document_id', $this->document->id)->where('document_type', 'contract')->where('sent_at', $this->document->sent_at)->exists()
+            ? 'טופס ההזמנה והחוזה נשלחו בהצלחה, במייל אחד.'
+            : 'המסמך נשלח בהצלחה.');
     }
 
     /** The email exactly as it would go out — addressed to the first recipient with an email. */
@@ -240,7 +248,14 @@ class extends Component
 ?>
 
 <div>
-    <a href="{{ $document->deal_id ? route('deal-detail', $document->deal_id) : route('expenses') }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← {{ $document->deal_id ? 'חזרה לעסקה' : 'חזרה להוצאות' }}</a>
+    @php
+        [$backUrl, $backLabel] = match (true) {
+            (bool) $document->deal_id => [route('deal-detail', $document->deal_id), 'חזרה לעסקה'],
+            (bool) $document->lead_id => [route('lead-detail', $document->lead_id), 'חזרה לכרטיס הליד'],
+            default => [route('expenses'), 'חזרה להוצאות'],
+        };
+    @endphp
+    <a href="{{ $backUrl }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← {{ $backLabel }}</a>
 
     <div class="topbar">
         <div>
@@ -373,10 +388,16 @@ class extends Component
                 </div>
             @else
                 {{-- ===== נמענים ושליחה ===== --}}
+                @php
+                    $sendCompanions = $document->sendCompanions();
+                    $pairedOrderForm = $document->pairedOrderForm();
+                @endphp
                 <div class="card">
                     <h3>נמענים</h3>
 
-                    @if ($document->sent_at)
+                    @if ($pairedOrderForm)
+                        <p class="text-text-secondary" style="font-size:var(--fs-small); margin:0">החוזה נשלח יחד עם טופס ההזמנה, במייל אחד. בוחרים נמענים ושולחים <a href="{{ route('document-view', $pairedOrderForm) }}">במסך טופס ההזמנה</a>.</p>
+                    @elseif ($document->sent_at)
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">נשלח בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span> כ{{ $document->sentFormatLabel() }}.</p>
                         <div class="recipients-row">
                             @foreach ($document->recipients as $recipient)
@@ -385,6 +406,9 @@ class extends Component
                         </div>
                     @else
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">ברירת מחדל: אנשי קשר ראשיים · שינוי כאן משפיע רק על שליחה זו</p>
+                        @if ($document->isPendingLeadQuote())
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:-4px">כשהנמענת תאשר את הצעת המחיר בטופס המקוון, הליד יומר אוטומטית ללקוחה ותיפתח עבורה עסקה לפי ההצעה.</p>
+                        @endif
                         <div class="recipients-row">
                             @forelse ($workingRecipients as $index => $recipient)
                                 <span class="chip-recipient">{{ $recipient['name'] }}<button type="button" wire:click="removeRecipient({{ $index }})" aria-label="הסרה">×</button></span>
@@ -397,9 +421,13 @@ class extends Component
                             <div><input type="text" wire:model="newRecipientEmail" class="ltr-num" dir="ltr" placeholder="דוא״ל (אופציונלי)"></div>
                             <div class="full"><button type="button" wire:click="addRecipient" class="btn btn-ghost">+ הוספת נמען לשליחה זו</button></div>
                         </div>
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-lg) 0 0">הלקוחה תקבל מייל עם קישור לטופס המקוון, והמסמך מצורף אליו גם כקובץ PDF.</p>
+                        @if ($sendCompanions)
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-lg) 0 0">טופס ההזמנה והחוזה יישלחו יחד, במייל אחד: קישור לטופס המקוון של כל אחד מהם, ושניהם מצורפים גם כקובצי PDF.</p>
+                        @else
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-lg) 0 0">הלקוחה תקבל מייל עם קישור לטופס המקוון, והמסמך מצורף אליו גם כקובץ PDF.</p>
+                        @endif
                         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-top:var(--sp-sm)">
-                            <button type="button" wire:click="send('{{ \App\Models\Document::FORMAT_FORM_AND_PDF }}')" class="btn btn-primary">שליחה ללקוחה</button>
+                            <button type="button" wire:click="send('{{ \App\Models\Document::FORMAT_FORM_AND_PDF }}')" class="btn btn-primary">{{ $sendCompanions ? 'שליחת טופס ההזמנה והחוזה' : 'שליחה ללקוחה' }}</button>
                             <button type="button" wire:click="previewEmail" class="btn btn-secondary">תצוגה מקדימה</button>
                         </div>
                     @endif

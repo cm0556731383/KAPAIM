@@ -3,6 +3,8 @@
 use App\Concerns\Notifies;
 use App\Models\Bundle;
 use App\Models\Contact;
+use App\Models\Document;
+use App\Models\DocumentTemplate;
 use App\Models\FollowUp;
 use App\Models\Lead;
 use App\Models\LeadInteraction;
@@ -57,6 +59,14 @@ class extends Component
     // ===== תוכניות מבוקשות (תוכניות ומארזים) =====
     /** "program:{id}" or "bundle:{id}" — one picker for both, same encoding as the customer card's new-deal form. */
     public string $itemToAttach = '';
+
+    // ===== הצעת מחיר — נשלחת מהליד, לפני ההמרה (בעלת העסק, 2026-10-27) =====
+    /** "program:{id}" or "bundle:{id}", same encoding as itemToAttach. */
+    public string $quoteItem = '';
+    public string $quoteAmount = '';
+    public string $quoteStudentsCount = '';
+    public string $quoteTemplateId = '';
+    public ?string $quoteError = null;
 
     // ===== אנשי קשר =====
     public string $contactName = '';
@@ -154,6 +164,106 @@ class extends Component
         }
 
         $this->redirect(route('customer-detail', $customer), navigate: false);
+    }
+
+    // ----- הצעת מחיר -----
+
+    /** Opens on what the lead asked about, with its price — both still changeable. */
+    public function openQuoteForm(): void
+    {
+        $this->quoteError = null;
+        $this->resetValidation();
+
+        $first = $this->lead->interestedPrograms->first();
+        $this->quoteItem = $first ? "program:{$first->id}" : (($bundle = $this->lead->interestedBundles->first()) ? "bundle:{$bundle->id}" : '');
+        $this->quoteStudentsCount = '';
+        $this->quoteTemplateId = (string) ($this->quoteTemplates->first()?->id ?? '');
+        $this->updatedQuoteItem();
+
+        $this->dispatch('open-modal', name: 'lead-quote');
+    }
+
+    public function updatedQuoteItem(): void
+    {
+        [$type, $id] = array_pad(explode(':', $this->quoteItem, 2), 2, null);
+        $item = $type === 'program' ? Program::find($id) : ($type === 'bundle' ? Bundle::find($id) : null);
+
+        $this->quoteAmount = $item ? rtrim(rtrim(number_format((float) $item->price, 2, '.', ''), '0'), '.') : '';
+    }
+
+    /**
+     * Creates the quote as a draft on this lead and opens it — the document
+     * screen is where recipients are set, the email previewed and it's sent.
+     * See Document::generateForLead() for the rules and for what the
+     * recipient's confirmation does (converts the lead, opens the deal).
+     */
+    public function createQuote(): void
+    {
+        $this->quoteError = null;
+
+        $data = $this->validate([
+            'quoteItem' => ['required', 'string'],
+            'quoteAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'quoteStudentsCount' => ['nullable', 'integer', 'min:0'],
+            'quoteTemplateId' => ['required'],
+        ], [], ['quoteItem' => 'תוכנית / מארז', 'quoteAmount' => 'סכום', 'quoteStudentsCount' => 'מספר תלמידות', 'quoteTemplateId' => 'תבנית']);
+
+        [$type, $id] = array_pad(explode(':', $data['quoteItem'], 2), 2, null);
+        $template = $this->quoteTemplates->firstWhere('id', (int) $data['quoteTemplateId']);
+
+        if (! $template) {
+            $this->quoteError = 'לא נמצאה תבנית פעילה של הצעת מחיר — יש להגדיר אחת תחילה בהגדרות, בלשונית תבניות מסמכים.';
+
+            return;
+        }
+
+        try {
+            $document = Document::generateForLead(
+                $this->lead,
+                $template,
+                $type === 'program' ? Program::find($id) : null,
+                $type === 'bundle' ? Bundle::find($id) : null,
+                (float) $data['quoteAmount'],
+                $data['quoteStudentsCount'] !== null && $data['quoteStudentsCount'] !== '' ? (int) $data['quoteStudentsCount'] : null,
+            );
+        } catch (\RuntimeException $e) {
+            $this->quoteError = $e->getMessage();
+
+            return;
+        }
+
+        $this->redirect(route('document-view', $document), navigate: false);
+    }
+
+    #[Computed]
+    public function quoteTemplates()
+    {
+        return DocumentTemplate::where('is_active', true)->where('document_type', 'quote')->orderBy('name')->orderBy('id')->get();
+    }
+
+    /** This lead's quotes — including any already confirmed into a deal. */
+    #[Computed]
+    public function quotes()
+    {
+        return Document::where('lead_id', $this->lead->id)->with('deal')->orderByDesc('id')->get();
+    }
+
+    /** Every active program and bundle — what the lead asked about listed first. */
+    #[Computed]
+    public function quoteItems(): array
+    {
+        $interestedPrograms = $this->lead->interestedPrograms->pluck('id');
+        $interestedBundles = $this->lead->interestedBundles->pluck('id');
+
+        $programs = Program::where('is_active', true)->orderBy('name')->get();
+        $bundles = Bundle::where('is_active', true)->orderBy('name')->get();
+
+        return [
+            'מבוקשות בליד' => $programs->whereIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p->price])
+                ->concat($bundles->whereIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", "מארז: {$b->name}", $b->price]))->values()->all(),
+            'תוכניות' => $programs->whereNotIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p->price])->values()->all(),
+            'מארזים' => $bundles->whereNotIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", $b->name, $b->price])->values()->all(),
+        ];
     }
 
     private function syncSchoolFields(): void
@@ -1051,6 +1161,91 @@ class extends Component
         </div>
 
         <div>
+            {{-- ===== הצעות מחיר — אישור הצעה ע"י הנמענת ממיר את הליד ללקוחה ופותח עסקה ===== --}}
+            <div class="card" style="margin-bottom:var(--sp-lg)">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                    <h3 style="margin:0">הצעות מחיר</h3>
+                    @unless ($lead->customer)
+                        <button type="button" class="btn btn-secondary btn-sm" wire:click="openQuoteForm">+ הצעת מחיר</button>
+                    @endunless
+                </div>
+                @forelse ($this->quotes as $quote)
+                    <div class="deal-row">
+                        <div>
+                            <div style="font-weight:600">{{ $quote->leadOfferItemName() ?? 'הצעת מחיר' }}</div>
+                            <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">
+                                נוצרה <span class="ltr-num">{{ $quote->created_at->format('d/m/Y') }}</span>
+                                · @if ($quote->confirmed_at) אושרה <span class="ltr-num">{{ $quote->confirmed_at->format('d/m/Y') }}</span> @elseif ($quote->sent_at) נשלחה <span class="ltr-num">{{ $quote->sent_at->format('d/m/Y') }}</span>@if ($quote->viewed_at) · נפתחה @endif @else טיוטה @endif
+                            </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:var(--sp-md)">
+                            <span class="amount ltr-num">₪{{ number_format((float) ($quote->lead_offer['agreed_amount'] ?? 0), 0) }}</span>
+                            @if ($quote->deal)
+                                <a href="{{ route('deal-detail', $quote->deal) }}" class="btn btn-ghost btn-sm">לעסקה</a>
+                            @else
+                                <a href="{{ route('document-view', $quote) }}" class="btn btn-ghost btn-sm">פתיחה</a>
+                            @endif
+                        </div>
+                    </div>
+                @empty
+                    <p class="text-text-secondary" style="font-size:var(--fs-small); margin:0">
+                        @if ($lead->customer)
+                            הצעת מחיר לרכישה נוספת נשלחת מהעסקה, בכרטיס הלקוחה.
+                        @else
+                            עוד לא נשלחה הצעת מחיר. כשהנמענת מאשרת את ההצעה בטופס המקוון, הליד מומר ללקוחה ונפתחת עסקה לפי ההצעה.
+                        @endif
+                    </p>
+                @endforelse
+
+                <x-modal name="lead-quote" title="הצעת מחיר חדשה">
+                    <form wire:submit="createQuote" class="form-grid">
+                        @if ($quoteError)
+                            <div class="full" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small);">{{ $quoteError }}</div>
+                        @endif
+                        <div class="full">
+                            <label for="quoteItem">תוכנית / מארז</label>
+                            <select id="quoteItem" wire:model.live="quoteItem">
+                                <option value="">בחרו תוכנית או מארז</option>
+                                @foreach ($this->quoteItems as $group => $items)
+                                    @if ($items)
+                                        <optgroup label="{{ $group }}">
+                                            @foreach ($items as [$value, $name, $price])
+                                                <option value="{{ $value }}">{{ $name }} (₪{{ number_format((float) $price, 0) }})</option>
+                                            @endforeach
+                                        </optgroup>
+                                    @endif
+                                @endforeach
+                            </select>
+                            @error('quoteItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="quoteAmount">סכום ההצעה (ניתן לשינוי)</label>
+                            <input type="text" id="quoteAmount" wire:model="quoteAmount" class="ltr-num" dir="ltr" placeholder="₪">
+                            @error('quoteAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="quoteStudentsCount">מספר תלמידות</label>
+                            <input type="text" id="quoteStudentsCount" wire:model="quoteStudentsCount" class="ltr-num" dir="ltr" inputmode="numeric">
+                            @error('quoteStudentsCount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        @if ($this->quoteTemplates->count() > 1)
+                            <div class="full">
+                                <label for="quoteTemplateId">תבנית</label>
+                                <select id="quoteTemplateId" wire:model="quoteTemplateId">
+                                    @foreach ($this->quoteTemplates as $template)
+                                        <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                        @elseif ($this->quoteTemplates->isEmpty())
+                            <p class="full" style="color: var(--color-error); font-size: var(--fs-caption); margin:0">אין תבנית פעילה של הצעת מחיר — יש להגדיר אחת בהגדרות, בלשונית תבניות מסמכים.</p>
+                        @endif
+                        <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">ההצעה תמולא בפרטי בית הספר ואנשי הקשר של הליד. במסך הבא בוחרים נמענים, צופים במייל ושולחים.</p>
+                        <div class="full"><button type="submit" class="btn btn-primary">יצירת הצעת המחיר</button></div>
+                    </form>
+                </x-modal>
+            </div>
+
             {{-- ===== אנשי קשר ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">

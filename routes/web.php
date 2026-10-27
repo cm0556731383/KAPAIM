@@ -331,9 +331,9 @@ Route::middleware('auth')->group(function () {
     })->name('document-templates');
     Route::livewire('/documents/{document}', 'document-view')->name('document-view');
     Route::get('/documents/{document}/print', function (\App\Models\Document $document) {
-        abort_unless(auth()->user()->can('documents.view'), 403);
+        abort_unless($document->isViewableBy(auth()->user()), 403);
 
-        $document->load(['deal.customer.school', 'businessEntity', 'lines']);
+        $document->load(['deal.customer.school', 'lead.school', 'businessEntity', 'lines']);
 
         return view('documents.print', ['document' => $document]);
     })->name('document-print');

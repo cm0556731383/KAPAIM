@@ -38,6 +38,25 @@ class DocumentTemplate extends Model
      */
     public const SYSTEM_TYPES = ['invoice', 'credit_note', 'expense_invoice'];
 
+    /** A new program/bundle's default contract, until changed in the catalog (2026-10-27). */
+    public const STANDARD_CONTRACT_NAME = 'חוזה סטנדרטי';
+
+    /** The active "חוזה סטנדרטי" — or, with none by that name, the first active contract. */
+    public static function standardContract(): ?self
+    {
+        $active = self::where('is_active', true)->where('document_type', 'contract')->orderBy('name')->orderBy('id');
+
+        return (clone $active)->where('name', self::STANDARD_CONTRACT_NAME)->first() ?? $active->first();
+    }
+
+    /** The contract a deal's order form + contract pair is generated with: its program's/bundle's, else the standard one. */
+    public static function defaultContractFor(Deal $deal): ?self
+    {
+        $chosen = ($deal->program ?? $deal->bundle)?->contractTemplate;
+
+        return $chosen?->is_active && $chosen->document_type === 'contract' ? $chosen : self::standardContract();
+    }
+
     protected function casts(): array
     {
         return [

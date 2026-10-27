@@ -110,6 +110,8 @@ class extends Component
         // Set by ⚡document-view when a failed Summit issuance deleted the invoice draft.
         $this->documentError = session('documentError');
         $this->payMethodId = (string) ($this->deal->payment_method_id ?? '');
+        // The pair window opens on the program's/bundle's default contract (catalog).
+        $this->pairContractTemplateId = (string) (\App\Models\DocumentTemplate::defaultContractFor($this->deal)?->id ?? '');
         $this->resetLinkForm();
         $this->addCheckRow();
     }
@@ -414,6 +416,45 @@ class extends Component
     public function activeBusinessEntities()
     {
         return BusinessEntity::where('is_active', true)->orderBy('name')->get();
+    }
+
+    /** Chosen in the "+ הפקת טופס הזמנה וחוזה" window when a type has several active templates. */
+    public string $pairOrderFormTemplateId = '';
+    public string $pairContractTemplateId = '';
+
+    /**
+     * The order form and the contract together, to go out in one email
+     * (Document::generateOrderFormAndContract()) — opens the order form,
+     * whose send sends both.
+     */
+    public function generateOrderFormAndContract(): void
+    {
+        $this->documentError = null;
+        // Nothing chosen: the order form's first template, the deal's default contract (Document::generateOrderFormAndContract()).
+        $pick = fn (string $type, string $id) => $id !== ''
+            ? $this->activeTemplatesByType->get($type, collect())->firstWhere('id', (int) $id)
+            : null;
+
+        try {
+            ['order_form' => $orderForm] = Document::generateOrderFormAndContract(
+                $this->deal,
+                $pick('order_form', $this->pairOrderFormTemplateId),
+                $pick('contract', $this->pairContractTemplateId),
+            );
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+            $this->dispatch('close-modals');
+
+            return;
+        }
+
+        $this->redirect(route('document-view', $orderForm), navigate: false);
+    }
+
+    /** A deal gets its order form and contract as a pair until it has a contract. */
+    public function canGenerateOrderFormAndContract(): bool
+    {
+        return ! $this->documents->contains('document_type', 'contract');
     }
 
     public function canGenerateDocument(string $documentType): bool
@@ -1253,6 +1294,38 @@ class extends Component
                         </div>
                         <button type="button" wire:click="generateDocument('invoice')" class="btn btn-primary" @disabled(! $this->canGenerateDocument('invoice'))>הפקת חשבונית</button>
                     </div>
+                @elseif ($type === 'order_form')
+                    {{-- Order form and contract go out together, in one email (2026-10-27). --}}
+                    @php
+                        $orderFormChoices = $this->activeTemplatesByType->get('order_form', collect());
+                        $contractChoices = $this->activeTemplatesByType->get('contract', collect());
+                    @endphp
+                    @if (($orderFormChoices->count() > 1 || $contractChoices->count() > 1) && $this->canGenerateOrderFormAndContract())
+                        <x-modal trigger-label="+ הפקת טופס הזמנה וחוזה" trigger-class="btn btn-secondary" title="טופס הזמנה וחוזה">
+                            <form wire:submit="generateOrderFormAndContract" class="form-grid">
+                                <div class="full">
+                                    <label for="pairOrderFormTemplateId">תבנית טופס הזמנה</label>
+                                    <select id="pairOrderFormTemplateId" wire:model="pairOrderFormTemplateId">
+                                        @foreach ($orderFormChoices as $choice)
+                                            <option value="{{ $loop->first ? '' : $choice->id }}">{{ $choice->name }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="full">
+                                    <label for="pairContractTemplateId">תבנית חוזה</label>
+                                    <select id="pairContractTemplateId" wire:model="pairContractTemplateId">
+                                        @foreach ($contractChoices as $choice)
+                                            <option value="{{ $choice->id }}">{{ $choice->name }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">שני המסמכים יישלחו ללקוחה במייל אחד, ממסך טופס ההזמנה.</p>
+                                <div class="full"><button type="submit" class="btn btn-primary">הפקת טופס הזמנה וחוזה</button></div>
+                            </form>
+                        </x-modal>
+                    @else
+                        <button type="button" wire:click="generateOrderFormAndContract" class="btn btn-secondary" @disabled(! $this->canGenerateOrderFormAndContract()) title="שני המסמכים נשלחים ללקוחה במייל אחד">+ הפקת טופס הזמנה וחוזה</button>
+                    @endif
                 @elseif (($choices = $this->activeTemplatesByType->get($type, collect()))->count() > 1 && $this->canGenerateDocument($type))
                     {{-- Several active templates of this type — pick one. --}}
                     <x-modal :trigger-label="'+ הפקת '.$label" trigger-class="btn btn-secondary" :title="'באיזו תבנית להפיק '.$label.'?'">

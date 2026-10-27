@@ -114,6 +114,25 @@ final class EmailMessage
         return new self($subject, BrandedEmail::wrap($body), $attachments);
     }
 
+    /**
+     * Several documents in one send (Document::sendCompanions() — the order
+     * form with its contract): a button per document, each to its own
+     * online form, and every PDF attached.
+     *
+     * @param  list<array{label: string, url: string}>  $forms
+     * @param  list<array{name: string, url: string}>  $attachments
+     */
+    public static function documents(string $toName, string $subject, string $introText, array $forms, array $attachments = []): self
+    {
+        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
+
+        foreach ($forms as $form) {
+            $body .= BrandedEmail::primaryButton($form['url'], "{$form['label']} — לצפייה, מילוי פרטים ואישור מקוון");
+        }
+
+        return new self($subject, BrandedEmail::wrap($body.'<p>בברכה, כפיים</p>'), $attachments);
+    }
+
     /** The "קבלת המסמך כ-PDF במייל" follow-up. */
     public static function documentAttachment(string $toName, string $typeLabel, string $introText, string $attachmentUrl): self
     {

@@ -40,7 +40,7 @@
     <div class="brand"><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('images/logo.png'))) }}"></div>
     <h1>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>
     <p class="meta">
-        {{ $document->deal->customer->school?->name }}
+        {{ $document->partyName() }}
         @if ($document->businessEntity) · עוסק: {{ $document->businessEntity->name }} ({{ $document->businessEntity->classification }}) @endif
         · הופק בתאריך <span class="ltr-num">{{ $document->created_at->format('d/m/Y') }}</span>
     </p>

@@ -118,6 +118,28 @@ class extends Component
         return (session('snoozed_checks', [])[$paymentId] ?? null) === today()->toDateString();
     }
 
+    /**
+     * Quotes a lead confirmed online — the lead converted and its deal opened
+     * on its own (Document::confirm()) — with whether the order form and
+     * contract then went out, until someone marks the notice handled.
+     */
+    #[Computed]
+    public function confirmedLeadQuotes()
+    {
+        $user = auth()->user();
+
+        return $user->can('leads.view') || $user->can('deals.view')
+            ? \App\Models\Document::unnoticedConfirmedLeadQuotes()
+            : collect();
+    }
+
+    public function markQuoteNoticed(int $documentId): void
+    {
+        \App\Models\Document::whereKey($documentId)->whereNotNull('lead_id')->whereNull('confirmation_noticed_at')
+            ->update(['confirmation_noticed_at' => now()]);
+        unset($this->confirmedLeadQuotes);
+    }
+
     #[Computed]
     public function newLeadsCount(): int
     {
@@ -222,6 +244,36 @@ class extends Component
                     <div style="display:flex; gap:6px; flex-wrap:wrap">
                         <button type="button" wire:click="clearCheck({{ $check->id }})" wire:loading.attr="disabled" class="btn btn-primary btn-sm">נפרע — הפקת קבלה</button>
                         <button type="button" wire:click="snoozeCheck({{ $check->id }})" class="btn btn-ghost btn-sm">עדיין לא — להזכיר מחר</button>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+    @endif
+
+    @if ($this->confirmedLeadQuotes->isNotEmpty())
+        {{-- A lead confirmed her quote: she's a customer now, with a deal — and the order form + contract went out (or didn't). --}}
+        <div class="card check-reminder" role="status">
+            <h3>הצעות מחיר שאושרו</h3>
+            <p class="pay-note" style="margin:-8px 0 var(--sp-md)">הליד הומר אוטומטית ללקוחה ונפתחה עבורה עסקה לפי ההצעה. טופס ההזמנה והחוזה נשלחים אליה אוטומטית במייל אחד.</p>
+            @foreach ($this->confirmedLeadQuotes as $quote)
+                @php $followUpSent = $quote->lead_offer['follow_up_sent'] ?? null; @endphp
+                <div class="check-reminder-row" wire:key="confirmed-quote-{{ $quote->id }}">
+                    <div>
+                        <a href="{{ route('deal-detail', $quote->deal) }}" style="font-weight:600">{{ $quote->deal->customer?->school?->name ?? '—' }}</a>
+                        <div class="pay-note">
+                            אישרה את הצעת המחיר ל{{ $quote->deal->program_name_snapshot ?? $quote->deal->bundle_name_snapshot }}
+                            · ₪<span class="ltr-num">{{ number_format((float) $quote->deal->agreed_amount, 0) }}</span>
+                            · <span class="ltr-num">{{ $quote->confirmed_at->format('d/m/Y H:i') }}</span>
+                        </div>
+                        @if ($followUpSent)
+                            <div class="pay-note" style="color:var(--color-success)">✓ טופס ההזמנה והחוזה נשלחו אליה במייל אחד.</div>
+                        @elseif ($followUpSent === false)
+                            <div class="pay-note" style="color:var(--color-error)">טופס ההזמנה והחוזה לא נשלחו: {{ $quote->lead_offer['follow_up_error'] ?? '' }} יש לשלוח אותם מכרטיס העסקה.</div>
+                        @endif
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap">
+                        <a href="{{ route('deal-detail', $quote->deal) }}" class="btn btn-primary btn-sm">לעסקה</a>
+                        <button type="button" wire:click="markQuoteNoticed({{ $quote->id }})" class="btn btn-ghost btn-sm">סימון כטופל</button>
                     </div>
                 </div>
             @endforeach
