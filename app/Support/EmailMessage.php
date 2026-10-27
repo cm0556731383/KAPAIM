@@ -109,11 +109,13 @@ final class EmailMessage
     }
 
     /**
-     * The morning email of a user's own reminders for the day.
+     * The morning email of a user's own reminders for the day — $body is the
+     * rendered 'task_reminders' template; the list goes where
+     * EmailTemplate::TASK_LIST_TOKEN sits, or at the end.
      *
      * @param  array<int, array{title: string, subtitle: string, description: ?string, url: string}>  $tasks
      */
-    public static function taskReminders(string $subject, string $intro, array $tasks): self
+    public static function taskReminders(string $subject, string $body, array $tasks): self
     {
         $items = collect($tasks)->map(fn (array $t) => '<li style="margin-bottom:14px;">'
             .'<a href="'.e($t['url']).'" style="color:#286E9A; font-weight:700;">'.e($t['title']).'</a>'
@@ -121,50 +123,46 @@ final class EmailMessage
             .($t['description'] ? '<div style="font-size:14px;">'.nl2br(e($t['description'])).'</div>' : '')
             .'</li>')->implode('');
 
-        return new self($subject, BrandedEmail::wrap('<p>'.e($intro).'</p><ul style="padding-inline-start:20px;">'.$items.'</ul>'));
+        return new self($subject, BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, [
+            EmailTemplate::TASK_LIST_TOKEN => '<ul style="padding-inline-start:20px;">'.$items.'</ul>',
+        ])));
     }
 
     /**
-     * A document send — see SmoveClient::sendDocumentEmail() for what each
-     * URL is. $formUrl is the main action (primaryButton); $requestPdfUrl
-     * the deliberately de-emphasized subtleButton after the sign-off.
+     * A document send — $body is the rendered 'document_send' template; the
+     * online-form button ($formUrl) goes where EmailTemplate::DOCUMENT_BUTTON_TOKEN
+     * sits, or at the end. $requestPdfUrl: the deliberately de-emphasized
+     * subtleButton after everything.
      *
      * @param  list<array{name: string, url: string}>  $attachments
      */
-    public static function document(string $toName, string $subject, string $introText, ?string $formUrl, array $attachments = [], ?string $requestPdfUrl = null): self
+    public static function document(string $subject, string $body, ?string $formUrl, array $attachments = [], ?string $requestPdfUrl = null): self
     {
-        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
-
-        if ($formUrl) {
-            $body .= BrandedEmail::primaryButton($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון');
-        }
-
-        $body .= '<p>בברכה, כפיים</p>';
+        $html = BrandedEmail::textWithBlocks($body, [
+            EmailTemplate::DOCUMENT_BUTTON_TOKEN => $formUrl ? BrandedEmail::primaryButton($formUrl, 'לצפייה במסמך, מילוי פרטים ואישור מקוון') : '',
+        ]);
 
         if ($requestPdfUrl) {
-            $body .= BrandedEmail::subtleButton($requestPdfUrl, 'חסומה? קבלי את המסמך כקובץ PDF');
+            $html .= BrandedEmail::subtleButton($requestPdfUrl, 'חסומה? קבלי את המסמך כקובץ PDF');
         }
 
-        return new self($subject, BrandedEmail::wrap($body), $attachments);
+        return new self($subject, BrandedEmail::wrap($html), $attachments);
     }
 
     /**
      * Several documents in one send (Document::sendCompanions() — the order
-     * form with its contract): a button per document, each to its own
-     * online form, and every PDF attached.
+     * form with its contract) — $body is the rendered 'documents_send'
+     * template: a button per document, each to its own online form, where
+     * EmailTemplate::DOCUMENT_BUTTON_TOKEN sits; every PDF attached.
      *
      * @param  list<array{label: string, url: string}>  $forms
      * @param  list<array{name: string, url: string}>  $attachments
      */
-    public static function documents(string $toName, string $subject, string $introText, array $forms, array $attachments = []): self
+    public static function documents(string $subject, string $body, array $forms, array $attachments = []): self
     {
-        $body = '<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>';
+        $buttons = collect($forms)->map(fn (array $form) => BrandedEmail::primaryButton($form['url'], "{$form['label']} — לצפייה, מילוי פרטים ואישור מקוון"))->implode('');
 
-        foreach ($forms as $form) {
-            $body .= BrandedEmail::primaryButton($form['url'], "{$form['label']} — לצפייה, מילוי פרטים ואישור מקוון");
-        }
-
-        return new self($subject, BrandedEmail::wrap($body.'<p>בברכה, כפיים</p>'), $attachments);
+        return new self($subject, BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, [EmailTemplate::DOCUMENT_BUTTON_TOKEN => $buttons])), $attachments);
     }
 
     /** The "קבלת המסמך כ-PDF במייל" follow-up. */
@@ -204,11 +202,11 @@ final class EmailMessage
         return new self($subject, BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, [EmailTemplate::EXPENSE_LIST_TOKEN => $list])));
     }
 
-    /** A SUMIT payment page link — the payment button is the email's one action. */
-    public static function paymentLink(string $toName, string $subject, string $introText, string $paymentUrl, string $footerText): self
+    /** A SUMIT payment page link — $body is the rendered 'payment_link' / 'standing_order_link' template; the payment button goes where EmailTemplate::PAYMENT_BUTTON_TOKEN sits, or at the end. */
+    public static function paymentLink(string $subject, string $body, string $paymentUrl): self
     {
-        return new self($subject, BrandedEmail::wrap('<p>שלום '.e($toName).',</p><p>'.nl2br(e($introText)).'</p>'
-            .BrandedEmail::primaryButton($paymentUrl, 'לתשלום מאובטח בכרטיס אשראי')
-            .'<p>'.e($footerText).'</p><p>בברכה, כפיים</p>'));
+        return new self($subject, BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, [
+            EmailTemplate::PAYMENT_BUTTON_TOKEN => BrandedEmail::primaryButton($paymentUrl, 'לתשלום מאובטח בכרטיס אשראי'),
+        ])));
     }
 }

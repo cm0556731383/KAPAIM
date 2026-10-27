@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Models\EmailTemplate;
 use App\Models\ExternalOperation;
 use App\Models\Task;
 use App\Models\User;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
+use App\Support\EmailMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 
@@ -22,6 +24,9 @@ use Illuminate\Support\Collection;
  * Whoever that user is can't take it — inactive, or (for collection) without
  * the payments permission — the email goes to the business owner instead.
  *
+ * The wording is the 'task_reminders' email template (settings → תבניות
+ * דואר); while it's disabled no morning emails go out.
+ *
  * Each task is emailed once (reminder_sent_at), marked only once Smove
  * accepted the email; a failure is recorded by ExternalOperationRunner and
  * never crashes the scheduled run.
@@ -30,10 +35,14 @@ class SendTaskReminders extends Command
 {
     protected $signature = 'tasks:send-reminders';
 
-    protected $description = "Email each user the morning list of her reminders for the day (lead reminders due today, new collection tasks)";
+    protected $description = 'Email each user the morning list of her reminders for the day (lead reminders due today, new collection tasks)';
 
     public function handle(ExternalOperationRunner $runner, SmoveClient $smove): int
     {
+        if (! EmailTemplate::forType(EmailTemplate::TASK_REMINDERS)->is_active) {
+            return self::SUCCESS;
+        }
+
         $tasks = Task::where('status', 'open')
             ->whereNull('reminder_sent_at')
             ->where(fn ($q) => $q
@@ -89,15 +98,16 @@ class SendTaskReminders extends Command
                 'url' => $task->lead ? route('lead-detail', $task->lead) : route('leads'),
             ])->values()->all();
 
-        $subject = $tasks->count() === 1
-            ? 'תזכורת להיום: '.$tasks->first()->title
-            : 'התזכורות שלך להיום ('.$tasks->count().')';
+        $rendered = EmailTemplate::forType(EmailTemplate::TASK_REMINDERS)->render([
+            'user_name' => $user->name,
+            'task_count' => (string) $tasks->count(),
+        ]);
 
         $operation = $runner->run(
             'smove',
             'task_reminders',
             'scheduled_job',
-            fn () => $smove->sendTaskRemindersEmail($user->email, $user->name, $subject, "בוקר טוב {$user->name}, אלה התזכורות שלך להיום:", $rows),
+            fn () => $smove->send([['email' => $user->email, 'name' => $user->name]], EmailMessage::taskReminders($rendered['subject'], $rendered['content'], $rows)),
             [
                 'user' => null,
                 'description' => 'מייל תזכורות בוקר ל'.$user->name.' ('.$tasks->count().' תזכורות)',

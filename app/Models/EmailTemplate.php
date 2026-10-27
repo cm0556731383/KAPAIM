@@ -112,11 +112,118 @@ class EmailTemplate extends Model
     /** Old token for the list of material links — still used by mailing-list emails; dropped from a materials email, whose buttons replace it. */
     public const MATERIALS_LIST_TOKEN = '{{רשימת_החומרים}}';
 
+    /** A document sent alone from its card (quote / order form / contract — Document::emailMessage()): the online-form button goes where DOCUMENT_BUTTON_TOKEN sits. */
+    public const DOCUMENT_SEND = 'document_send';
+
+    /** The order form and its contract sent together in one email — a button per document where DOCUMENT_BUTTON_TOKEN sits. */
+    public const DOCUMENTS_SEND = 'documents_send';
+
+    /** A one-time SUMIT payment link (PaymentLink::emailMessage()) — the payment button goes where PAYMENT_BUTTON_TOKEN sits. */
+    public const PAYMENT_LINK = 'payment_link';
+
+    /** A SUMIT link to set up a standing order — same as PAYMENT_LINK, with the number of months. */
+    public const STANDING_ORDER_LINK = 'standing_order_link';
+
+    /** A user's morning email of her reminders for the day (tasks:send-reminders) — the list goes where TASK_LIST_TOKEN sits. Disabled → no morning emails. */
+    public const TASK_REMINDERS = 'task_reminders';
+
+    /** Where the document's online-form button (or the pair's two buttons) goes. */
+    public const DOCUMENT_BUTTON_TOKEN = '{{כפתור_המסמך}}';
+
+    /** Where the payment button goes in a payment-link email. */
+    public const PAYMENT_BUTTON_TOKEN = '{{כפתור_התשלום}}';
+
+    /** Where the list of the day's reminders goes in the morning email. */
+    public const TASK_LIST_TOKEN = '{{רשימת_התזכורות}}';
+
+    /** What a document email can include — Document::emailMessage(). */
+    public const DOCUMENT_PLACEHOLDERS = [
+        'שם_הנמען' => 'recipient_name',
+        'סוג_המסמך' => 'document_type',
+        'המסמכים' => 'documents',
+    ];
+
+    /** What a payment-link email can include — PaymentLink::emailMessage(). */
+    public const PAYMENT_PLACEHOLDERS = [
+        'שם_הנמען' => 'recipient_name',
+        'פריט' => 'item',
+        'סכום' => 'amount',
+        'מספר_חודשים' => 'months',
+        'תוקף_הקישור' => 'expires_at',
+    ];
+
+    /** What the morning reminders email can include — SendTaskReminders. */
+    public const TASK_PLACEHOLDERS = [
+        'שם_המשתמשת' => 'user_name',
+        'מספר_התזכורות' => 'task_count',
+    ];
+
+    /**
+     * The wording each system email is seeded with (migration 2026_10_27_000600)
+     * — and what is sent if its row is ever missing (forType()).
+     */
+    public const SYSTEM_DEFAULTS = [
+        self::DOCUMENT_SEND => [
+            'name' => 'שליחת מסמך',
+            'subject' => '{{סוג_המסמך}}',
+            'content' => "שלום {{שם_הנמען}},\n\nמצורף בהמשך קישור ל\"{{סוג_המסמך}}\" שהוכן עבורך, לצפייה, למילוי פרטים ולאישור מקוון. המסמך מצורף למייל גם כקובץ PDF.\n\n{{כפתור_המסמך}}\n\nבברכה, כפיים",
+        ],
+        self::DOCUMENTS_SEND => [
+            'name' => 'שליחת טופס הזמנה וחוזה',
+            'subject' => '{{המסמכים}}',
+            'content' => "שלום {{שם_הנמען}},\n\nמצורפים בהמשך קישורים ל{{המסמכים}} שהוכנו עבורך, לצפייה, למילוי פרטים ולאישור מקוון. כל מסמך מאושר בקישור שלו. המסמכים מצורפים למייל גם כקובצי PDF.\n\n{{כפתור_המסמך}}\n\nבברכה, כפיים",
+        ],
+        self::PAYMENT_LINK => [
+            'name' => 'קישור לתשלום',
+            'subject' => 'קישור לתשלום — {{פריט}}',
+            'content' => "שלום {{שם_הנמען}},\n\nלתשלום עבור \"{{פריט}}\" בסך ₪{{סכום}}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.\n\n{{כפתור_התשלום}}\n\nהקישור בתוקף עד {{תוקף_הקישור}}.\n\nבברכה, כפיים",
+        ],
+        self::STANDING_ORDER_LINK => [
+            'name' => 'קישור להקמת הוראת קבע',
+            'subject' => 'הקמת הוראת קבע — {{פריט}}',
+            'content' => "שלום {{שם_הנמען}},\n\nלהקמת הוראת קבע עבור \"{{פריט}}\": ₪{{סכום}} לחודש, {{מספר_חודשים}} חודשים. התשלום הראשון מתבצע עכשיו בכרטיס אשראי בדף התשלום המאובטח של SUMIT, והתשלומים הבאים יחויבו אוטומטית מאותו כרטיס בכל חודש. על כל תשלום תישלח אלייך קבלה במייל.\n\n{{כפתור_התשלום}}\n\nהקישור בתוקף עד {{תוקף_הקישור}}.\n\nבברכה, כפיים",
+        ],
+        self::TASK_REMINDERS => [
+            'name' => 'תזכורות בוקר למשתמשות',
+            'subject' => 'התזכורות שלך להיום ({{מספר_התזכורות}})',
+            'content' => "בוקר טוב {{שם_המשתמשת}}, אלה התזכורות שלך להיום:\n\n{{רשימת_התזכורות}}",
+        ],
+    ];
+
     /** Emails the code looks up by type — settings never lets their type change. */
-    public const FIXED_TYPES = [...self::SUPPLIER_TYPES, self::MATERIAL_DELIVERY, self::MATERIAL_REMINDER];
+    public const FIXED_TYPES = [...self::SUPPLIER_TYPES, self::MATERIAL_DELIVERY, self::MATERIAL_REMINDER, ...self::SYSTEM_TYPES];
+
+    /** The system emails seeded from SYSTEM_DEFAULTS. */
+    public const SYSTEM_TYPES = [self::DOCUMENT_SEND, self::DOCUMENTS_SEND, self::PAYMENT_LINK, self::STANDING_ORDER_LINK, self::TASK_REMINDERS];
 
     /** Emails that are always sent — settings offers no disable button for them. */
-    public const ALWAYS_ACTIVE_TYPES = [self::MATERIAL_DELIVERY];
+    public const ALWAYS_ACTIVE_TYPES = [self::MATERIAL_DELIVERY, self::DOCUMENT_SEND, self::DOCUMENTS_SEND, self::PAYMENT_LINK, self::STANDING_ORDER_LINK];
+
+    /** What each fixed email is for — the settings list's "שימוש" column. */
+    public const FIXED_LABELS = [
+        self::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק',
+        self::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק',
+        self::MATERIAL_DELIVERY => 'שליחת חומרי לימוד',
+        self::MATERIAL_REMINDER => 'תזכורת על חומרים שלא אושרו',
+        self::DOCUMENT_SEND => 'שליחת מסמך (הצעת מחיר / טופס הזמנה / חוזה)',
+        self::DOCUMENTS_SEND => 'שליחת טופס הזמנה וחוזה יחד',
+        self::PAYMENT_LINK => 'קישור לתשלום',
+        self::STANDING_ORDER_LINK => 'קישור להקמת הוראת קבע',
+        self::TASK_REMINDERS => 'מייל תזכורות בוקר (פנימי)',
+    ];
+
+    /** The settings list's "שימוש" text for a template. */
+    public function usageLabel(): string
+    {
+        return self::FIXED_LABELS[$this->template_type] ?? self::TYPE_LABELS[$this->template_type] ?? 'כללי';
+    }
+
+    /** A system email's template — its saved row, or SYSTEM_DEFAULTS' wording when the row is missing. */
+    public static function forType(string $type): self
+    {
+        return self::where('template_type', $type)->first()
+            ?? new self([...self::SYSTEM_DEFAULTS[$type], 'template_type' => $type, 'is_active' => true]);
+    }
 
     public function isHtml(): bool
     {
@@ -178,7 +285,7 @@ class EmailTemplate extends Model
     {
         $replace = static fn (string $text): string => preg_replace_callback(
             '/\{\{\s*([\p{L}\p{N}_.]+)\s*\}\}/u',
-            fn ($m) => $data[self::PLACEHOLDERS[$m[1]] ?? self::EXPENSE_PLACEHOLDERS[$m[1]] ?? self::SUPPLIER_PLACEHOLDERS[$m[1]] ?? $m[1]] ?? $m[0],
+            fn ($m) => $data[self::PLACEHOLDERS[$m[1]] ?? self::EXPENSE_PLACEHOLDERS[$m[1]] ?? self::SUPPLIER_PLACEHOLDERS[$m[1]] ?? self::DOCUMENT_PLACEHOLDERS[$m[1]] ?? self::PAYMENT_PLACEHOLDERS[$m[1]] ?? self::TASK_PLACEHOLDERS[$m[1]] ?? $m[1]] ?? $m[0],
             $text,
         );
 

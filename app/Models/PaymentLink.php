@@ -199,20 +199,17 @@ class PaymentLink extends Model
     public static function emailMessage(Deal $deal, float $amount, bool $standingOrder, CarbonInterface $expiresAt, string $name, string $url): EmailMessage
     {
         $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
-        $amountText = number_format($amount, 2);
+        $template = EmailTemplate::forType($standingOrder ? EmailTemplate::STANDING_ORDER_LINK : EmailTemplate::PAYMENT_LINK);
+        $rendered = $template->render([
+            'recipient_name' => $name,
+            'item' => $item,
+            'amount' => number_format($amount, 2),
+            'months' => $standingOrder ? (string) $deal->standingOrderPlan($amount)['months'] : '',
+            'expires_at' => $expiresAt->format('d/m/Y'),
+            'school_name' => (string) $deal->customer?->school?->name,
+        ]);
 
-        if ($standingOrder) {
-            $plan = $deal->standingOrderPlan($amount);
-            $subject = "הקמת הוראת קבע — {$item}";
-            $intro = "להקמת הוראת קבע עבור \"{$item}\": ₪{$amountText} לחודש, {$plan['months']} חודשים. "
-                ."התשלום הראשון מתבצע עכשיו בכרטיס אשראי בדף התשלום המאובטח של SUMIT, והתשלומים הבאים יחויבו אוטומטית מאותו כרטיס בכל חודש. "
-                .'על כל תשלום תישלח אלייך קבלה במייל.';
-        } else {
-            $subject = "קישור לתשלום — {$item}";
-            $intro = "לתשלום עבור \"{$item}\" בסך ₪{$amountText}, בכרטיס אשראי בדף התשלום המאובטח של SUMIT. הקבלה תישלח אלייך במייל מיד עם התשלום.";
-        }
-
-        return EmailMessage::paymentLink($name, $subject, $intro, $url, 'הקישור בתוקף עד '.$expiresAt->format('d/m/Y').'.');
+        return EmailMessage::paymentLink($rendered['subject'], $rendered['content'], $url);
     }
 
     /**

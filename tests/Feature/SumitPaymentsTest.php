@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
+use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\Lead;
 use App\Models\PaymentLink;
@@ -145,6 +146,27 @@ class SumitPaymentsTest extends TestCase
         $this->assertStringContainsString('לתשלום מאובטח בכרטיס אשראי', $preview['html']);
         $this->assertSame('pay@example.com', $preview['to']);
         $this->assertSame(0, PaymentLink::count());
+    }
+
+    public function test_the_payment_link_email_is_its_settings_template(): void
+    {
+        $this->actingAsOwner();
+        $deal = $this->cardDealWithInvoice();
+        EmailTemplate::where('template_type', EmailTemplate::PAYMENT_LINK)->update([
+            'subject' => 'לתשלום: {{פריט}}',
+            'content' => "היי {{שם_הנמען}}, {{סכום}} ש\"ח עד {{תוקף_הקישור}}.\n{{כפתור_התשלום}}\nתודה!",
+        ]);
+
+        $preview = Livewire::test('deal-detail', ['deal' => $deal])
+            ->set('linkAmount', '150')
+            ->set('linkEmail', 'pay@example.com')
+            ->call('previewPaymentLinkEmail')
+            ->get('emailPreview');
+
+        $this->assertStringStartsWith('לתשלום: ', $preview['subject']);
+        $this->assertStringContainsString('150.00', $preview['html']);
+        $this->assertStringContainsString(now()->addHours(PaymentLink::EXPIRATION_HOURS)->format('d/m/Y'), $preview['html']);
+        $this->assertLessThan(strpos($preview['html'], 'תודה!'), strpos($preview['html'], 'לתשלום מאובטח בכרטיס אשראי'));
     }
 
     public function test_returning_from_a_paid_page_records_the_payment_and_sumits_receipt_once(): void

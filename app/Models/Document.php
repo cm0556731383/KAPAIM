@@ -17,6 +17,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
+use Mpdf\Mpdf;
+use Mpdf\Output\Destination;
 use RuntimeException;
 
 /**
@@ -795,7 +797,7 @@ class Document extends Model
     }
 
     /** The template's fields used in its content — none for a document with no template (DocumentTemplate::SYSTEM_TYPES). */
-    public function templateFields(): \Illuminate\Support\Collection
+    public function templateFields(): Collection
     {
         return $this->documentTemplate?->fieldsInContent() ?? collect();
     }
@@ -917,13 +919,13 @@ class Document extends Model
 
         $fileName = (self::TYPE_LABELS[$this->document_type] ?? $this->document_type).'-'.$this->id.'.pdf';
 
-        $mpdf = new \Mpdf\Mpdf(['default_font' => 'dejavusans', 'directionality' => 'rtl']);
+        $mpdf = new Mpdf(['default_font' => 'dejavusans', 'directionality' => 'rtl']);
 
         $previousErrorReporting = error_reporting(E_ERROR | E_PARSE | E_COMPILE_ERROR | E_CORE_ERROR);
 
         try {
             $mpdf->WriteHTML(view('documents.pdf', ['document' => $this])->render());
-            $binary = $mpdf->Output($fileName, \Mpdf\Output\Destination::STRING_RETURN);
+            $binary = $mpdf->Output($fileName, Destination::STRING_RETURN);
         } finally {
             error_reporting($previousErrorReporting);
         }
@@ -1436,20 +1438,29 @@ class Document extends Model
 
         if ($companions) {
             $documents = [$this, ...$companions];
+            $rendered = EmailTemplate::forType(EmailTemplate::DOCUMENTS_SEND)->render([
+                'recipient_name' => $toName,
+                'documents' => $this->emailSubject($companions),
+                'school_name' => (string) $this->partyName(),
+            ]);
 
             return EmailMessage::documents(
-                $toName,
-                $this->emailSubject($companions),
-                'מצורפים בהמשך קישורים ל'.collect($documents)->map(fn (self $d) => '"'.self::TYPE_LABELS[$d->document_type].'"')->implode(' ול').' שהוכנו עבורך, לצפייה, למילוי פרטים ולאישור מקוון. כל מסמך מאושר בקישור שלו. המסמכים מצורפים למייל גם כקובצי PDF.',
+                $rendered['subject'],
+                $rendered['content'],
                 collect($documents)->map(fn (self $d) => ['label' => self::TYPE_LABELS[$d->document_type], 'url' => $preview ? '#' : $d->signUrl()])->all(),
                 collect($documents)->map(fn (self $d) => ['name' => self::TYPE_LABELS[$d->document_type].'.pdf', 'url' => $d->smoveAttachmentUrl()])->all(),
             );
         }
 
+        $rendered = EmailTemplate::forType(EmailTemplate::DOCUMENT_SEND)->render([
+            'recipient_name' => $toName,
+            'document_type' => $typeLabel,
+            'school_name' => (string) $this->partyName(),
+        ]);
+
         return EmailMessage::document(
-            $toName,
-            $typeLabel,
-            "מצורף בהמשך קישור ל\"{$typeLabel}\" שהוכן עבורך, לצפייה, למילוי פרטים ולאישור מקוון. המסמך מצורף למייל גם כקובץ PDF.",
+            $rendered['subject'],
+            $rendered['content'],
             $preview ? '#' : $this->signUrl(),
             [['name' => "{$typeLabel}.pdf", 'url' => $this->smoveAttachmentUrl()]],
         );

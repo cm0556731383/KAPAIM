@@ -612,6 +612,37 @@ class extends Component
                 'blocks' => [EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => ['label' => 'כפתור "קיבלתי את החומרים"', 'preview' => $receivedButton]],
                 'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
             ],
+            EmailTemplate::DOCUMENT_SEND => [
+                'usage' => EmailTemplate::FIXED_LABELS[EmailTemplate::DOCUMENT_SEND],
+                'intro' => 'המייל שנשלח בלחיצה על "שליחה" בכרטיס מסמך — הצעת מחיר, טופס הזמנה או חוזה — לכל נמען בנפרד. המסמך מצורף תמיד כקובץ PDF, והכפתור מוביל לטופס המקוון לצפייה, מילוי פרטים ואישור. חשבוניות וקבלות נשלחות מ-SUMIT ולא מכאן.',
+                'fields' => ['שם_הנמען' => 'שם הנמען', 'סוג_המסמך' => 'סוג המסמך', 'שם_בית_הספר' => 'שם בית הספר'],
+                'blocks' => [EmailTemplate::DOCUMENT_BUTTON_TOKEN => ['label' => 'כפתור המסמך', 'preview' => '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">לצפייה במסמך, מילוי פרטים ואישור מקוון</span>']],
+                'example' => ['recipient_name' => 'רחל כהן', 'document_type' => 'הצעת מחיר', 'school_name' => 'בית ספר אורות'],
+            ],
+            EmailTemplate::DOCUMENTS_SEND => [
+                'usage' => EmailTemplate::FIXED_LABELS[EmailTemplate::DOCUMENTS_SEND],
+                'intro' => 'המייל שנשלח כשטופס הזמנה יוצא יחד עם החוזה שלו (בשליחת הטופס, או אוטומטית כשהצעת מחיר אושרה). לכל מסמך כפתור משלו לטופס המקוון, ושני קובצי ה-PDF מצורפים.',
+                'fields' => ['שם_הנמען' => 'שם הנמען', 'המסמכים' => 'שמות המסמכים', 'שם_בית_הספר' => 'שם בית הספר'],
+                'blocks' => [EmailTemplate::DOCUMENT_BUTTON_TOKEN => ['label' => 'כפתורי המסמכים', 'preview' => '<div style="display:flex; flex-direction:column; gap:8px; align-items:flex-start">'.'<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">טופס הזמנה — לצפייה, מילוי פרטים ואישור מקוון</span>'.'<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">חוזה — לצפייה, מילוי פרטים ואישור מקוון</span>'.'</div>']],
+                'example' => ['recipient_name' => 'רחל כהן', 'documents' => 'טופס הזמנה וחוזה', 'school_name' => 'בית ספר אורות'],
+            ],
+            EmailTemplate::PAYMENT_LINK, EmailTemplate::STANDING_ORDER_LINK => [
+                'usage' => EmailTemplate::FIXED_LABELS[$this->emailTemplateType],
+                'intro' => $this->emailTemplateType === EmailTemplate::PAYMENT_LINK
+                    ? 'המייל שנשלח בלחיצה על "שליחת קישור לתשלום" בכרטיס העסקה, לתשלום חד-פעמי בכרטיס אשראי בדף המאובטח של SUMIT.'
+                    : 'המייל שנשלח בלחיצה על "שליחת קישור לתשלום" בעסקה בהוראת קבע — התשלום הראשון עכשיו, והבאים מאותו כרטיס בכל חודש.',
+                'fields' => ['שם_הנמען' => 'שם הנמען', 'פריט' => 'תוכנית / חבילה', 'סכום' => $this->emailTemplateType === EmailTemplate::PAYMENT_LINK ? 'סכום' : 'סכום חודשי', 'תוקף_הקישור' => 'תוקף הקישור', 'שם_בית_הספר' => 'שם בית הספר']
+                    + ($this->emailTemplateType === EmailTemplate::STANDING_ORDER_LINK ? ['מספר_חודשים' => 'מספר חודשים'] : []),
+                'blocks' => [EmailTemplate::PAYMENT_BUTTON_TOKEN => ['label' => 'כפתור התשלום', 'preview' => '<span style="display:inline-block; background:#286E9A; color:#fff; border-radius:32px; padding:10px 28px; font-weight:700">לתשלום מאובטח בכרטיס אשראי</span>']],
+                'example' => ['recipient_name' => 'רחל כהן', 'item' => 'אלול תשפ"ו', 'amount' => $this->emailTemplateType === EmailTemplate::PAYMENT_LINK ? '3,600.00' : '300.00', 'months' => '12', 'expires_at' => now()->addDays(3)->format('d/m/Y'), 'school_name' => 'בית ספר אורות'],
+            ],
+            EmailTemplate::TASK_REMINDERS => [
+                'usage' => EmailTemplate::FIXED_LABELS[EmailTemplate::TASK_REMINDERS],
+                'intro' => 'מייל פנימי שנשלח כל בוקר ב-08:00 לכל משתמשת שיש לה תזכורות להיום: תזכורות בלידים שמועדן היום, ומשימות גבייה שנפתחו. כל פריט ברשימה מקשר ישירות לליד או לעסקה. כשהתבנית מושבתת, לא נשלחים מיילי בוקר.',
+                'fields' => ['שם_המשתמשת' => 'שם המשתמשת', 'מספר_התזכורות' => 'מספר התזכורות'],
+                'blocks' => [EmailTemplate::TASK_LIST_TOKEN => ['label' => 'רשימת התזכורות', 'preview' => '<ul style="margin:0; padding-inline-start:20px"><li><a style="color:#286E9A; font-weight:700">להתקשר למנהלת</a><div style="font-size:var(--fs-caption)">תזכורת בליד · בית ספר אורות</div></li><li><a style="color:#286E9A; font-weight:700">גבייה: עסקה #12</a><div style="font-size:var(--fs-caption)">גבייה · בית ספר אורות</div></li></ul>']],
+                'example' => ['user_name' => 'מיכל', 'task_count' => '2'],
+            ],
             EmailTemplate::GENERAL => [
                 'usage' => 'כללי',
                 'intro' => 'תבנית שהמערכת לא שולחת אוטומטית — בוחרים אותה בשליחת מייל לרשימות תפוצה או בשליחת חומרים מכרטיס הלקוחה, ואפשר לשנות את הנוסח לפני כל שליחה. שם בית הספר והתוכנית מתמלאים רק בשליחת חומרים (בשליחה לרשימות אין אותם). בשליחת חומרים יופיעו מתחת לנוסח שני הכפתורים "להורדת החומרים" ו"קיבלתי, תודה"; רשימת החומרים משמשת רק בשליחה לרשימות.',
@@ -654,6 +685,13 @@ class extends Component
             ]),
             EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], '#', [$example('סרטון הדרכה')], '#', $isHtml),
             EmailTemplate::MATERIAL_REMINDER => \App\Support\EmailMessage::materialReminder($rendered['subject'], $rendered['content'], '#'),
+            EmailTemplate::DOCUMENT_SEND => \App\Support\EmailMessage::document($rendered['subject'], $rendered['content'], '#'),
+            EmailTemplate::DOCUMENTS_SEND => \App\Support\EmailMessage::documents($rendered['subject'], $rendered['content'], [['label' => 'טופס הזמנה', 'url' => '#'], ['label' => 'חוזה', 'url' => '#']]),
+            EmailTemplate::PAYMENT_LINK, EmailTemplate::STANDING_ORDER_LINK => \App\Support\EmailMessage::paymentLink($rendered['subject'], $rendered['content'], '#'),
+            EmailTemplate::TASK_REMINDERS => \App\Support\EmailMessage::taskReminders($rendered['subject'], $rendered['content'], [
+                ['title' => 'להתקשר למנהלת', 'subtitle' => 'תזכורת בליד · בית ספר אורות', 'description' => null, 'url' => '#'],
+                ['title' => 'גבייה: עסקה #12', 'subtitle' => 'גבייה · בית ספר אורות', 'description' => null, 'url' => '#'],
+            ]),
             EmailTemplate::GENERAL => \App\Support\EmailMessage::composed($rendered['subject'], $rendered['content'], $isHtml, [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')]),
             default => \App\Support\EmailMessage::transactional($rendered['subject'], $rendered['content']),
         };
@@ -990,7 +1028,7 @@ class extends Component
                     @foreach ($this->emailTemplates as $template)
                         <tr wire:key="email-template-{{ $template->id }}" wire:click="selectEmailTemplate({{ $template->id }})" style="cursor:pointer; {{ $selectedEmailTemplateId === $template->id ? 'background:var(--color-background)' : '' }}">
                             <td style="font-weight:{{ $selectedEmailTemplateId === $template->id ? '700' : '400' }}">{{ $template->name }}</td>
-                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', EmailTemplate::MATERIAL_DELIVERY => 'שליחת חומרי לימוד', EmailTemplate::MATERIAL_REMINDER => 'תזכורת על חומרים שלא אושרו', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}@if ($template->isHtml()) <span class="badge badge-info">HTML</span>@endif</td>
+                            <td>{{ $template->usageLabel() }}@if ($template->isHtml()) <span class="badge badge-info">HTML</span>@endif</td>
                             <td class="text-text-secondary">{{ \Illuminate\Support\Str::limit($template->subject, 60) }}</td>
                             <td>
                                 @if ($template->is_active)

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Deal;
+use App\Models\EmailTemplate;
 use App\Models\ExternalIntegrationSetting;
 use App\Models\Lead;
 use App\Models\Program;
@@ -57,12 +58,33 @@ class TaskRemindersTest extends TestCase
         $this->assertNotNull($today->fresh()->reminder_sent_at);
         $this->assertNull($tomorrow->fresh()->reminder_sent_at);
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
-            && $request['subject'] === 'תזכורת להיום: להתקשר למנהלת'
+            && $request['subject'] === 'התזכורות שלך להיום (1)'
             && str_contains($request['body'], e(route('lead-detail', $lead))));
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Contacts') && $request->method() === 'POST' && $request['email'] === 'noa@kapaim.test');
 
         $this->artisan('tasks:send-reminders');
         $this->assertCount(1, Http::recorded(fn ($request) => str_contains($request->url(), '/Campaigns')));
+    }
+
+    public function test_the_morning_email_uses_its_template_and_none_goes_out_while_it_is_disabled(): void
+    {
+        $template = EmailTemplate::where('template_type', EmailTemplate::TASK_REMINDERS)->firstOrFail();
+        $template->update(['subject' => 'יום טוב {{שם_המשתמשת}}', 'content' => "רשימה:\n{{רשימת_התזכורות}}\nסוף הרשימה"]);
+        $lead = $this->createLead();
+        $task = $this->reminder($this->salesRep, $lead, today(), 'להתקשר למנהלת');
+
+        $template->update(['is_active' => false]);
+        $this->artisan('tasks:send-reminders')->assertSuccessful();
+        $this->assertNull($task->fresh()->reminder_sent_at);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/Campaigns'));
+
+        $template->update(['is_active' => true]);
+        $this->artisan('tasks:send-reminders')->assertSuccessful();
+        $this->assertNotNull($task->fresh()->reminder_sent_at);
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
+            && $request['subject'] === 'יום טוב נועה'
+            && strpos($request['body'], 'רשימה:') < strpos($request['body'], 'להתקשר למנהלת')
+            && strpos($request['body'], 'להתקשר למנהלת') < strpos($request['body'], 'סוף הרשימה'));
     }
 
     public function test_one_email_per_user_lists_all_her_reminders(): void

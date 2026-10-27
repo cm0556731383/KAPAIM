@@ -29,7 +29,7 @@ use RuntimeException;
  * downloadAllUrl()) purely because a material send can carry several files of
  * arbitrary type/size to several recipients at once — attaching them all is
  * unnecessary weight when a link works fine there; a single document's PDF
- * (sendDocumentEmail()/sendDocumentAttachmentEmail() below) is exactly the
+ * (Document::emailMessage() / sendDocumentAttachmentEmail() below) is exactly the
  * case where a real attachment is worth it.
  *
  * Auth: Smove's Swagger types its "Token" field as an apiKey-in-header named
@@ -116,8 +116,8 @@ class SmoveClient
      * silently merged/overwritten under a single shared email.
      *
      * @param  int|array<int>|null  $listId  A single list (always the case
-     *                                        for 'remove') or several (a
-     *                                        'join' broadened by the caller).
+     *                                       for 'remove') or several (a
+     *                                       'join' broadened by the caller).
      */
     public function syncMailingListMembership(int|array|null $listId, string $action, array $contact): string
     {
@@ -174,44 +174,6 @@ class SmoveClient
     }
 
     /**
-     * The morning email of a user's own reminders for the day
-     * (tasks:send-reminders) — an internal email to a staff member, so a
-     * fixed wording rather than an editable template. $tasks: one row per
-     * reminder, each with a link straight into its lead / deal.
-     *
-     * @param  array<int, array{title: string, subtitle: string, description: ?string, url: string}>  $tasks
-     */
-    public function sendTaskRemindersEmail(string $toEmail, string $toName, string $subject, string $intro, array $tasks): string
-    {
-        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::taskReminders($subject, $intro, $tasks));
-    }
-
-    /**
-     * Build-plan 12 follow-up (FR-4.2/FR-4.7): a document send (quote/order
-     * form/contract/invoice/credit note) — $formUrl links to the online
-     * form (documents.sign, no login required — view the content, fill in
-     * any template fields, click "אישור וחתימה") for a 'digital' send;
-     * $attachmentUrl is the real PDF file (Document::smoveAttachmentUrl(),
-     * fetched and attached by Smove itself — see sendCampaign()'s docblock)
-     * for a 'pdf' send. Document::sendTo() passes exactly one of the two,
-     * matching the digital/PDF choice already in the send UI. $requestPdfUrl
-     * (digital sends only — see Document::sendTo()) is a separate,
-     * additional button: "קבלת המסמך כ-PDF במייל" hits documents.email-pdf,
-     * which triggers a follow-up sendDocumentAttachmentEmail() call.
-     * $formUrl is the action the recipient actually needs to take, so it's
-     * rendered as BrandedEmail::primaryButton() (large, prominent);
-     * $requestPdfUrl is a minor convenience, rendered as the deliberately
-     * de-emphasized BrandedEmail::subtleButton() below the sign-off rather
-     * than competing with the main action (2026-09-08 request).
-     */
-    public function sendDocumentEmail(string $toEmail, string $toName, string $subject, string $introText, ?string $formUrl, ?string $attachmentUrl, ?string $requestPdfUrl = null): string
-    {
-        $attachments = $attachmentUrl ? [['name' => "{$subject}.pdf", 'url' => $attachmentUrl]] : [];
-
-        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::document($toName, $subject, $introText, $formUrl, $attachments, $requestPdfUrl));
-    }
-
-    /**
      * A supplier's missing-invoice request (Expense::requestInvoice()). $body
      * is the business owner's own rendered EmailTemplate text; the upload
      * button replaces its EmailTemplate::UPLOAD_BUTTON_TOKEN line, or is
@@ -234,16 +196,10 @@ class SmoveClient
         return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::invoicesRequest($subject, $body, $expenses));
     }
 
-    /** A SUMIT payment page link (PaymentLink::send()) — the payment button is the email's one action. */
-    public function sendPaymentLinkEmail(string $toEmail, string $toName, string $subject, string $introText, string $paymentUrl, string $footerText): string
-    {
-        return $this->send([['email' => $toEmail, 'name' => $toName]], EmailMessage::paymentLink($toName, $subject, $introText, $paymentUrl, $footerText));
-    }
-
     /**
      * The "קבלת המסמך כ-PDF במייל" button's click (documents.email-pdf,
      * Document::requestPdfBySmove()) — a standalone follow-up send, not part
-     * of the original sendDocumentEmail() campaign, since the recipient
+     * of the original document send, since the recipient
      * decides whether they want this copy only after already receiving that
      * first email.
      */

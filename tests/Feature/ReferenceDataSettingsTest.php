@@ -107,6 +107,34 @@ class ReferenceDataSettingsTest extends TestCase
         $this->assertTrue($materials->fresh()->is_active);
     }
 
+    /** 2026-10-27: every email the system sends has its template in settings — the documents, payment links and morning reminders too. */
+    public function test_the_system_emails_are_templates_in_settings_with_their_buttons(): void
+    {
+        $expected = [
+            EmailTemplate::DOCUMENT_SEND => 'לצפייה במסמך, מילוי פרטים ואישור מקוון',
+            EmailTemplate::DOCUMENTS_SEND => 'חוזה — לצפייה, מילוי פרטים ואישור מקוון',
+            EmailTemplate::PAYMENT_LINK => 'לתשלום מאובטח בכרטיס אשראי',
+            EmailTemplate::STANDING_ORDER_LINK => '12 חודשים',
+            EmailTemplate::TASK_REMINDERS => 'להתקשר למנהלת',
+        ];
+
+        foreach ($expected as $type => $text) {
+            $template = EmailTemplate::where('template_type', $type)->firstOrFail();
+            $component = Livewire::actingAs($this->owner)->test('settings')
+                ->set('activeTab', 'email-templates')
+                ->assertSee($template->name)
+                ->call('selectEmailTemplate', $template->id)
+                ->assertDontSee('מחיקה');
+
+            $this->assertStringContainsString($text, $component->instance()->emailTemplateMessage()->html, $type);
+            $component->set('emailTemplateType', 'general')->call('saveEmailTemplate')->assertHasNoErrors();
+            $this->assertSame($type, $template->fresh()->template_type);
+        }
+
+        $documents = EmailTemplate::where('template_type', EmailTemplate::DOCUMENT_SEND)->first();
+        Livewire::actingAs($this->owner)->test('settings')->call('toggleEmailTemplate', $documents->id)->assertForbidden();
+    }
+
     public function test_adding_a_lead_source_payment_method_or_business_entity_closes_its_window_only_on_success(): void
     {
         Livewire::actingAs($this->owner)->test('settings')

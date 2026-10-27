@@ -9,6 +9,7 @@ use App\Models\Customer;
 use App\Models\Deal;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
+use App\Models\EmailTemplate;
 use App\Models\Lead;
 use App\Models\Program;
 use App\Models\Role;
@@ -974,6 +975,21 @@ class DocumentsEngineTest extends TestCase
         $this->assertCount(1, $preview['attachments']);
         $this->assertNotNull(Document::verifySmoveAttachmentToken(basename($preview['attachments'][0]['url'])));
         $this->assertNull($quote->fresh()->sent_at);
+    }
+
+    public function test_the_document_email_is_its_settings_template(): void
+    {
+        EmailTemplate::where('template_type', EmailTemplate::DOCUMENT_SEND)->update([
+            'subject' => '{{סוג_המסמך}} עבור {{שם_בית_הספר}}',
+            'content' => "היי {{שם_הנמען}}\n{{כפתור_המסמך}}\nתודה רבה",
+        ]);
+        $quote = $this->generateQuote($this->createDeal());
+        $message = $quote->emailMessage('רחל כהן');
+
+        $this->assertSame('הצעת מחיר עבור '.$quote->partyName(), $message->subject);
+        $this->assertStringContainsString('היי רחל כהן', $message->html);
+        $this->assertLessThan(strpos($message->html, 'תודה רבה'), strpos($message->html, e($quote->signUrl())));
+        $this->assertCount(1, $message->attachments);
     }
 
     /** 2026-10-27: one email — the online form button with the PDF attached, and no "request a PDF" button. */
