@@ -104,6 +104,13 @@
         <symbol id="icon-star" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
             <path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4-6.5 4V4.5a1 1 0 0 1 1-1Z"/>
         </symbol>
+        <symbol id="icon-home" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 10.5 12 4l8 6.5"/>
+            <path d="M6 9v10.5h12V9"/>
+        </symbol>
+        <symbol id="icon-chevron" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.5 6 8.5 12l6 6"/>
+        </symbol>
         <symbol id="icon-deals" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="8" width="18" height="12" rx="2"/>
             <path d="M8.5 8V6.5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2V8"/>
@@ -212,12 +219,40 @@
         <div style="flex:1; min-width:0;">
         {{-- A page whose own header carries the user and "יציאה" (the work screen) passes hideUserBar. --}}
         @if (auth()->check() && ! ($hideUserBar ?? false))
-            <div class="topbar-user" style="justify-content:flex-end; margin-bottom: var(--sp-md);">
-                <span>{{ auth()->user()->name }} · {{ auth()->user()->role?->name }}</span>
-                <form method="POST" action="{{ route('logout') }}">
-                    @csrf
-                    <button type="submit" class="btn btn-ghost" style="padding:6px 12px;"><svg style="width:15px;height:15px;"><use href="#icon-logout"></use></svg>יציאה</button>
-                </form>
+            @php($breadcrumbs = \App\Support\Breadcrumbs::for(request()))
+            <div class="topbar-user" style="margin-bottom: var(--sp-md);">
+                @if ($breadcrumbs)
+                    <nav class="breadcrumbs" aria-label="ניווט">
+                        <ol>
+                            <li>
+                                @can('dashboard.view')
+                                    <a href="{{ url('/') }}" class="breadcrumbs-home" title="מסך עבודה" aria-label="מסך עבודה"><svg><use href="#icon-home"></use></svg></a>
+                                @else
+                                    <span class="breadcrumbs-home"><svg><use href="#icon-home"></use></svg></span>
+                                @endcan
+                            </li>
+                            @foreach ($breadcrumbs as $step)
+                                <li>
+                                    <svg class="breadcrumbs-sep" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                                    @if ($loop->last)
+                                        <span aria-current="page" title="{{ $step['label'] }}">{{ $step['label'] }}</span>
+                                    @elseif ($step['url'])
+                                        <a href="{{ $step['url'] }}" title="{{ $step['label'] }}">{{ $step['label'] }}</a>
+                                    @else
+                                        <span title="{{ $step['label'] }}">{{ $step['label'] }}</span>
+                                    @endif
+                                </li>
+                            @endforeach
+                        </ol>
+                    </nav>
+                @endif
+                <div class="topbar-user-account">
+                    <span>{{ auth()->user()->name }} · {{ auth()->user()->role?->name }}</span>
+                    <form method="POST" action="{{ route('logout') }}">
+                        @csrf
+                        <button type="submit" class="btn btn-ghost" style="padding:6px 12px;"><svg style="width:15px;height:15px;"><use href="#icon-logout"></use></svg>יציאה</button>
+                    </form>
+                </div>
             </div>
         @endif
 

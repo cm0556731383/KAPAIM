@@ -248,15 +248,6 @@ class extends Component
 ?>
 
 <div>
-    @php
-        [$backUrl, $backLabel] = match (true) {
-            (bool) $document->deal_id => [route('deal-detail', $document->deal_id), 'חזרה לעסקה'],
-            (bool) $document->lead_id => [route('lead-detail', $document->lead_id), 'חזרה לכרטיס הליד'],
-            default => [route('expenses'), 'חזרה להוצאות'],
-        };
-    @endphp
-    <a href="{{ $backUrl }}" class="back-link" style="display:inline-block; color:var(--color-text-secondary); text-decoration:none; font-size:var(--fs-small); margin-bottom:var(--sp-md)">← {{ $backLabel }}</a>
-
     <div class="topbar">
         <div>
             <h1 style="margin-bottom:2px">{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</h1>

@@ -50,6 +50,37 @@ class DocumentsEngineTest extends TestCase
         $this->get("/documents/{$document->id}")->assertRedirect('/login');
     }
 
+    public function test_the_document_page_has_the_path_back_to_its_deal_customer_and_customers_list(): void
+    {
+        $deal = $this->createDeal();
+        $quote = $this->generateQuote($deal);
+
+        $html = $this->actingAs($this->owner)->get("/documents/{$quote->id}")->assertOk()->getContent();
+        $nav = substr($html, strpos($html, 'class="breadcrumbs"'), 3000);
+
+        $this->assertStringContainsString('href="'.route('customers').'"', $nav);
+        $this->assertStringContainsString('href="'.route('customer-detail', $deal->customer).'"', $nav);
+        $this->assertStringContainsString(e($deal->customer->school->name), $nav);
+        $this->assertStringContainsString('href="'.route('deal-detail', $deal).'"', $nav);
+        $this->assertStringContainsString("עסקה #{$deal->id}", $nav);
+        $this->assertMatchesRegularExpression('/aria-current="page"[^>]*>הצעת מחיר</', $nav);
+    }
+
+    public function test_a_path_step_the_user_cannot_open_is_text_not_a_link(): void
+    {
+        $lead = $this->createDeal()->customer->lead;
+        $role = Role::create(['name' => 'לידים בלבד', 'is_active' => true]);
+        $role->permissions()->create(['resource' => 'leads', 'action' => '*', 'is_allowed' => true]);
+        $user = User::create(['name' => 'דנה', 'email' => 'dana@kapaim.test', 'password' => 'password', 'role_id' => $role->id, 'is_active' => true]);
+
+        $html = $this->actingAs($user)->get("/leads/{$lead->id}")->assertOk()->getContent();
+        $nav = substr($html, strpos($html, 'class="breadcrumbs"'), 3000);
+
+        $this->assertStringContainsString('href="'.route('leads').'"', $nav);
+        $this->assertStringNotContainsString('href="'.url('/').'"', $nav); // no dashboard permission
+        $this->assertMatchesRegularExpression('/aria-current="page"[^>]*>'.preg_quote(e($lead->school->name), '/').'</', $nav);
+    }
+
     public function test_document_view_is_blocked_without_the_documents_permission(): void
     {
         $document = $this->generateQuote($this->createDeal());

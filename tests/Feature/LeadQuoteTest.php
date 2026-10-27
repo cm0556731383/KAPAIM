@@ -184,7 +184,7 @@ class LeadQuoteTest extends TestCase
         $quote = Document::where('lead_id', $lead->id)->firstOrFail();
         $component->assertRedirect(route('document-view', $quote));
         $this->assertSame(850.0, (float) $quote->lead_offer['agreed_amount']);
-        $this->actingAs($this->owner)->get(route('document-view', $quote))->assertOk()->assertSee('חזרה לכרטיס הליד');
+        $this->actingAs($this->owner)->get(route('document-view', $quote))->assertOk()->assertSee('href="'.route('lead-detail', $lead).'"', false);
         $this->actingAs($this->owner)->get(route('lead-detail', $lead))->assertOk()->assertSee($program->name);
     }
 

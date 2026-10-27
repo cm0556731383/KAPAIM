@@ -44,6 +44,20 @@ main { padding: var(--sp-xl) var(--sp-2xl); overflow-x: clip; }
 .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--sp-lg); }
 .topbar-user { display: flex; align-items: center; gap: var(--sp-md); font-size: var(--fs-small); color: var(--color-text-secondary); }
 .topbar-user form { margin: 0; }
+.topbar-user-account { display: flex; align-items: center; gap: var(--sp-md); margin-inline-start: auto; }
+
+/* The path above every screen (App\Support\Breadcrumbs) — quiet, small, links only on hover. */
+.breadcrumbs { min-width: 0; font-size: var(--fs-caption); }
+.breadcrumbs ol { display: flex; align-items: center; flex-wrap: wrap; row-gap: 2px; list-style: none; margin: 0; padding: 0; }
+.breadcrumbs li { display: flex; align-items: center; min-width: 0; }
+.breadcrumbs a, .breadcrumbs span { display: inline-block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 6px; border-radius: var(--radius-tag); color: var(--color-text-secondary); text-decoration: none; }
+.breadcrumbs a { transition: color 140ms ease, background-color 140ms ease; }
+.breadcrumbs a:hover { color: var(--color-primary); background: var(--color-primary-lighter); }
+.breadcrumbs a:focus-visible { outline: 2px solid var(--color-primary-light); outline-offset: 1px; }
+.breadcrumbs [aria-current="page"] { color: var(--color-text-primary); font-weight: 500; }
+.breadcrumbs .breadcrumbs-home { display: inline-flex; padding: 3px 4px; }
+.breadcrumbs .breadcrumbs-home svg { width: 15px; height: 15px; }
+.breadcrumbs .breadcrumbs-sep { width: 11px; height: 11px; flex-shrink: 0; color: var(--color-border); }
 
 section { margin-bottom: var(--sp-2xl); }
 section > .section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sp-md); }
