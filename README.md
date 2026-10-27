@@ -11,6 +11,9 @@ git clone https://github.com/cm0556731383/KAPAIM.git kapaim && cd kapaim
 ./install.sh owner@example.co.il https://crm.example.co.il
 ```
 
+העברה משרת קיים עם כל הנתונים: `./move-export.sh` בשרת הישן ו-`./move-import.sh <קובץ>` בחדש (DEPLOY.md, סעיף 9).
+אפשר גם לתת ל-Claude Code בשרת החדש את כתובת הריפו — ההוראות עבורו ב-`CLAUDE.md`.
+
 ## טכנולוגיה
 
 Laravel 13 · PHP 8.5 · Livewire · Tailwind CSS v4 · PostgreSQL 18 · Docker Compose.
