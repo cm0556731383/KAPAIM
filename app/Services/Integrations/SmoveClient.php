@@ -24,10 +24,9 @@ use RuntimeException;
  * fetch and attach), just entirely undocumented in the Swagger description
  * text; this was missed in the original build-plan-12 wiring and is used
  * starting 2026-09-07 (see sendCampaign()'s docblock for the exact URL shape
- * Smove requires). sendMaterialsEmail() still embeds links in the body
- * rather than attaching (build-plan 12: MaterialDelivery::sendFor() signs a
- * download URL per attachment — see MaterialDeliveryAttachment::
- * downloadUrl()) purely because a material send can carry several files of
+ * Smove requires). A materials email still links to its files rather than
+ * attaching them (a "download everything" button — MaterialDelivery::
+ * downloadAllUrl()) purely because a material send can carry several files of
  * arbitrary type/size to several recipients at once — attaching them all is
  * unnecessary weight when a link works fine there; a single document's PDF
  * (sendDocumentEmail()/sendDocumentAttachmentEmail() below) is exactly the
@@ -140,22 +139,6 @@ class SmoveClient
         ], fn ($v) => $v !== null));
 
         return $this->referenceOrFail($response);
-    }
-
-    /**
-     * FR-5.7: the materials-delivery send. $attachmentLinks is a list of
-     * ['name' => string, 'url' => string] — see class docblock for why this
-     * is links, not attached files.
-     *
-     * $body is the business owner's text (the 'material_delivery' template,
-     * possibly edited for this send) inside the branded shell — or, when
-     * $isHtml, her own uploaded HTML used as is. Either way the links list
-     * and the "received" button (MaterialDelivery::acknowledge(), which also
-     * stops the reminder) replace their tokens, or are added at the end.
-     */
-    public function sendMaterialsEmail(array $recipients, array $attachmentLinks, string $subject, string $body, string $acknowledgeUrl, bool $isHtml = false): string
-    {
-        return $this->send($recipients, EmailMessage::materials($subject, $body, $attachmentLinks, $acknowledgeUrl, $isHtml));
     }
 
     /**

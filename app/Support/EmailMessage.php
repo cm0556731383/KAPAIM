@@ -40,22 +40,41 @@ final class EmailMessage
 
     /**
      * FR-5.7: the materials-delivery send. $body is the business owner's
-     * text (the 'material_delivery' template, possibly edited for this send)
-     * inside the branded shell — or, when $isHtml, her own uploaded HTML used
-     * as is. Either way the links list and the "received" button
-     * (MaterialDelivery::acknowledge(), which also stops the reminder)
-     * replace their tokens; one the body doesn't place is added at the end
-     * only when $append names it (owner's call: nothing is added by default).
+     * text (the materials template or a general one, possibly edited for
+     * this send) inside the branded shell — or, when $isHtml, her own HTML
+     * used as is. Under it, always (owner's call, 2026-10-27): the links
+     * sent with the files, if any, and two buttons — "להורדת החומרים"
+     * (every uploaded file at once, $downloadUrl; none when only links were
+     * sent) and "קיבלתי, תודה" (MaterialDelivery::acknowledge(), which also
+     * stops the reminder) — in the HTML's own main color, or the brand's.
+     * The old {{רשימת_החומרים}} / {{כפתור_אישור_קבלה}} tokens are dropped
+     * from the wording: the buttons below replace them.
+     *
+     * @param  array<int, array{name: string, url: string}>  $links  links only (a video on YouTube…) — files go through $downloadUrl
+     */
+    public static function materials(string $subject, string $body, ?string $downloadUrl, array $links, string $acknowledgeUrl, bool $isHtml = false): self
+    {
+        $body = str_replace([EmailTemplate::MATERIALS_LIST_TOKEN, EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN], '', $body);
+        $footer = ($links ? '<p style="font-weight:700; margin-bottom:4px;">קישורים:</p>'.BrandedEmail::linksList($links) : '')
+            .BrandedEmail::materialsButtons($downloadUrl, $acknowledgeUrl, ($isHtml ? BrandedEmail::accentColor($body) : null) ?? BrandedEmail::BRAND_COLOR);
+
+        return new self($subject, $isHtml
+            // A key no wording contains — so the footer always goes before </body>.
+            ? BrandedEmail::htmlWithBlocks($body, ["\0materials-footer" => $footer])
+            : BrandedEmail::wrap(BrandedEmail::textWithBlocks(preg_replace("/\n{3,}/", "\n\n", $body), []).$footer));
+    }
+
+    /**
+     * An email composed by hand (a mailing-list send, a general template):
+     * the text inside the branded shell, or the owner's own HTML as is. The
+     * attached materials replace {{רשימת_החומרים}}, or go at the end under
+     * their own heading; nothing is added when nothing is attached.
      *
      * @param  array<int, array{name: string, url: string}>  $links
-     * @param  list<string>  $append  tokens to add at the end when the body doesn't place them
      */
-    public static function materials(string $subject, string $body, array $links, string $acknowledgeUrl, bool $isHtml = false, array $append = []): self
+    public static function composed(string $subject, string $body, bool $isHtml, array $links = []): self
     {
-        $blocks = array_filter([
-            EmailTemplate::MATERIALS_LIST_TOKEN => BrandedEmail::linksList($links),
-            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'),
-        ], fn (string $token) => str_contains($body, $token) || in_array($token, $append, true), ARRAY_FILTER_USE_KEY);
+        $blocks = $links ? [EmailTemplate::MATERIALS_LIST_TOKEN => self::materialsList($body, $links)] : [];
 
         return new self($subject, $isHtml
             ? BrandedEmail::htmlWithBlocks($body, $blocks)
@@ -63,26 +82,16 @@ final class EmailMessage
     }
 
     /**
-     * An email composed by hand (a mailing-list send, a general template):
-     * the text inside the branded shell, or the owner's own HTML as is. The
-     * attached materials replace {{רשימת_החומרים}}, or — only when
-     * $appendList — go at the end under their own heading; nothing is added
-     * when nothing is attached.
+     * The attached materials as links — under a "חומרים מצורפים:" heading
+     * when the body doesn't place {{רשימת_החומרים}} (they then go at the end).
      *
      * @param  array<int, array{name: string, url: string}>  $links
      */
-    public static function composed(string $subject, string $body, bool $isHtml, array $links = [], bool $appendList = false): self
+    private static function materialsList(string $body, array $links): string
     {
-        $blocks = [];
+        $heading = str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN) ? '' : '<p style="font-weight:700;">חומרים מצורפים:</p>';
 
-        if ($links && ($appendList || str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN))) {
-            $heading = str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN) ? '' : '<p style="font-weight:700;">חומרים מצורפים:</p>';
-            $blocks[EmailTemplate::MATERIALS_LIST_TOKEN] = $heading.BrandedEmail::linksList($links);
-        }
-
-        return new self($subject, $isHtml
-            ? BrandedEmail::htmlWithBlocks($body, $blocks)
-            : BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, $blocks)));
+        return $heading.BrandedEmail::linksList($links);
     }
 
     /** The reminder for materials not yet confirmed — $body is the rendered 'material_reminder' template. */

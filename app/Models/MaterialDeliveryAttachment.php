@@ -40,8 +40,11 @@ class MaterialDeliveryAttachment extends Model
      * recipient (not logged into this app) can download the file from — see
      * routes/web.php.
      */
+    /** How long an emailed download link works. */
+    public const LINK_DAYS = 14;
+
     public function downloadUrl(): string
     {
-        return $this->url ?: URL::temporarySignedRoute('materials.attachment.download', now()->addDays(14), ['attachment' => $this->id]);
+        return $this->url ?: URL::temporarySignedRoute('materials.attachment.download', now()->addDays(self::LINK_DAYS), ['attachment' => $this->id]);
     }
 }

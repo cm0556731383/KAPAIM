@@ -83,19 +83,21 @@ class ReferenceDataSettingsTest extends TestCase
         $this->assertSame(EmailTemplate::MATERIAL_REMINDER, $reminder->fresh()->template_type);
     }
 
-    public function test_the_materials_email_template_is_edited_with_both_its_blocks_and_cannot_be_disabled(): void
+    public function test_the_materials_email_template_previews_with_its_two_buttons_and_cannot_be_disabled(): void
     {
         $materials = EmailTemplate::materialDelivery();
 
-        Livewire::actingAs($this->owner)->test('settings')
+        $component = Livewire::actingAs($this->owner)->test('settings')
             ->set('activeTab', 'email-templates')
             ->call('selectEmailTemplate', $materials->id)
-            ->assertSee('+ רשימת החומרים')
-            ->assertSee('חוברת לתלמידה.pdf')
-            ->assertSee('קיבלתי את החומרים')
+            ->assertDontSee('+ רשימת החומרים')
             ->assertDontSee('השבתה')
             ->set('emailTemplateSubject', 'החומרים של {{שם_בית_הספר}}')
-            ->assertSee('החומרים של בית ספר אורות')
+            ->assertSee('החומרים של בית ספר אורות');
+        $this->assertStringContainsString('להורדת החומרים', $component->instance()->emailTemplateMessage()->html);
+        $this->assertStringContainsString('קיבלתי, תודה', $component->instance()->emailTemplateMessage()->html);
+
+        $component
             ->call('saveEmailTemplate')
             ->assertHasNoErrors()
             ->call('toggleEmailTemplate', $materials->id)

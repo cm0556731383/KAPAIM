@@ -123,4 +123,113 @@ final class BrandedEmail
             ->map(fn (array $a) => '<li style="margin-bottom:8px;"><a href="'.e($a['url']).'" style="color:#286E9A; font-weight:600;">'.e($a['name']).'</a></li>')
             ->implode('').'</ul>';
     }
+
+    /** The brand's blue — the buttons' color when the email has no color of its own (docs/brand-guidelines.md). */
+    public const BRAND_COLOR = '#286E9A';
+
+    /**
+     * The two buttons at the bottom of every materials email: "להורדת
+     * החומרים" (filled — every file at once, MaterialDelivery::downloadAllUrl())
+     * and "קיבלתי, תודה" (outlined — MaterialDelivery::acknowledge()), side
+     * by side and centered, in $color. No download button when nothing was
+     * uploaded (only links, listed above them).
+     */
+    public static function materialsButtons(?string $downloadUrl, string $acknowledgeUrl, string $color = self::BRAND_COLOR): string
+    {
+        $color = e($color);
+        $text = e(self::readableTextOn($color));
+        // On white the outline button's words take the color itself — unless it is too light to read there.
+        $outlineText = $text === '#FFFFFF' ? $color : '#1F2A22';
+        $font = 'font-family:Heebo, Arial, sans-serif; font-size:16px; font-weight:700; text-decoration:none; border-radius:32px; display:inline-block; padding:14px 32px;';
+        $cells = [];
+
+        if ($downloadUrl !== null) {
+            $cells[] = '<td align="center" style="padding:6px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td align="center" style="border-radius:32px; background-color:'.$color.'; box-shadow:0 8px 20px -8px '.$color.';">'
+                .'<a href="'.e($downloadUrl).'" target="_blank" style="'.$font.' color:'.$text.'; border:2px solid '.$color.';">להורדת החומרים</a></td></tr></table></td>';
+        }
+
+        $cells[] = '<td align="center" style="padding:6px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr><td align="center" style="border-radius:32px; background-color:#FFFFFF;">'
+            .'<a href="'.e($acknowledgeUrl).'" target="_blank" style="'.$font.' color:'.$outlineText.'; border:2px solid '.$color.';">קיבלתי, תודה</a></td></tr></table></td>';
+
+        return '<table role="presentation" align="center" dir="rtl" border="0" cellpadding="0" cellspacing="0" style="margin:28px auto 12px;"><tr>'.implode('', $cells).'</tr></table>';
+    }
+
+    /**
+     * The main color of the owner's own HTML — the one its backgrounds use
+     * most (a header, a button), else the one it uses most at all; greys,
+     * near-white and near-black don't count. Null when it has none.
+     */
+    public static function accentColor(string $html): ?string
+    {
+        $color = '#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}[^)]*\)';
+        $weights = [];
+
+        preg_match_all('/(?:background(?:-color)?\s*:[^;"\'>]*?|bgcolor\s*=\s*["\']?)('.$color.')/i', $html, $backgrounds);
+        preg_match_all('/'.$color.'/i', $html, $all);
+
+        foreach ([[$backgrounds[1], 3], [$all[0], 1]] as [$found, $weight]) {
+            foreach ($found as $raw) {
+                $hex = self::toHex($raw);
+
+                if ($hex !== null && self::isAccent($hex)) {
+                    $weights[$hex] = ($weights[$hex] ?? 0) + $weight;
+                }
+            }
+        }
+
+        if (! $weights) {
+            return null;
+        }
+
+        arsort($weights);
+
+        return array_key_first($weights);
+    }
+
+    /** White on a dark enough color, the brand's dark green otherwise (WCAG contrast 3:1 for large bold text). */
+    private static function readableTextOn(string $hex): string
+    {
+        [$r, $g, $b] = array_map(function (int $c) {
+            $c /= 255;
+
+            return $c <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+        }, sscanf($hex, '#%02x%02x%02x'));
+        $luminance = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b;
+
+        return 1.05 / ($luminance + 0.05) >= 3 ? '#FFFFFF' : '#1F2A22';
+    }
+
+    private static function toHex(string $raw): ?string
+    {
+        if (preg_match('/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i', $raw, $m)) {
+            return strtoupper("#{$m[1]}{$m[1]}{$m[2]}{$m[2]}{$m[3]}{$m[3]}");
+        }
+
+        if (preg_match('/^#[0-9a-f]{6}$/i', $raw)) {
+            return strtoupper($raw);
+        }
+
+        if (preg_match('/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+))?/i', $raw, $m)) {
+            // A see-through color isn't what the eye sees.
+            if (isset($m[4]) && (float) $m[4] < 0.6) {
+                return null;
+            }
+
+            return sprintf('#%02X%02X%02X', min(255, (int) $m[1]), min(255, (int) $m[2]), min(255, (int) $m[3]));
+        }
+
+        return null;
+    }
+
+    /** A real color — not grey, near-white or near-black (HSL saturation/lightness). */
+    private static function isAccent(string $hex): bool
+    {
+        [$r, $g, $b] = array_map(fn (int $c) => $c / 255, sscanf($hex, '#%02x%02x%02x'));
+        $max = max($r, $g, $b);
+        $min = min($r, $g, $b);
+        $lightness = ($max + $min) / 2;
+        $saturation = $max === $min ? 0 : ($max - $min) / (1 - abs(2 * $lightness - 1));
+
+        return $saturation >= 0.25 && $lightness >= 0.15 && $lightness <= 0.85;
+    }
 }

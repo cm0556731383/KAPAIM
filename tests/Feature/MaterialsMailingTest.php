@@ -360,8 +360,7 @@ class MaterialsMailingTest extends TestCase
             ->set('materialsProgramId', (string) $program->id)
             ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
             ->set('materialsSubject', 'מיוחד: {{תוכנית}}')
-            ->set('materialsBody', "היי צוות\n{{רשימת_החומרים}}\nתודה")
-            ->set('materialsAppendButton', true)
+            ->set('materialsBody', "היי צוות\nתודה")
             ->call('sendMaterials')
             ->assertSet('materialsError', null)
             ->assertSet('materialsBody', $template->content);
@@ -369,8 +368,8 @@ class MaterialsMailingTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
             && $request['subject'] === 'מיוחד: '.$program->name
             && str_contains($request['body'], 'היי צוות')
-            && str_contains($request['body'], 'a.pdf')
-            && str_contains($request['body'], 'קיבלתי את החומרים'));
+            && str_contains($request['body'], 'להורדת החומרים')
+            && str_contains($request['body'], 'קיבלתי, תודה'));
     }
 
     public function test_the_materials_email_window_checks_the_wording_and_can_restore_the_template(): void
@@ -382,7 +381,8 @@ class MaterialsMailingTest extends TestCase
             ->set('activeTab', 'materials')
             ->assertSee('לפי התבנית בהגדרות', false)
             // Insert-field buttons, as in settings → תבניות דואר.
-            ->assertSee(['+ שם בית הספר', '+ תוכנית', '+ רשימת החומרים', '+ כפתור "קיבלתי את החומרים"'])
+            ->assertSee(['+ שם בית הספר', '+ תוכנית'])
+            ->assertDontSee('+ רשימת החומרים')
             ->set('materialsBody', '')
             ->call('saveMaterialsWording')
             ->assertHasErrors(['materialsBody'])
@@ -432,7 +432,6 @@ class MaterialsMailingTest extends TestCase
             ->call('sendMaterials')
             ->assertHasErrors(['materialsHtmlFile'])
             ->set('materialsHtmlFile', UploadedFile::fake()->createWithContent('mail.html', $html))
-            ->set('materialsAppendButton', true)
             ->call('sendMaterials')
             ->assertSet('materialsError', null);
 
@@ -442,10 +441,11 @@ class MaterialsMailingTest extends TestCase
             }
             $body = $request['body'];
 
-            // Used as is (no branded shell), tokens filled; the button, unplaced but ticked, goes before </body>.
-            return str_starts_with($body, '<html><body><h1>חומרים ל'.$program->name.'</h1><div><ul')
-                && str_contains($body, 'https://youtu.be/abc123')
-                && preg_match('/קיבלתי את החומרים.*<\/body><\/html>$/su', $body) === 1;
+            // Used as is (no branded shell), fields filled, the old list token dropped; the link and both buttons go before </body>.
+            return str_starts_with($body, '<html><body><h1>חומרים ל'.$program->name.'</h1><div></div>')
+                && preg_match('/youtu\.be\/abc123.*קיבלתי, תודה.*<\/body><\/html>$/su', $body) === 1
+                // Only a link was sent — nothing to download.
+                && ! str_contains($body, 'להורדת החומרים');
         });
     }
 
@@ -463,7 +463,6 @@ class MaterialsMailingTest extends TestCase
             ->set('sendFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
             ->call('addSendLink')
             ->set('sendLinks.0', ['name' => '', 'url' => 'https://youtu.be/abc123'])
-            ->set('sendAppendList', true)
             ->call('preview');
 
         // The preview stored the attachments once; the send reuses them.
@@ -490,7 +489,6 @@ class MaterialsMailingTest extends TestCase
             ->set('sendSubject', 'עדכון')
             ->set('sendBody', 'שלום')
             ->set('sendFiles', [UploadedFile::fake()->create('old.pdf', 10), UploadedFile::fake()->create('new.pdf', 10)])
-            ->set('sendAppendList', true)
             ->call('preview')
             ->call('removeSendFile', 0)
             ->call('preview');
@@ -533,7 +531,7 @@ class MaterialsMailingTest extends TestCase
             ->assertDispatched('open-modal', name: 'email-preview');
 
         $preview = $component->get('emailPreview');
-        $expected = MaterialDelivery::emailMessage($customer, $program->name, [['name' => 'guide.pdf', 'url' => '#']], '#');
+        $expected = MaterialDelivery::emailMessage($customer, $program->name, '#', [], '#');
         $this->assertSame($expected->subject, $preview['subject']);
         $this->assertSame($expected->html, $preview['html']);
 
@@ -724,14 +722,14 @@ class MaterialsMailingTest extends TestCase
         ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(fn ($request) => $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => 5], 200));
 
-        EmailTemplate::materialDelivery()->update(['subject' => 'חומרים: {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}\n{{רשימת_החומרים}}\n{{כפתור_אישור_קבלה}}"]);
+        EmailTemplate::materialDelivery()->update(['subject' => 'חומרים: {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}"]);
 
         $delivery = $this->createDelivery();
 
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
             && $request['subject'] === 'חומרים: '.$delivery->program->name
-            && str_contains($request['body'], 'a.pdf')
-            && str_contains($request['body'], 'קיבלתי את החומרים')
+            && str_contains($request['body'], 'להורדת החומרים')
+            && str_contains($request['body'], 'קיבלתי, תודה')
             && str_contains($request['body'], e($delivery->acknowledgeUrl())));
 
         $this->get($delivery->acknowledgeUrl())->assertOk();
@@ -1357,47 +1355,65 @@ class MaterialsMailingTest extends TestCase
 
         $component->set('materialsProgramId', (string) $program->id)
             ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
-            ->set('materialsAppendButton', true)
             ->call('sendMaterials')
             ->assertSet('materialsError', null)
             // Back to the materials email for the next send.
-            ->assertSet('materialsAppendButton', false)
             ->assertSet('materialsTemplateId', (string) EmailTemplate::materialDelivery()->id);
 
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
             && $request['subject'] === 'חומרים ל'.$program->name
             && str_starts_with($request['body'], '<html><body><h1>'.e($customer->school->name))
-            && str_contains($request['body'], 'a.pdf')
-            && str_contains($request['body'], 'קיבלתי את החומרים'));
+            && str_contains($request['body'], 'להורדת החומרים')
+            && str_contains($request['body'], 'קיבלתי, תודה'));
     }
 
-    public function test_the_materials_list_and_button_are_left_out_unless_placed_or_ticked(): void
+    public function test_every_materials_email_ends_with_the_two_buttons_in_the_templates_own_color(): void
     {
-        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
-        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
         $customer = $this->createCustomerWithEmailContact();
         $program = $this->createProgram();
         $this->signContract(Deal::createForCustomer($customer, $program, null));
+        $template = EmailTemplate::create(['name' => 'תשרי', 'template_type' => EmailTemplate::GENERAL, 'subject' => 'חומרים', 'content' => '<html><body><div style="background:#8E44AD; color:#fff">שנה טובה</div><p style="color:#333">טקסט</p></body></html>', 'content_format' => 'html', 'is_active' => true]);
 
         $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('activeTab', 'materials')
+            ->assertSee('מתחת לנוסח יופיעו תמיד שני כפתורים')
+            ->set('materialsTemplateId', (string) $template->id)
             ->set('materialsProgramId', (string) $program->id)
             ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
-            ->set('materialsBody', 'שלום, רק מילים')
-            ->assertSee(['הוספת רשימת החומרים (קישורים לקבצים) בסוף המייל', 'הוספת כפתור &quot;קיבלתי את החומרים&quot; בסוף המייל'], false)
             ->call('previewMaterialsEmail');
 
         $html = $component->get('emailPreview')['html'];
-        $this->assertStringNotContainsString('a.pdf', $html);
-        $this->assertStringNotContainsString('קיבלתי את החומרים', $html);
+        $this->assertMatchesRegularExpression('/שנה טובה.*background-color:#8E44AD;.*להורדת החומרים.*קיבלתי, תודה.*<\/body><\/html>$/su', $html);
 
-        $component->set('materialsAppendList', true)->call('previewMaterialsEmail');
-        $html = $component->get('emailPreview')['html'];
-        $this->assertStringContainsString('a.pdf', $html);
-        $this->assertStringNotContainsString('קיבלתי את החומרים', $html);
+        // Text in the branded shell — the brand's blue.
+        $component->set('materialsTemplateId', (string) EmailTemplate::materialDelivery()->id)->call('previewMaterialsEmail');
+        $this->assertStringContainsString('background-color:#286E9A;', $component->get('emailPreview')['html']);
     }
 
-    public function test_attached_list_materials_are_left_out_unless_placed_or_ticked(): void
+    public function test_the_download_button_downloads_the_one_file_or_a_zip_of_them_all(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $send = fn (array $names) => MaterialDelivery::sendFor($customer, $program, [['contact_id' => null, 'name' => 'א', 'email' => 'a@example.com']],
+            array_map(fn ($name) => ['file_reference' => UploadedFile::fake()->create($name, 5)->store('material-attachments', 'local'), 'file_name' => $name], $names),
+            app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SmoveClient::class), [['name' => 'סרטון', 'url' => 'https://youtu.be/x']]);
+
+        $this->get($send(['guide.pdf'])->downloadAllUrl())->assertOk()->assertDownload('guide.pdf');
+
+        $delivery = $send(['guide.pdf', 'guide.pdf', 'slides.pptx']);
+        $response = $this->get($delivery->downloadAllUrl())->assertOk();
+        $this->assertSame('application/zip', $response->headers->get('Content-Type'));
+        $zip = new \ZipArchive;
+        $zip->open($response->baseResponse->getFile()->getPathname());
+        $names = array_map(fn ($i) => $zip->getNameIndex($i), range(0, $zip->numFiles - 1));
+        $this->assertSame(['guide.pdf', 'guide (2).pdf', 'slides.pptx'], $names);
+
+        // Signed — a bare link gets nothing.
+        $this->get(route('materials.download', $delivery))->assertForbidden();
+    }
+
+    public function test_attached_list_materials_always_reach_the_email(): void
     {
         \Illuminate\Support\Facades\Storage::fake('local');
 
@@ -1405,12 +1421,8 @@ class MaterialsMailingTest extends TestCase
             ->set('sendSubject', 'עדכון')
             ->set('sendBody', 'שלום')
             ->set('sendFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
-            ->assertSee('הוספת רשימת החומרים בסוף המייל')
             ->call('preview');
 
-        $this->assertStringNotContainsString('guide.pdf', $component->get('emailPreview')['html']);
-
-        $component->set('sendAppendList', true)->call('preview');
-        $this->assertStringContainsString('guide.pdf', $component->get('emailPreview')['html']);
+        $this->assertMatchesRegularExpression('/חומרים מצורפים:.*guide\.pdf/su', $component->get('emailPreview')['html']);
     }
 }

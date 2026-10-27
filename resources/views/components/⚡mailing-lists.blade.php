@@ -62,9 +62,6 @@ class extends Component
     /** @var \Livewire\Features\SupportFileUploads\TemporaryUploadedFile[] */
     public array $sendFiles = [];
 
-    /** Add the attached materials at the end when the wording doesn't place {{רשימת_החומרים}} — off by default. */
-    public bool $sendAppendList = false;
-
     /** [{name, url}, ...] — links sent with the files, e.g. a video too big to upload. */
     public array $sendLinks = [];
 
@@ -178,7 +175,7 @@ class extends Component
             $file->delete();
         }
 
-        $this->reset(['sendListIds', 'sendTemplateId', 'sendSubject', 'sendBody', 'sendHtml', 'htmlFile', 'sendFiles', 'sendLinks', 'sendAppendList', 'emailPreview']);
+        $this->reset(['sendListIds', 'sendTemplateId', 'sendSubject', 'sendBody', 'sendHtml', 'htmlFile', 'sendFiles', 'sendLinks', 'emailPreview']);
         unset($this->sends);
         $this->notifySuccess("המייל נשלח ל-{$recipientCount} נמענים ({$names}). השליחה מתבצעת ברקע.");
     }
@@ -281,7 +278,7 @@ class extends Component
             return null;
         }
 
-        return EmailMessage::composed($this->sendSubject, $body, $isHtml, $links, $this->sendAppendList)->html;
+        return EmailMessage::composed($this->sendSubject, $body, $isHtml, $links)->html;
     }
 
     /**
@@ -477,7 +474,7 @@ class extends Component
                 x-on:livewire-upload-cancel="uploading = false">
                 <label for="sendFiles">חומרים מצורפים (לא חובה)</label>
                 <input type="file" id="sendFiles" wire:model="sendFiles" multiple>
-                <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint, תמונה, וידאו או שמע — עד 95MB לקובץ. סרטון גדול יותר — כקישור (למטה). במייל יופיע קישור להורדת כל קובץ — במקום <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> אם כתבתם אותו בתוכן או בקוד ה-HTML, או בסוף המייל אם סימנתם זאת למטה.</div>
+                <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint, תמונה, וידאו או שמע — עד 95MB לקובץ. סרטון גדול יותר — כקישור (למטה). במייל יופיע קישור להורדת כל קובץ — במקום <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> אם כתבתם אותו בתוכן או בקוד ה-HTML, ואחרת בסוף המייל.</div>
                 <div x-show="uploading" x-cloak class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">מעלה את הקבצים… <span class="ltr-num" x-text="progress + '%'"></span></div>
                 <div x-show="failed" x-cloak style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">העלאת הקובץ נכשלה — ייתכן שהוא גדול מ-95MB (או שכמה קבצים יחד עוברים 100MB), או שהחיבור נקטע. נסו לבחור אותו שוב, או שלחו סרטון גדול כקישור.</div>
                 @error('sendFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
@@ -506,16 +503,7 @@ class extends Component
                 @endforeach
                 <button type="button" wire:click="addSendLink" class="btn btn-ghost btn-sm">+ הוספת קישור</button>
             </div>
-            @if (! empty($sendFiles) || ! empty($sendLinks))
-                <div class="full">
-                    @if (str_contains($sendMode === 'html' ? $sendHtml : $sendBody, \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN))
-                        <div class="text-text-secondary" style="font-size:var(--fs-small)">✓ רשימת החומרים תופיע במקום שנקבע בתוכן.</div>
-                    @else
-                        <label style="display:flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="checkbox" wire:model.live="sendAppendList" style="width:auto; margin:0">הוספת רשימת החומרים בסוף המייל</label>
-                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">בלי סימון (ובלי <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> בתוכן) הקבצים והקישורים לא יופיעו במייל.</div>
-                    @endif
-                </div>
-            @endif
+
             <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                 <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile, sendFiles, sendTemplateId">שליחה לרשימות</button>
                 <button type="button" class="btn btn-secondary" wire:click="preview" wire:loading.attr="disabled" wire:target="preview, htmlFile, sendFiles">תצוגה מקדימה</button>

@@ -217,11 +217,6 @@ class extends Component
 
     public $materialsHtmlFile = null;
 
-    /** Add the materials list / the "received" button at the end when the wording doesn't place them — off by default. */
-    public bool $materialsAppendList = false;
-
-    public bool $materialsAppendButton = false;
-
     /** Business-rule error from MaterialDelivery::sendFor() (FR-5.2/FR-5.3/FR-8.13/FR-8.14). */
     public ?string $materialsError = null;
 
@@ -283,18 +278,15 @@ class extends Component
         }
 
         $program = $this->materialsPrograms->firstWhere('id', (int) $this->materialsProgramId);
-        $links = [
-            ...array_map(fn ($file) => ['name' => $file->getClientOriginalName(), 'url' => '#'], $this->materialsFiles),
-            ...array_map(fn (array $link) => [
-                'name' => trim((string) ($link['name'] ?? '')) ?: (parse_url(trim((string) $link['url']), PHP_URL_HOST) ?: trim((string) $link['url'])),
-                'url' => trim((string) $link['url']) ?: '#',
-            ], $this->materialsLinks),
-        ];
+        $links = array_map(fn (array $link) => [
+            'name' => trim((string) ($link['name'] ?? '')) ?: (parse_url(trim((string) $link['url']), PHP_URL_HOST) ?: trim((string) $link['url'])),
+            'url' => trim((string) $link['url']) ?: '#',
+        ], $this->materialsLinks);
 
         $this->showEmailPreview(
-            MaterialDelivery::emailMessage($this->customer, $program?->name ?? '(התוכנית שתיבחר)', $links, '#', $email),
+            MaterialDelivery::emailMessage($this->customer, $program?->name ?? '(התוכנית שתיבחר)', $this->materialsFiles ? '#' : null, $links, '#', $email),
             collect($this->materialsRecipients)->map(fn (array $r) => $r['name'] === $r['email'] ? $r['email'] : "{$r['name']} <{$r['email']}>")->implode(', ') ?: null,
-            'בתצוגה ובמייל הבדיקה הקישורים לקבצים והכפתור "קיבלתי את החומרים" אינם פעילים — הם נוצרים בשליחה עצמה.',
+            'בתצוגה ובמייל הבדיקה הכפתורים "להורדת החומרים" ו"קיבלתי, תודה" אינם פעילים — הם נוצרים בשליחה עצמה.',
         );
     }
 
@@ -388,10 +380,7 @@ class extends Component
             return null;
         }
 
-        return ['subject' => $this->materialsSubject, 'content' => $content, 'is_html' => $isHtml, 'append' => array_keys(array_filter([
-            EmailTemplate::MATERIALS_LIST_TOKEN => $this->materialsAppendList,
-            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => $this->materialsAppendButton,
-        ]))];
+        return ['subject' => $this->materialsSubject, 'content' => $content, 'is_html' => $isHtml];
     }
 
     private function resetMaterialsWording(): void
@@ -402,8 +391,6 @@ class extends Component
         $this->materialsBody = $template->isHtml() ? '' : $template->content;
         $this->materialsHtml = $template->isHtml() ? $template->content : '';
         $this->materialsHtmlFile = null;
-        $this->materialsAppendList = false;
-        $this->materialsAppendButton = false;
     }
 
     private function syncSchoolFields(): void
@@ -2088,23 +2075,9 @@ class extends Component
                                             @foreach (['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'] as $token => $label)
                                                 <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ str_repeat('{', 2).$token.str_repeat('}', 2) }}')">+ {{ $label }}</button>
                                             @endforeach
-                                            @foreach ([\App\Models\EmailTemplate::MATERIALS_LIST_TOKEN => 'רשימת החומרים', \App\Models\EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => 'כפתור "קיבלתי את החומרים"'] as $token => $label)
-                                                <button type="button" class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" x-on:click="insert('{{ $token }}')">+ {{ $label }}</button>
-                                            @endforeach
                                         </div>
                                     </div>
-                                    <div class="full">
-                                        <label>רכיבי החומרים במייל</label>
-                                        @php($placed = $materialsMode === 'html' ? $materialsHtml : $materialsBody)
-                                        @foreach (['materialsAppendList' => [\App\Models\EmailTemplate::MATERIALS_LIST_TOKEN, 'רשימת החומרים (קישורים לקבצים)'], 'materialsAppendButton' => [\App\Models\EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN, 'כפתור "קיבלתי את החומרים"']] as $property => [$token, $label])
-                                            @if (str_contains($placed, $token))
-                                                <div class="text-text-secondary" style="font-size:var(--fs-small); margin-bottom:4px">✓ {{ $label }} — במקום שנקבע {{ $materialsMode === 'html' ? 'בקוד' : 'בטקסט' }}</div>
-                                            @else
-                                                <label style="display:flex; align-items:center; gap:8px; margin:0 0 4px; font-weight:500; cursor:pointer"><input type="checkbox" wire:model.live="{{ $property }}" style="width:auto; margin:0">הוספת {{ $label }} בסוף המייל</label>
-                                            @endif
-                                        @endforeach
-                                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">רכיב שלא נמצא בנוסח ולא סומן — לא ייכלל במייל. בלי רשימת החומרים הנמענים לא יקבלו את הקישורים לקבצים, ובלי הכפתור לא יוכלו לאשר קבלה. השינוי חל על שליחה זו בלבד.</div>
-                                    </div>
+                                    <div class="full text-text-secondary" style="font-size:var(--fs-caption)">מתחת לנוסח יופיעו תמיד שני כפתורים: <strong>"להורדת החומרים"</strong> (כל הקבצים שצורפו בבת אחת) ו<strong>"קיבלתי, תודה"</strong> — בצבע הבולט של קוד ה-HTML, או בכחול של כפיים. קישורים שצורפו יופיעו מעליהם. השינוי בנוסח חל על שליחה זו בלבד.</div>
                                     <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                                         <button type="button" class="btn btn-primary" wire:click="saveMaterialsWording" wire:loading.attr="disabled" wire:target="saveMaterialsWording, materialsHtmlFile">שמירה</button>
                                         <button type="button" class="btn btn-ghost" wire:click="restoreMaterialsTemplate">חזרה לנוסח התבנית</button>

@@ -600,12 +600,9 @@ class extends Component
             ],
             EmailTemplate::MATERIAL_DELIVERY => [
                 'usage' => 'שליחת חומרי לימוד',
-                'intro' => 'המייל שנשלח בלחיצה על "שליחת חומרים" בכרטיס הלקוחה, לכל הנמענים שנבחרו. רשימת החומרים היא הקבצים והקישורים שצורפו לשליחה. לחיצה על "קיבלתי את החומרים" מסמנת את המשלוח כהתקבל ומבטלת את התזכורת.',
+                'intro' => 'המייל שנשלח בלחיצה על "שליחת חומרים" בכרטיס הלקוחה, לכל הנמענים שנבחרו. מתחת לנוסח יופיעו תמיד שני כפתורים: "להורדת החומרים" (כל הקבצים שצורפו בבת אחת) ו"קיבלתי, תודה" (מסמן את המשלוח כהתקבל ומבטל את התזכורת) — בצבע הבולט של קוד ה-HTML, או בכחול של כפיים.',
                 'fields' => ['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'],
-                'blocks' => [
-                    EmailTemplate::MATERIALS_LIST_TOKEN => ['label' => 'רשימת החומרים', 'preview' => '<ul style="margin:0; padding-inline-start:20px"><li><a style="color:#286E9A; font-weight:600">חוברת לתלמידה.pdf</a></li><li><a style="color:#286E9A; font-weight:600">סרטון הדרכה</a></li></ul>'],
-                    EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => ['label' => 'כפתור "קיבלתי את החומרים"', 'preview' => $receivedButton],
-                ],
+                'blocks' => [],
                 'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
             ],
             EmailTemplate::MATERIAL_REMINDER => [
@@ -617,7 +614,7 @@ class extends Component
             ],
             EmailTemplate::GENERAL => [
                 'usage' => 'כללי',
-                'intro' => 'תבנית שהמערכת לא שולחת אוטומטית — בוחרים אותה בשליחת מייל לרשימות תפוצה או בשליחת חומרים מכרטיס הלקוחה, ואפשר לשנות את הנוסח לפני כל שליחה. שם בית הספר והתוכנית מתמלאים רק בשליחת חומרים (בשליחה לרשימות אין אותם).',
+                'intro' => 'תבנית שהמערכת לא שולחת אוטומטית — בוחרים אותה בשליחת מייל לרשימות תפוצה או בשליחת חומרים מכרטיס הלקוחה, ואפשר לשנות את הנוסח לפני כל שליחה. שם בית הספר והתוכנית מתמלאים רק בשליחת חומרים (בשליחה לרשימות אין אותם). בשליחת חומרים יופיעו מתחת לנוסח שני הכפתורים "להורדת החומרים" ו"קיבלתי, תודה"; רשימת החומרים משמשת רק בשליחה לרשימות.',
                 'fields' => ['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'],
                 'blocks' => [EmailTemplate::MATERIALS_LIST_TOKEN => ['label' => 'רשימת החומרים', 'preview' => '<ul style="margin:0; padding-inline-start:20px"><li><a style="color:#286E9A; font-weight:600">חוברת לתלמידה.pdf</a></li><li><a style="color:#286E9A; font-weight:600">סרטון הדרכה</a></li></ul>']],
                 'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
@@ -655,7 +652,7 @@ class extends Component
                 ['label' => 'תשלום מתאריך 03/09/2026 · ₪1,250', 'url' => '#'],
                 ['label' => 'תשלום מתאריך 21/09/2026 · ₪480', 'url' => '#'],
             ]),
-            EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')], '#', $isHtml),
+            EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], '#', [$example('סרטון הדרכה')], '#', $isHtml),
             EmailTemplate::MATERIAL_REMINDER => \App\Support\EmailMessage::materialReminder($rendered['subject'], $rendered['content'], '#'),
             EmailTemplate::GENERAL => \App\Support\EmailMessage::composed($rendered['subject'], $rendered['content'], $isHtml, [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')]),
             default => \App\Support\EmailMessage::transactional($rendered['subject'], $rendered['content']),
@@ -689,8 +686,7 @@ class extends Component
         return collect(preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE))
             ->map(fn (string $part) => $blocks[$part] ?? $text($part))
             ->implode('')
-            // The materials parts are added at the end only when chosen at send time.
-            .(in_array($this->emailTemplateType, [EmailTemplate::MATERIAL_DELIVERY, EmailTemplate::GENERAL], true) ? '' : $blocks->reject(fn ($html, $token) => str_contains($content, $token))->implode(''));
+            .$blocks->reject(fn ($html, $token) => str_contains($content, $token))->implode('');
     }
 
     // ----- אינטגרציות חיצוניות -----
@@ -1100,12 +1096,12 @@ class extends Component
                             @endforeach
                         </div>
                         @if ($spec['blocks'])
-                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">{{ in_array($emailTemplateType, [EmailTemplate::MATERIAL_DELIVERY, EmailTemplate::GENERAL], true) ? 'רכיב שלא מופיע בנוסח לא ייכלל במייל — אלא אם מסמנים בשליחה עצמה להוסיף אותו בסוף.' : 'רכיב שלא מופיע בטקסט יתווסף בסוף המייל.' }}</div>
+                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">רכיב שלא מופיע בטקסט יתווסף בסוף המייל.</div>
                         @endif
                     </div>
                     <div class="full">
                         <label>תצוגה מקדימה (עם פרטים לדוגמה)</label>
-                        @if ($isHtml)
+                        @if ($isHtml || $emailTemplateType === EmailTemplate::MATERIAL_DELIVERY)
                             <div style="font-weight:600; margin-bottom:var(--sp-sm)">{{ $preview['subject'] }}</div>
                             {{-- sandbox: the template's scripts never run inside the app. --}}
                             <iframe sandbox srcdoc="{{ $this->emailTemplateMessage()->html }}" title="תצוגה מקדימה של התבנית" style="width:100%; height:420px; border:1px solid var(--color-border); border-radius:var(--radius-control); background:#FFFFFF"></iframe>

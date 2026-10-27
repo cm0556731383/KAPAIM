@@ -106,7 +106,10 @@ class EmailTemplate extends Model
      */
     public const MATERIAL_DELIVERY = 'material_delivery';
 
-    /** Where the list of material links goes in the materials email (appended at the end when absent). */
+    /** The materials email's wording as seeded — the download and "received" buttons always follow it (EmailMessage::materials()). */
+    public const MATERIAL_DELIVERY_DEFAULT_CONTENT = "שלום,\n\nשמחים לשלוח לכם את חומרי הלימוד של {{תוכנית}}.\nאפשר להוריד את כולם בלחיצה על \"להורדת החומרים\", ואחרי שהורדתם — נשמח שתאשרו בלחיצה על \"קיבלתי, תודה\".\n\nבברכה, כפיים";
+
+    /** Old token for the list of material links — still used by mailing-list emails; dropped from a materials email, whose buttons replace it. */
     public const MATERIALS_LIST_TOKEN = '{{רשימת_החומרים}}';
 
     /** Emails the code looks up by type — settings never lets their type change. */

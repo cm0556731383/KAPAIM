@@ -141,6 +141,49 @@ class MaterialDelivery extends Model
         return URL::signedRoute('materials.acknowledge', ['material' => $this->id]);
     }
 
+    /** The email's "להורדת החומרים" button — every uploaded file at once (materials.download), valid as long as each file's own link. */
+    public function downloadAllUrl(): string
+    {
+        return URL::temporarySignedRoute('materials.download', now()->addDays(MaterialDeliveryAttachment::LINK_DAYS), ['material' => $this->id]);
+    }
+
+    /**
+     * What "להורדת החומרים" downloads: the one file itself, or a ZIP of all
+     * of them (stored, not compressed — PDFs and videos barely shrink).
+     */
+    public function downloadAllResponse(): \Symfony\Component\HttpFoundation\Response
+    {
+        $files = $this->attachments()->whereNull('url')->orderBy('id')->get();
+        abort_if($files->isEmpty(), 404);
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+
+        if ($files->count() === 1) {
+            return $disk->download($files->first()->file_reference, $files->first()->file_name);
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'materials');
+        $zip = new \ZipArchive;
+        $zip->open($path, \ZipArchive::OVERWRITE);
+        $names = [];
+
+        foreach ($files as $file) {
+            // Two files of the same name both go in: "a.pdf", "a (2).pdf".
+            $name = $file->file_name;
+            $count = $names[mb_strtolower($name)] = ($names[mb_strtolower($name)] ?? 0) + 1;
+
+            if ($count > 1) {
+                $name = pathinfo($name, PATHINFO_FILENAME)." ({$count})".(pathinfo($name, PATHINFO_EXTENSION) !== '' ? '.'.pathinfo($name, PATHINFO_EXTENSION) : '');
+            }
+
+            $zip->addFile($disk->path($file->file_reference), $name);
+            $zip->setCompressionName($name, \ZipArchive::CM_STORE);
+        }
+
+        $zip->close();
+
+        return response()->download($path, 'חומרי לימוד - '.str_replace(['/', '\\'], '-', (string) $this->program?->name).'.zip', ['Content-Type' => 'application/zip'])->deleteFileAfterSend();
+    }
+
     /**
      * The only place a MaterialDelivery row is ever created (FR-5.1).
      * $recipients is an array of ['contact_id' => ?int, 'name' => string,
@@ -163,7 +206,7 @@ class MaterialDelivery extends Model
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      * @param  array<int, array{file_reference: string, file_name: string}>  $attachments
      * @param  array<int, array{name: string, url: string}>  $links  sent as-is — e.g. a video on YouTube/Drive too big to upload
-     * @param  array{subject: string, content: string, is_html: bool, append?: list<string>}|null  $email  this send's wording, as edited on the
+     * @param  array{subject: string, content: string, is_html: bool}|null  $email  this send's wording, as edited on the
      *                                                                             customer card (or an uploaded HTML file) — tokens still unrendered;
      *                                                                             null = the 'material_delivery' template as is
      *
@@ -260,7 +303,8 @@ class MaterialDelivery extends Model
         $message = self::emailMessage(
             $customer,
             $program->name,
-            array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->downloadUrl()], $attachmentModels),
+            $attachments ? $delivery->downloadAllUrl() : null,
+            array_map(fn (MaterialDeliveryAttachment $a) => ['name' => $a->file_name, 'url' => $a->url], array_values(array_filter($attachmentModels, fn (MaterialDeliveryAttachment $a) => $a->isLink()))),
             $delivery->acknowledgeUrl(),
             $email,
         );
@@ -284,10 +328,11 @@ class MaterialDelivery extends Model
      * The materials email exactly as it goes out — sendFor() and the
      * customer card's preview both build it here.
      *
-     * @param  array<int, array{name: string, url: string}>  $links
-     * @param  array{subject: string, content: string, is_html: bool, append?: list<string>}|null  $email  see sendFor()
+     * @param  ?string  $downloadUrl  every uploaded file at once — null when only links were sent
+     * @param  array<int, array{name: string, url: string}>  $links  the links sent (not the files)
+     * @param  array{subject: string, content: string, is_html: bool}|null  $email  see sendFor()
      */
-    public static function emailMessage(Customer $customer, string $programName, array $links, string $acknowledgeUrl, ?array $email = null): EmailMessage
+    public static function emailMessage(Customer $customer, string $programName, ?string $downloadUrl, array $links, string $acknowledgeUrl, ?array $email = null): EmailMessage
     {
         $template = $email ? new EmailTemplate(['subject' => $email['subject'], 'content' => $email['content']]) : self::emailTemplate();
         $isHtml = (bool) ($email['is_html'] ?? $template->isHtml());
@@ -297,7 +342,7 @@ class MaterialDelivery extends Model
         // Inside HTML the values are escaped (a school named "A & B"); the subject stays plain text.
         $content = $isHtml ? $template->render(array_map('e', $data))['content'] : $rendered['content'];
 
-        return EmailMessage::materials($rendered['subject'], $content, $links, $acknowledgeUrl, $isHtml, $email['append'] ?? []);
+        return EmailMessage::materials($rendered['subject'], $content, $downloadUrl, $links, $acknowledgeUrl, $isHtml);
     }
 
     /** The business owner's wording (settings → תבניות דואר); the seeded default if it's ever missing. */
@@ -305,7 +350,7 @@ class MaterialDelivery extends Model
     {
         return EmailTemplate::materialDelivery() ?? new EmailTemplate([
             'subject' => 'חומרי לימוד: {{תוכנית}}',
-            'content' => "שלום,\n\nמצורפים קישורים לחומרי הלימוד:\n\n".EmailTemplate::MATERIALS_LIST_TOKEN."\n\n".EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN."\n\nבברכה, כפיים",
+            'content' => EmailTemplate::MATERIAL_DELIVERY_DEFAULT_CONTENT,
         ]);
     }
 

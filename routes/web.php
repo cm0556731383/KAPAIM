@@ -71,6 +71,14 @@ Route::get('/materials/attachments/{attachment}/download', function (
     return \Illuminate\Support\Facades\Storage::disk('local')->download($attachment->file_reference, $attachment->file_name);
 })->middleware('signed')->name('materials.attachment.download');
 
+/**
+ * The materials email's "להורדת החומרים" button — every uploaded file of the
+ * send at once (MaterialDelivery::downloadAllResponse()). Signed and
+ * outside auth, like the per-file link above.
+ */
+Route::get('/materials/{material}/download', fn (\App\Models\MaterialDelivery $material) => $material->downloadAllResponse())
+    ->middleware('signed')->name('materials.download');
+
 /** The same, for a file attached to a mailing-list email (MailingListSendAttachment::downloadUrl()). */
 Route::get('/mailing-lists/attachments/{attachment}/download', function (
     \App\Models\MailingListSendAttachment $attachment,
