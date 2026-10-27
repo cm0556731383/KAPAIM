@@ -336,6 +336,13 @@ class extends Component
     {
         $this->documentError = null;
 
+        // The order form and contract go out together only (generateOrderFormAndContract()).
+        if (in_array($documentType, ['order_form', 'contract'], true)) {
+            $this->documentError = 'טופס הזמנה וחוזה מופקים ונשלחים יחד, במייל אחד — בכפתור "+ הפקת טופס הזמנה וחוזה".';
+
+            return;
+        }
+
         if (in_array($documentType, DocumentTemplate::SYSTEM_TYPES, true)) {
             $template = $documentType;
         } else {
@@ -1258,6 +1265,8 @@ class extends Component
 
         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-lg); align-items:flex-end">
             @foreach ($this->dealDocumentTypes() as $type => $label)
+                {{-- The contract is generated only with its order form, below — never on its own (2026-10-27). --}}
+                @continue($type === 'contract')
                 @if ($type === 'credit_note')
                     {{-- A subscription's credit is issued from the customer card (months cancelled); any other deal's here. --}}
                     @unless ($deal->subscription)

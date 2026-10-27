@@ -303,6 +303,22 @@ class LeadQuoteTest extends TestCase
         $this->assertCount(2, $sent[0][1]->attachments);
     }
 
+    public function test_the_deal_card_offers_no_separate_order_form_or_contract(): void
+    {
+        $customer = $this->createLead()->convertToCustomer(app(ActivityLogger::class));
+        $deal = Deal::createForCustomer($customer, $this->createProgram(), null);
+        $this->createTemplate('order_form');
+        $this->createTemplate('contract');
+
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
+            ->assertDontSee('+ הפקת חוזה')
+            ->assertDontSee('+ הפקת טופס הזמנה<')
+            ->call('generateDocument', 'contract')
+            ->call('generateDocument', 'order_form');
+
+        $this->assertSame(0, $deal->documents()->count());
+    }
+
     public function test_once_the_deal_has_a_contract_no_new_pair_is_generated(): void
     {
         $customer = $this->createLead()->convertToCustomer(app(ActivityLogger::class));
