@@ -361,6 +361,7 @@ class MaterialsMailingTest extends TestCase
             ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
             ->set('materialsSubject', 'מיוחד: {{תוכנית}}')
             ->set('materialsBody', "היי צוות\n{{רשימת_החומרים}}\nתודה")
+            ->set('materialsAppendButton', true)
             ->call('sendMaterials')
             ->assertSet('materialsError', null)
             ->assertSet('materialsBody', $template->content);
@@ -379,7 +380,7 @@ class MaterialsMailingTest extends TestCase
 
         $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('activeTab', 'materials')
-            ->assertSee('לפי תבנית "שליחת חומרים" בהגדרות', false)
+            ->assertSee('לפי התבנית בהגדרות', false)
             // Insert-field buttons, as in settings → תבניות דואר.
             ->assertSee(['+ שם בית הספר', '+ תוכנית', '+ רשימת החומרים', '+ כפתור "קיבלתי את החומרים"'])
             ->set('materialsBody', '')
@@ -431,6 +432,7 @@ class MaterialsMailingTest extends TestCase
             ->call('sendMaterials')
             ->assertHasErrors(['materialsHtmlFile'])
             ->set('materialsHtmlFile', UploadedFile::fake()->createWithContent('mail.html', $html))
+            ->set('materialsAppendButton', true)
             ->call('sendMaterials')
             ->assertSet('materialsError', null);
 
@@ -440,7 +442,7 @@ class MaterialsMailingTest extends TestCase
             }
             $body = $request['body'];
 
-            // Used as is (no branded shell), tokens filled; the button, unplaced, goes before </body>.
+            // Used as is (no branded shell), tokens filled; the button, unplaced but ticked, goes before </body>.
             return str_starts_with($body, '<html><body><h1>חומרים ל'.$program->name.'</h1><div><ul')
                 && str_contains($body, 'https://youtu.be/abc123')
                 && preg_match('/קיבלתי את החומרים.*<\/body><\/html>$/su', $body) === 1;
@@ -461,6 +463,7 @@ class MaterialsMailingTest extends TestCase
             ->set('sendFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
             ->call('addSendLink')
             ->set('sendLinks.0', ['name' => '', 'url' => 'https://youtu.be/abc123'])
+            ->set('sendAppendList', true)
             ->call('preview');
 
         // The preview stored the attachments once; the send reuses them.
@@ -487,6 +490,7 @@ class MaterialsMailingTest extends TestCase
             ->set('sendSubject', 'עדכון')
             ->set('sendBody', 'שלום')
             ->set('sendFiles', [UploadedFile::fake()->create('old.pdf', 10), UploadedFile::fake()->create('new.pdf', 10)])
+            ->set('sendAppendList', true)
             ->call('preview')
             ->call('removeSendFile', 0)
             ->call('preview');
@@ -720,14 +724,13 @@ class MaterialsMailingTest extends TestCase
         ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
         Http::fake(fn ($request) => $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => 5], 200));
 
-        EmailTemplate::materialDelivery()->update(['subject' => 'חומרים: {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}\n{{רשימת_החומרים}}"]);
+        EmailTemplate::materialDelivery()->update(['subject' => 'חומרים: {{תוכנית}}', 'content' => "שלום {{שם_בית_הספר}}\n{{רשימת_החומרים}}\n{{כפתור_אישור_קבלה}}"]);
 
         $delivery = $this->createDelivery();
 
         Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
             && $request['subject'] === 'חומרים: '.$delivery->program->name
             && str_contains($request['body'], 'a.pdf')
-            // Not placed by the text — appended at the end.
             && str_contains($request['body'], 'קיבלתי את החומרים')
             && str_contains($request['body'], e($delivery->acknowledgeUrl())));
 
@@ -1289,5 +1292,125 @@ class MaterialsMailingTest extends TestCase
             'is_premium' => $isPremium,
             'is_active' => true,
         ]);
+    }
+
+    public function test_a_list_email_starts_from_a_chosen_template_and_can_be_edited_for_the_send(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+        $text = EmailTemplate::create(['name' => 'ברכת חג', 'template_type' => EmailTemplate::GENERAL, 'subject' => 'חג שמח', 'content' => 'שלום לכולן', 'is_active' => true]);
+        $html = EmailTemplate::create(['name' => 'ניוזלטר', 'template_type' => EmailTemplate::GENERAL, 'subject' => 'ניוזלטר', 'content' => '<html><body><h1>חדשות</h1></body></html>', 'content_format' => 'html', 'is_active' => true]);
+        EmailTemplate::create(['name' => 'מושבתת', 'template_type' => EmailTemplate::GENERAL, 'subject' => 'x', 'content' => 'x', 'is_active' => false]);
+
+        $component = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->assertSee(['ברכת חג', 'ניוזלטר (HTML)'])
+            ->assertDontSee('מושבתת')
+            ->set('sendTemplateId', (string) $text->id)
+            ->assertSet('sendSubject', 'חג שמח')
+            ->assertSet('sendMode', 'text')
+            ->assertSet('sendBody', 'שלום לכולן')
+            ->set('sendTemplateId', (string) $html->id)
+            ->assertSet('sendMode', 'html')
+            ->assertSet('sendHtml', '<html><body><h1>חדשות</h1></body></html>')
+            // Edited for this send only.
+            ->set('sendHtml', '<html><body><h1>חדשות מעודכנות</h1></body></html>')
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
+            ->call('send', true)
+            ->assertSet('sendError', null);
+
+        $this->assertSame('<html><body><h1>חדשות מעודכנות</h1></body></html>', \App\Models\MailingListSend::firstOrFail()->body_html);
+        $this->assertSame('<html><body><h1>חדשות</h1></body></html>', $html->fresh()->content);
+    }
+
+    public function test_a_list_email_refuses_a_school_or_program_field_it_cannot_fill(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $customer = $this->createCustomerWithEmailContact();
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendListIds', [(string) MailingList::primaryList()->id])
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום {{שם_בית_הספר}}')
+            ->call('send', true)
+            ->assertSet('sendError', 'במייל לרשימות תפוצה אי אפשר למלא את השדות {{שם_בית_הספר}} — יש להסיר אותם מהנושא ומהתוכן.');
+
+        $this->assertSame(0, \App\Models\MailingListSend::count());
+    }
+
+    public function test_materials_can_be_sent_in_a_general_html_template_with_the_school_and_program_filled(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+        $template = EmailTemplate::create(['name' => 'חומרים מעוצבים', 'template_type' => EmailTemplate::GENERAL, 'subject' => 'חומרים ל{{תוכנית}}', 'content' => '<html><body><h1>{{שם_בית_הספר}}</h1>{{רשימת_החומרים}}</body></html>', 'content_format' => 'html', 'is_active' => true]);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->assertSet('materialsTemplateId', (string) EmailTemplate::materialDelivery()->id)
+            ->set('materialsTemplateId', (string) $template->id)
+            ->assertSet('materialsMode', 'html')
+            ->assertSet('materialsHtml', $template->content);
+        $this->assertFalse($component->instance()->materialsWordingEdited());
+
+        $component->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
+            ->set('materialsAppendButton', true)
+            ->call('sendMaterials')
+            ->assertSet('materialsError', null)
+            // Back to the materials email for the next send.
+            ->assertSet('materialsAppendButton', false)
+            ->assertSet('materialsTemplateId', (string) EmailTemplate::materialDelivery()->id);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/Campaigns')
+            && $request['subject'] === 'חומרים ל'.$program->name
+            && str_starts_with($request['body'], '<html><body><h1>'.e($customer->school->name))
+            && str_contains($request['body'], 'a.pdf')
+            && str_contains($request['body'], 'קיבלתי את החומרים'));
+    }
+
+    public function test_the_materials_list_and_button_are_left_out_unless_placed_or_ticked(): void
+    {
+        ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x']]);
+        Http::fake(fn ($request) => Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200));
+        $customer = $this->createCustomerWithEmailContact();
+        $program = $this->createProgram();
+        $this->signContract(Deal::createForCustomer($customer, $program, null));
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('activeTab', 'materials')
+            ->set('materialsProgramId', (string) $program->id)
+            ->set('materialsFiles', [UploadedFile::fake()->create('a.pdf', 10)])
+            ->set('materialsBody', 'שלום, רק מילים')
+            ->assertSee(['הוספת רשימת החומרים (קישורים לקבצים) בסוף המייל', 'הוספת כפתור &quot;קיבלתי את החומרים&quot; בסוף המייל'], false)
+            ->call('previewMaterialsEmail');
+
+        $html = $component->get('emailPreview')['html'];
+        $this->assertStringNotContainsString('a.pdf', $html);
+        $this->assertStringNotContainsString('קיבלתי את החומרים', $html);
+
+        $component->set('materialsAppendList', true)->call('previewMaterialsEmail');
+        $html = $component->get('emailPreview')['html'];
+        $this->assertStringContainsString('a.pdf', $html);
+        $this->assertStringNotContainsString('קיבלתי את החומרים', $html);
+    }
+
+    public function test_attached_list_materials_are_left_out_unless_placed_or_ticked(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+
+        $component = Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->set('sendSubject', 'עדכון')
+            ->set('sendBody', 'שלום')
+            ->set('sendFiles', [UploadedFile::fake()->create('guide.pdf', 10)])
+            ->assertSee('הוספת רשימת החומרים בסוף המייל')
+            ->call('preview');
+
+        $this->assertStringNotContainsString('guide.pdf', $component->get('emailPreview')['html']);
+
+        $component->set('sendAppendList', true)->call('preview');
+        $this->assertStringContainsString('guide.pdf', $component->get('emailPreview')['html']);
     }
 }

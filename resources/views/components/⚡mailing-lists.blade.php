@@ -11,7 +11,6 @@ use App\Models\MaterialDeliveryAttachment;
 use App\Models\MailingMembership;
 use App\Models\Program;
 use App\Services\ActivityLogger;
-use App\Support\BrandedEmail;
 use App\Support\EmailMessage;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -33,7 +32,9 @@ use Livewire\WithFileUploads;
  * goes to the chosen list's recipients through Smove, in the background
  * (App\Jobs\SendMailingListEmail) — either the owner's text inside the same
  * branded shell every other system email uses, or an uploaded HTML file
- * used as is. Materials (files and links) can be attached to either — the
+ * used as is (or typed/edited as code). Either can start from a template
+ * (settings → תבניות דואר — the general ones), copied into the form and
+ * editable for this send. Materials (files and links) can be attached to either — the
  * same way as a materials send: files are kept here and the email links to
  * them (MailingListSendAttachment), in place of {{רשימת_החומרים}} or at the
  * end of the email.
@@ -48,14 +49,21 @@ class extends Component
 
     /** @var array<int, string> ids of the lists the email goes to */
     public array $sendListIds = [];
+    /** The template the wording was copied from ('' = written here). */
+    public string $sendTemplateId = '';
     public string $sendSubject = '';
-    /** text = the owner's text in the branded shell; html = an uploaded HTML file, as is. */
+    /** text = the owner's text in the branded shell; html = her own HTML ($sendHtml), as is. */
     public string $sendMode = 'text';
     public string $sendBody = '';
+    /** The HTML sent in html mode — from a template, an uploaded file, or typed. */
+    public string $sendHtml = '';
     public $htmlFile = null;
 
     /** @var \Livewire\Features\SupportFileUploads\TemporaryUploadedFile[] */
     public array $sendFiles = [];
+
+    /** Add the attached materials at the end when the wording doesn't place {{רשימת_החומרים}} — off by default. */
+    public bool $sendAppendList = false;
 
     /** [{name, url}, ...] — links sent with the files, e.g. a video too big to upload. */
     public array $sendLinks = [];
@@ -170,9 +178,44 @@ class extends Component
             $file->delete();
         }
 
-        $this->reset(['sendListIds', 'sendSubject', 'sendBody', 'htmlFile', 'sendFiles', 'sendLinks', 'emailPreview']);
+        $this->reset(['sendListIds', 'sendTemplateId', 'sendSubject', 'sendBody', 'sendHtml', 'htmlFile', 'sendFiles', 'sendLinks', 'sendAppendList', 'emailPreview']);
         unset($this->sends);
         $this->notifySuccess("המייל נשלח ל-{$recipientCount} נמענים ({$names}). השליחה מתבצעת ברקע.");
+    }
+
+    /** Picking a template copies its subject and wording into the form — edits stay with this send. */
+    public function updatedSendTemplateId(): void
+    {
+        $this->resetErrorBag(['sendSubject', 'sendBody', 'htmlFile', 'sendHtml']);
+        $this->sendError = null;
+        $template = $this->sendTemplateId !== '' ? $this->templates->firstWhere('id', (int) $this->sendTemplateId) : null;
+
+        if (! $template) {
+            $this->sendTemplateId = '';
+
+            return;
+        }
+
+        $this->sendSubject = (string) $template->subject;
+        $this->sendMode = $template->isHtml() ? 'html' : 'text';
+        $template->isHtml() ? $this->sendHtml = (string) $template->content : $this->sendBody = (string) $template->content;
+        $this->htmlFile = null;
+        $this->emailPreview = null;
+    }
+
+    /** An uploaded HTML file becomes the HTML to send (still editable as code). */
+    public function updatedHtmlFile(): void
+    {
+        $this->validate(['htmlFile' => ['required', 'file', 'max:2048', 'mimes:html,htm']], [], ['htmlFile' => 'קובץ HTML']);
+        $this->sendHtml = (string) file_get_contents($this->htmlFile->getRealPath());
+        $this->emailPreview = null;
+    }
+
+    /** The general templates (settings → תבניות דואר) offered as a starting point. */
+    #[Computed]
+    public function templates()
+    {
+        return EmailTemplate::pickable();
     }
 
     public function addSendLink(): void
@@ -211,41 +254,34 @@ class extends Component
     private function buildBody(): ?string
     {
         $links = $this->attachmentLinks();
+        $isHtml = $this->sendMode === 'html';
 
-        if ($this->sendMode === 'html') {
-            $this->validate(['htmlFile' => ['required', 'file', 'max:2048', 'mimes:html,htm']], [], ['htmlFile' => 'קובץ HTML']);
-            $html = (string) file_get_contents($this->htmlFile->getRealPath());
+        if ($isHtml) {
+            if (trim($this->sendHtml) === '') {
+                $this->validate(['htmlFile' => ['required']], [], ['htmlFile' => 'קובץ HTML']);
+            }
 
-            if (trim(strip_tags($html)) === '' && ! str_contains($html, '<img')) {
+            if (trim(strip_tags($this->sendHtml)) === '' && ! str_contains($this->sendHtml, '<img')) {
                 $this->sendError = 'קובץ ה-HTML ריק.';
 
                 return null;
             }
-
-            return BrandedEmail::htmlWithBlocks($html, $this->materialsBlock($html, $links));
+        } else {
+            $this->validate(['sendBody' => ['required', 'string']], [], ['sendBody' => 'תוכן המייל']);
         }
 
-        $this->validate(['sendBody' => ['required', 'string']], [], ['sendBody' => 'תוכן המייל']);
+        $body = $isHtml ? $this->sendHtml : $this->sendBody;
 
-        return BrandedEmail::wrap(BrandedEmail::textWithBlocks($this->sendBody, $this->materialsBlock($this->sendBody, $links)));
-    }
+        // A list email goes to everyone at once — there is no one school or program to fill in.
+        $personal = collect(EmailTemplate::PERSONAL_PLACEHOLDERS)->map(fn ($name) => '{{'.$name.'}}')->filter(fn ($token) => str_contains($this->sendSubject.$body, $token));
 
-    /**
-     * The materials list for the email, under its own heading when the body
-     * doesn't place it with {{רשימת_החומרים}}; nothing when nothing is attached.
-     *
-     * @param  array<int, array{name: string, url: string}>  $links
-     * @return array<string, string>
-     */
-    private function materialsBlock(string $body, array $links): array
-    {
-        if (! $links) {
-            return [];
+        if ($personal->isNotEmpty()) {
+            $this->sendError = 'במייל לרשימות תפוצה אי אפשר למלא את השדות '.$personal->implode(', ').' — יש להסיר אותם מהנושא ומהתוכן.';
+
+            return null;
         }
 
-        $heading = str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN) ? '' : '<p style="font-weight:700;">חומרים מצורפים:</p>';
-
-        return [EmailTemplate::MATERIALS_LIST_TOKEN => $heading.BrandedEmail::linksList($links)];
+        return EmailMessage::composed($this->sendSubject, $body, $isHtml, $links, $this->sendAppendList)->html;
     }
 
     /**
@@ -397,19 +433,34 @@ class extends Component
                 @error('sendListIds') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>
             <div class="full">
+                <label for="sendTemplateId">תבנית</label>
+                <select id="sendTemplateId" wire:model.live="sendTemplateId">
+                    <option value="">ללא תבנית — כתיבה חופשית או קובץ HTML</option>
+                    @foreach ($this->templates as $template)
+                        <option value="{{ $template->id }}" wire:key="tpl-{{ $template->id }}">{{ $template->name }}{{ $template->isHtml() ? ' (HTML)' : '' }}</option>
+                    @endforeach
+                </select>
+                <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">בחירת תבנית ממלאת את הנושא והתוכן — אפשר לשנות אותם לפני השליחה, והתבנית בהגדרות לא משתנה. תבניות חדשות מוסיפים בהגדרות ← תבניות דואר.</div>
+            </div>
+            <div class="full">
                 <label for="sendSubject">נושא</label>
                 <input type="text" id="sendSubject" wire:model="sendSubject">
                 @error('sendSubject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>
             <div class="full" role="radiogroup" aria-label="סוג התוכן" style="display:flex; gap:var(--sp-xl); flex-wrap:wrap">
                 <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="text" wire:model.live="sendMode" style="width:auto; margin:0">טקסט בתבנית המיילים של המערכת</label>
-                <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="html" wire:model.live="sendMode" style="width:auto; margin:0">קובץ HTML משלי</label>
+                <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="html" wire:model.live="sendMode" style="width:auto; margin:0">HTML משלי</label>
             </div>
             @if ($sendMode === 'html')
                 <div class="full">
-                    <label for="htmlFile">קובץ HTML</label>
+                    <label for="htmlFile">העלאת קובץ HTML{{ $sendHtml !== '' ? ' (מחליף את הקוד שלמטה)' : '' }}</label>
                     <input type="file" id="htmlFile" wire:model="htmlFile" accept=".html,.htm,text/html">
                     @error('htmlFile') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div class="full">
+                    <label for="sendHtml">קוד ה-HTML</label>
+                    <textarea id="sendHtml" wire:model.blur="sendHtml" rows="10" dir="ltr" placeholder="<html>…</html>" style="font-family:ui-monospace, Menlo, Consolas, monospace; font-size:var(--fs-caption)"></textarea>
+                    <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">נשלח כמו שהוא, בלי מסגרת המיילים של המערכת. אפשר להדביק קוד, להעלות קובץ או לבחור תבנית HTML — ולערוך כאן לפני השליחה.</div>
                 </div>
             @else
                 <div class="full">
@@ -426,7 +477,7 @@ class extends Component
                 x-on:livewire-upload-cancel="uploading = false">
                 <label for="sendFiles">חומרים מצורפים (לא חובה)</label>
                 <input type="file" id="sendFiles" wire:model="sendFiles" multiple>
-                <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint, תמונה, וידאו או שמע — עד 95MB לקובץ. סרטון גדול יותר — כקישור (למטה). במייל יופיע קישור להורדת כל קובץ — במקום <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> אם כתבתם אותו בתוכן או בקובץ ה-HTML, ואחרת בסוף המייל.</div>
+                <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF, Word, PowerPoint, תמונה, וידאו או שמע — עד 95MB לקובץ. סרטון גדול יותר — כקישור (למטה). במייל יופיע קישור להורדת כל קובץ — במקום <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> אם כתבתם אותו בתוכן או בקוד ה-HTML, או בסוף המייל אם סימנתם זאת למטה.</div>
                 <div x-show="uploading" x-cloak class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">מעלה את הקבצים… <span class="ltr-num" x-text="progress + '%'"></span></div>
                 <div x-show="failed" x-cloak style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">העלאת הקובץ נכשלה — ייתכן שהוא גדול מ-95MB (או שכמה קבצים יחד עוברים 100MB), או שהחיבור נקטע. נסו לבחור אותו שוב, או שלחו סרטון גדול כקישור.</div>
                 @error('sendFiles.*') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
@@ -455,8 +506,18 @@ class extends Component
                 @endforeach
                 <button type="button" wire:click="addSendLink" class="btn btn-ghost btn-sm">+ הוספת קישור</button>
             </div>
+            @if (! empty($sendFiles) || ! empty($sendLinks))
+                <div class="full">
+                    @if (str_contains($sendMode === 'html' ? $sendHtml : $sendBody, \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN))
+                        <div class="text-text-secondary" style="font-size:var(--fs-small)">✓ רשימת החומרים תופיע במקום שנקבע בתוכן.</div>
+                    @else
+                        <label style="display:flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="checkbox" wire:model.live="sendAppendList" style="width:auto; margin:0">הוספת רשימת החומרים בסוף המייל</label>
+                        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">בלי סימון (ובלי <span dir="ltr">{{ \App\Models\EmailTemplate::MATERIALS_LIST_TOKEN }}</span> בתוכן) הקבצים והקישורים לא יופיעו במייל.</div>
+                    @endif
+                </div>
+            @endif
             <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile, sendFiles">שליחה לרשימות</button>
+                <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="send, htmlFile, sendFiles, sendTemplateId">שליחה לרשימות</button>
                 <button type="button" class="btn btn-secondary" wire:click="preview" wire:loading.attr="disabled" wire:target="preview, htmlFile, sendFiles">תצוגה מקדימה</button>
             </div>
         </form>

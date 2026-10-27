@@ -177,9 +177,8 @@ class ReferenceDataSettingsTest extends TestCase
         $this->assertSame(\App\Support\EmailMessage::materialReminder($preview['subject'], 'תזכורת לבית ספר אורות', '#')->html, $preview['html']);
     }
 
-    public function test_email_and_document_templates_cannot_be_created_from_the_screen(): void
+    public function test_document_templates_cannot_be_created_from_the_screen(): void
     {
-        $this->actingAs($this->owner)->get('/settings?tab=email-templates')->assertOk()->assertDontSee('+ תבנית חדשה');
         $this->actingAs($this->owner)->get('/settings?tab=document-templates')->assertOk()->assertDontSee('+ תבנית חדשה');
 
         // Saving with no template open finds nothing to update — and creates nothing.
@@ -231,5 +230,61 @@ class ReferenceDataSettingsTest extends TestCase
                 "Unexpected delete route matching '{$fragment}'."
             );
         }
+    }
+
+    public function test_a_named_general_email_template_is_created_edited_as_html_and_deleted(): void
+    {
+        $this->actingAs($this->owner)->get('/settings?tab=email-templates')->assertOk()->assertSee('+ תבנית חדשה');
+
+        $component = Livewire::actingAs($this->owner)->test('settings')
+            ->set('activeTab', 'email-templates')
+            ->call('newEmailTemplate')
+            ->assertSet('selectedEmailTemplateId', 0)
+            ->assertSee('יצירת התבנית')
+            ->set('emailTemplateName', 'ניוזלטר חודשי')
+            ->set('emailTemplateSubject', 'חדשות כפיים')
+            ->set('emailTemplateContent', "שלום לכולן\n{{רשימת_החומרים}}")
+            ->call('saveEmailTemplate')
+            ->assertHasNoErrors();
+
+        $template = EmailTemplate::where('name', 'ניוזלטר חודשי')->firstOrFail();
+        $this->assertSame(EmailTemplate::GENERAL, $template->template_type);
+        $this->assertFalse($template->isHtml());
+        $component->assertSet('selectedEmailTemplateId', $template->id);
+
+        // An uploaded HTML file becomes the content; the preview shows it as is.
+        $html = '<html><body><h1>ניוזלטר</h1>{{רשימת_החומרים}}</body></html>';
+        $component->set('emailTemplateFormat', 'html')
+            ->set('emailTemplateHtmlFile', \Illuminate\Http\UploadedFile::fake()->createWithContent('news.html', $html))
+            ->assertSet('emailTemplateContent', $html)
+            ->assertSee('קוד ה-HTML');
+        $this->assertStringStartsWith('<html><body><h1>ניוזלטר</h1><ul', $component->instance()->emailTemplateMessage()->html);
+        $component->call('saveEmailTemplate')->assertHasNoErrors();
+        $this->assertTrue($template->fresh()->isHtml());
+        $this->assertSame($html, $template->fresh()->content);
+
+        // Deleting asks first.
+        $component->call('deleteEmailTemplate', $template->id);
+        $this->assertNotNull($template->fresh());
+        $component->call('deleteEmailTemplate', $template->id, true)->assertSet('selectedEmailTemplateId', null);
+        $this->assertNull($template->fresh());
+    }
+
+    public function test_only_general_templates_can_be_deleted_and_only_general_or_materials_ones_can_be_html(): void
+    {
+        $lead = EmailTemplate::create(['name' => 'אישור', 'template_type' => 'lead_confirmation', 'subject' => 'ש', 'content' => 'ת', 'is_active' => true]);
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->call('deleteEmailTemplate', $lead->id, true)
+            ->assertForbidden();
+        $this->assertNotNull($lead->fresh());
+
+        Livewire::actingAs($this->owner)->test('settings')
+            ->call('selectEmailTemplate', $lead->id)
+            ->set('emailTemplateFormat', 'html')
+            ->set('emailTemplateContent', '<p>שלום</p>')
+            ->call('saveEmailTemplate')
+            ->assertHasErrors(['emailTemplateFormat']);
+        $this->assertFalse($lead->fresh()->isHtml());
     }
 }

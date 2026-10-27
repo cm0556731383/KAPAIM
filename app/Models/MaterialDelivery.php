@@ -163,7 +163,7 @@ class MaterialDelivery extends Model
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
      * @param  array<int, array{file_reference: string, file_name: string}>  $attachments
      * @param  array<int, array{name: string, url: string}>  $links  sent as-is — e.g. a video on YouTube/Drive too big to upload
-     * @param  array{subject: string, content: string, is_html: bool}|null  $email  this send's wording, as edited on the
+     * @param  array{subject: string, content: string, is_html: bool, append?: list<string>}|null  $email  this send's wording, as edited on the
      *                                                                             customer card (or an uploaded HTML file) — tokens still unrendered;
      *                                                                             null = the 'material_delivery' template as is
      *
@@ -285,14 +285,19 @@ class MaterialDelivery extends Model
      * customer card's preview both build it here.
      *
      * @param  array<int, array{name: string, url: string}>  $links
-     * @param  array{subject: string, content: string, is_html: bool}|null  $email  see sendFor()
+     * @param  array{subject: string, content: string, is_html: bool, append?: list<string>}|null  $email  see sendFor()
      */
     public static function emailMessage(Customer $customer, string $programName, array $links, string $acknowledgeUrl, ?array $email = null): EmailMessage
     {
-        $rendered = ($email ? new EmailTemplate(['subject' => $email['subject'], 'content' => $email['content']]) : self::emailTemplate())
-            ->render(['school_name' => (string) $customer->school?->name, 'program_name' => $programName]);
+        $template = $email ? new EmailTemplate(['subject' => $email['subject'], 'content' => $email['content']]) : self::emailTemplate();
+        $isHtml = (bool) ($email['is_html'] ?? $template->isHtml());
+        $data = ['school_name' => (string) $customer->school?->name, 'program_name' => $programName];
+        $rendered = $template->render($data);
 
-        return EmailMessage::materials($rendered['subject'], $rendered['content'], $links, $acknowledgeUrl, (bool) ($email['is_html'] ?? false));
+        // Inside HTML the values are escaped (a school named "A & B"); the subject stays plain text.
+        $content = $isHtml ? $template->render(array_map('e', $data))['content'] : $rendered['content'];
+
+        return EmailMessage::materials($rendered['subject'], $content, $links, $acknowledgeUrl, $isHtml, $email['append'] ?? []);
     }
 
     /** The business owner's wording (settings → תבניות דואר); the seeded default if it's ever missing. */

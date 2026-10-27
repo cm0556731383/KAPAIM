@@ -18,6 +18,7 @@ use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use Livewire\WithFileUploads;
 
 new
 #[Layout('layouts.app', ['title' => 'הגדרות מערכת — כפיים'])]
@@ -25,6 +26,7 @@ class extends Component
 {
     use Notifies;
     use PreviewsEmails;
+    use WithFileUploads;
 
     // ===== מקורות ליד (LEAD_SOURCE) =====
     public string $leadSourceName = '';
@@ -43,12 +45,16 @@ class extends Component
     public array $businessEntityClassifications = ['עוסק פטור', 'עוסק מורשה', 'חברה בעמ'];
 
     // ===== תבניות דואר (EMAIL_TEMPLATE) =====
-    /** The template open in the editor — null when none is chosen. */
+    /** The template open in the editor — null when none is chosen, 0 for a new one not saved yet. */
     public ?int $selectedEmailTemplateId = null;
     public string $emailTemplateName = '';
     public string $emailTemplateType = 'general';
     public string $emailTemplateSubject = '';
     public string $emailTemplateContent = '';
+    /** EmailTemplate::FORMAT_TEXT / FORMAT_HTML — HTML only for EmailTemplate::HTML_TYPES. */
+    public string $emailTemplateFormat = 'text';
+    /** An uploaded HTML file — read into $emailTemplateContent as soon as it arrives. */
+    public $emailTemplateHtmlFile = null;
 
     // ===== אינטגרציות חיצוניות (EXTERNAL_INTEGRATION_SETTING, build-plan 12) =====
     public string $smoveApiKey = '';
@@ -439,7 +445,7 @@ class extends Component
 
     // ----- תבניות דואר -----
 
-    /** Opens a template in the editor below the list — new templates aren't created from the screen. */
+    /** Opens a template in the editor below the list. */
     public function selectEmailTemplate(int $id): void
     {
         $this->resetErrorBag();
@@ -450,12 +456,31 @@ class extends Component
         $this->emailTemplateType = $template->template_type;
         $this->emailTemplateSubject = (string) $template->subject;
         $this->emailTemplateContent = (string) $template->content;
+        $this->emailTemplateFormat = $template->isHtml() ? EmailTemplate::FORMAT_HTML : EmailTemplate::FORMAT_TEXT;
+        $this->emailTemplateHtmlFile = null;
+    }
+
+    /** "+ תבנית חדשה" — an empty general template in the editor, created on "שמירה". */
+    public function newEmailTemplate(): void
+    {
+        $this->closeEmailTemplate();
+        $this->selectedEmailTemplateId = 0;
     }
 
     public function closeEmailTemplate(): void
     {
         $this->resetErrorBag();
-        $this->reset(['selectedEmailTemplateId', 'emailTemplateName', 'emailTemplateType', 'emailTemplateSubject', 'emailTemplateContent']);
+        $this->reset(['selectedEmailTemplateId', 'emailTemplateName', 'emailTemplateType', 'emailTemplateSubject', 'emailTemplateContent', 'emailTemplateFormat', 'emailTemplateHtmlFile']);
+    }
+
+    /** The uploaded HTML file becomes the template's content (still editable as code before saving). */
+    public function updatedEmailTemplateHtmlFile(): void
+    {
+        $this->validate(['emailTemplateHtmlFile' => ['required', 'file', 'max:2048', 'mimes:html,htm']], [], ['emailTemplateHtmlFile' => 'קובץ HTML']);
+
+        $this->emailTemplateContent = (string) file_get_contents($this->emailTemplateHtmlFile->getRealPath());
+        $this->emailTemplateFormat = EmailTemplate::FORMAT_HTML;
+        $this->emailTemplateHtmlFile = null;
     }
 
     /**
@@ -466,36 +491,67 @@ class extends Component
      */
     public function saveEmailTemplate(ActivityLogger $activityLogger): void
     {
-        $template = EmailTemplate::findOrFail($this->selectedEmailTemplateId);
+        // A new template is always a general one — the automatic emails already exist.
+        $template = $this->selectedEmailTemplateId === 0
+            ? new EmailTemplate(['template_type' => EmailTemplate::GENERAL, 'is_active' => true])
+            : EmailTemplate::findOrFail($this->selectedEmailTemplateId);
         $isFixed = in_array($template->template_type, EmailTemplate::FIXED_TYPES, true);
+        $type = $template->exists && ! $isFixed ? $this->emailTemplateType : $template->template_type;
 
         $data = $this->validate([
             'emailTemplateName' => ['required', 'string', 'max:255'],
-            'emailTemplateType' => $isFixed ? ['nullable'] : ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template->template_type]))],
+            'emailTemplateType' => $template->exists && ! $isFixed ? ['required', 'in:'.implode(',', array_unique([...array_keys(EmailTemplate::TYPE_LABELS), (string) $template->template_type]))] : ['nullable'],
             'emailTemplateSubject' => ['required', 'string', 'max:255'],
             'emailTemplateContent' => ['required', 'string'],
-        ], [], [
+            'emailTemplateFormat' => ['required', in_array($type, EmailTemplate::HTML_TYPES, true) ? 'in:text,html' : 'in:text'],
+        ], ['emailTemplateFormat.in' => 'תבנית HTML יכולה לשמש רק כתבנית כללית או כמייל שליחת החומרים.'], [
             'emailTemplateName' => 'שם התבנית',
             'emailTemplateType' => 'שימוש',
             'emailTemplateSubject' => 'נושא המייל',
             'emailTemplateContent' => 'גוף המייל',
+            'emailTemplateFormat' => 'סוג התוכן',
         ]);
 
-        $values = [
+        if ($data['emailTemplateFormat'] === EmailTemplate::FORMAT_HTML && trim(strip_tags($data['emailTemplateContent'])) === '' && ! str_contains($data['emailTemplateContent'], '<img')) {
+            $this->addError('emailTemplateContent', 'קוד ה-HTML ריק.');
+
+            return;
+        }
+
+        $isNew = ! $template->exists;
+        $template->fill([
             'name' => $data['emailTemplateName'],
             'subject' => $data['emailTemplateSubject'],
             'content' => $data['emailTemplateContent'],
-        ];
+            'content_format' => $data['emailTemplateFormat'],
+            'template_type' => $type,
+        ])->save();
+        $activityLogger->log($isNew ? 'email_template.created' : 'email_template.updated', ($isNew ? 'נוצרה תבנית המייל' : 'עודכן נוסח המייל')." \"{$template->name}\"");
 
-        if (! $isFixed) {
-            $values['template_type'] = $data['emailTemplateType'];
+        $this->selectedEmailTemplateId = $template->id;
+        unset($this->emailTemplates);
+        $this->notifySuccess($isNew ? 'התבנית נוצרה.' : 'נוסח המייל נשמר.');
+    }
+
+    /** Only a general template can be deleted — the others are the emails the system sends. Asks first. */
+    public function deleteEmailTemplate(int $id, ActivityLogger $activityLogger, bool $confirmed = false): void
+    {
+        $template = EmailTemplate::findOrFail($id);
+        abort_unless($template->template_type === EmailTemplate::GENERAL, 403);
+
+        if (! $confirmed) {
+            $question = "למחוק את התבנית \"{$template->name}\"? מיילים שכבר נשלחו בה לא יושפעו.";
+            $this->js('confirmDialog('.json_encode($question, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).").then((ok) => ok && \$wire.deleteEmailTemplate({$id}, true))");
+
+            return;
         }
 
-        $template->update($values);
-        $activityLogger->log('email_template.updated', "עודכן נוסח המייל \"{$template->name}\"");
+        $template->delete();
+        $activityLogger->log('email_template.deleted', "נמחקה תבנית המייל \"{$template->name}\"");
 
+        $this->closeEmailTemplate();
         unset($this->emailTemplates);
-        $this->notifySuccess('נוסח המייל נשמר.');
+        $this->notifySuccess('התבנית נמחקה.');
     }
 
     public function toggleEmailTemplate(int $id, ActivityLogger $activityLogger): void
@@ -559,11 +615,16 @@ class extends Component
                 'blocks' => [EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => ['label' => 'כפתור "קיבלתי את החומרים"', 'preview' => $receivedButton]],
                 'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
             ],
+            EmailTemplate::GENERAL => [
+                'usage' => 'כללי',
+                'intro' => 'תבנית שהמערכת לא שולחת אוטומטית — בוחרים אותה בשליחת מייל לרשימות תפוצה או בשליחת חומרים מכרטיס הלקוחה, ואפשר לשנות את הנוסח לפני כל שליחה. שם בית הספר והתוכנית מתמלאים רק בשליחת חומרים (בשליחה לרשימות אין אותם).',
+                'fields' => ['שם_בית_הספר' => 'שם בית הספר', 'תוכנית' => 'תוכנית'],
+                'blocks' => [EmailTemplate::MATERIALS_LIST_TOKEN => ['label' => 'רשימת החומרים', 'preview' => '<ul style="margin:0; padding-inline-start:20px"><li><a style="color:#286E9A; font-weight:600">חוברת לתלמידה.pdf</a></li><li><a style="color:#286E9A; font-weight:600">סרטון הדרכה</a></li></ul>']],
+                'example' => ['school_name' => 'בית ספר אורות', 'program_name' => 'אלול תשפ"ו'],
+            ],
             default => [
                 'usage' => EmailTemplate::TYPE_LABELS[$this->emailTemplateType] ?? 'כללי',
-                'intro' => $this->emailTemplateType === 'lead_confirmation'
-                    ? 'נשלח אוטומטית לאיש הקשר כשנכנס ליד חדש מדף הנחיתה. השדות בסוגריים המסולסלים יתמלאו בפרטי הליד.'
-                    : 'תבנית כללית — המערכת לא שולחת אותה אוטומטית.',
+                'intro' => 'נשלח אוטומטית לאיש הקשר כשנכנס ליד חדש מדף הנחיתה. השדות בסוגריים המסולסלים יתמלאו בפרטי הליד.',
                 'fields' => ['שם_איש_הקשר' => 'שם איש הקשר', 'שם_בית_הספר' => 'שם בית הספר'],
                 'blocks' => [],
                 'example' => ['contact_name' => 'רחל כהן', 'school_name' => 'בית ספר אורות'],
@@ -578,21 +639,27 @@ class extends Component
      */
     public function previewEmailTemplateEmail(): void
     {
+        $this->showEmailPreview($this->emailTemplateMessage(), null, 'הנוסח כפי שהוא כרגע בעורך (גם לפני שמירה), עם פרטים לדוגמה. בתצוגה ובמייל הבדיקה הכפתורים והקישורים אינם פעילים.');
+    }
+
+    /** The open template as the email that goes out (the real send's EmailMessage builder), with the example values. */
+    public function emailTemplateMessage(): \App\Support\EmailMessage
+    {
         $rendered = $this->emailTemplatePreview();
         $example = fn (string $name) => ['name' => $name, 'url' => '#'];
+        $isHtml = $this->emailTemplateFormat === EmailTemplate::FORMAT_HTML && in_array($this->emailTemplateType, EmailTemplate::HTML_TYPES, true);
 
-        $message = match ($this->emailTemplateType) {
+        return match ($this->emailTemplateType) {
             EmailTemplate::SUPPLIER_INVOICE_REQUEST => \App\Support\EmailMessage::invoiceRequest($rendered['subject'], $rendered['content'], '#'),
             EmailTemplate::SUPPLIER_INVOICES_REQUEST => \App\Support\EmailMessage::invoicesRequest($rendered['subject'], $rendered['content'], [
                 ['label' => 'תשלום מתאריך 03/09/2026 · ₪1,250', 'url' => '#'],
                 ['label' => 'תשלום מתאריך 21/09/2026 · ₪480', 'url' => '#'],
             ]),
-            EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')], '#'),
+            EmailTemplate::MATERIAL_DELIVERY => \App\Support\EmailMessage::materials($rendered['subject'], $rendered['content'], [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')], '#', $isHtml),
             EmailTemplate::MATERIAL_REMINDER => \App\Support\EmailMessage::materialReminder($rendered['subject'], $rendered['content'], '#'),
+            EmailTemplate::GENERAL => \App\Support\EmailMessage::composed($rendered['subject'], $rendered['content'], $isHtml, [$example('חוברת לתלמידה.pdf'), $example('סרטון הדרכה')]),
             default => \App\Support\EmailMessage::transactional($rendered['subject'], $rendered['content']),
         };
-
-        $this->showEmailPreview($message, null, 'הנוסח כפי שהוא כרגע בעורך (גם לפני שמירה), עם פרטים לדוגמה. בתצוגה ובמייל הבדיקה הכפתורים והקישורים אינם פעילים.');
     }
 
     /** The open template filled with the example values. */
@@ -622,7 +689,8 @@ class extends Component
         return collect(preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE))
             ->map(fn (string $part) => $blocks[$part] ?? $text($part))
             ->implode('')
-            .$blocks->reject(fn ($html, $token) => str_contains($content, $token))->implode('');
+            // The materials parts are added at the end only when chosen at send time.
+            .(in_array($this->emailTemplateType, [EmailTemplate::MATERIAL_DELIVERY, EmailTemplate::GENERAL], true) ? '' : $blocks->reject(fn ($html, $token) => str_contains($content, $token))->implode(''));
     }
 
     // ----- אינטגרציות חיצוניות -----
@@ -913,8 +981,9 @@ class extends Component
         <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap">
             <div>
                 <h2>תבניות דואר</h2>
-                <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:0">מיילים שהמערכת שולחת בעצמה — לא מסמכים עסקיים ולא דיוור לרשימות תפוצה. בוחרים תבנית כדי לערוך אותה.</p>
+                <p class="hint text-text-secondary" style="font-size:var(--fs-caption); margin:0">מיילים שהמערכת שולחת בעצמה, ותבניות כלליות שבוחרים בשליחה לרשימות תפוצה ובשליחת חומרים. בוחרים תבנית כדי לערוך אותה.</p>
             </div>
+            <button type="button" wire:click="newEmailTemplate" class="btn btn-primary btn-sm">+ תבנית חדשה</button>
         </div>
 
         <div class="card" style="padding:0; overflow:hidden; margin-bottom:var(--sp-md)">
@@ -925,7 +994,7 @@ class extends Component
                     @foreach ($this->emailTemplates as $template)
                         <tr wire:key="email-template-{{ $template->id }}" wire:click="selectEmailTemplate({{ $template->id }})" style="cursor:pointer; {{ $selectedEmailTemplateId === $template->id ? 'background:var(--color-background)' : '' }}">
                             <td style="font-weight:{{ $selectedEmailTemplateId === $template->id ? '700' : '400' }}">{{ $template->name }}</td>
-                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', EmailTemplate::MATERIAL_DELIVERY => 'שליחת חומרי לימוד', EmailTemplate::MATERIAL_REMINDER => 'תזכורת על חומרים שלא אושרו', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}</td>
+                            <td>{{ match ($template->template_type) { EmailTemplate::SUPPLIER_INVOICE_REQUEST => 'בקשת חשבונית מספק', EmailTemplate::SUPPLIER_INVOICES_REQUEST => 'בקשת כמה חשבוניות מספק', EmailTemplate::MATERIAL_DELIVERY => 'שליחת חומרי לימוד', EmailTemplate::MATERIAL_REMINDER => 'תזכורת על חומרים שלא אושרו', default => EmailTemplate::TYPE_LABELS[$template->template_type] ?? 'כללי' } }}@if ($template->isHtml()) <span class="badge badge-info">HTML</span>@endif</td>
                             <td class="text-text-secondary">{{ \Illuminate\Support\Str::limit($template->subject, 60) }}</td>
                             <td>
                                 @if ($template->is_active)
@@ -945,7 +1014,9 @@ class extends Component
             @php($spec = $this->emailTemplateSpec())
             @php($preview = $this->emailTemplatePreview())
             @php($openTemplate = $this->emailTemplates->firstWhere('id', $selectedEmailTemplateId))
-            @php($isFixed = in_array($emailTemplateType, EmailTemplate::FIXED_TYPES, true))
+            @php($isFixed = in_array($emailTemplateType, EmailTemplate::FIXED_TYPES, true) || $selectedEmailTemplateId === 0)
+            @php($canBeHtml = in_array($emailTemplateType, EmailTemplate::HTML_TYPES, true))
+            @php($isHtml = $canBeHtml && $emailTemplateFormat === EmailTemplate::FORMAT_HTML)
             <div class="card" wire:key="email-template-editor-{{ $selectedEmailTemplateId }}" x-data="{ target: null, insert(token) {
                     const el = this.target ?? $refs.body;
                     const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? start;
@@ -956,12 +1027,15 @@ class extends Component
                 } }">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-md); flex-wrap:wrap; margin-bottom:var(--sp-sm)">
                     <div>
-                        <h3 style="margin:0 0 2px">{{ $openTemplate?->name }}</h3>
+                        <h3 style="margin:0 0 2px">{{ $openTemplate?->name ?? 'תבנית חדשה' }}</h3>
                         <p class="text-text-secondary" style="margin:0; font-size:var(--fs-small)">{{ $spec['intro'] }}</p>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px">
                         @if ($openTemplate && ! in_array($openTemplate->template_type, EmailTemplate::ALWAYS_ACTIVE_TYPES, true))
                             <button type="button" wire:click="toggleEmailTemplate({{ $openTemplate->id }})" class="btn btn-ghost btn-sm">{{ $openTemplate->is_active ? 'השבתה' : 'הפעלה' }}</button>
+                        @endif
+                        @if ($openTemplate?->template_type === EmailTemplate::GENERAL)
+                            <button type="button" wire:click="deleteEmailTemplate({{ $openTemplate->id }})" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                         @endif
                         <button type="button" wire:click="closeEmailTemplate" class="btn btn-ghost btn-sm">סגירה</button>
                     </div>
@@ -985,6 +1059,7 @@ class extends Component
                                 @endif
                             </select>
                             @error('emailTemplateType') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            @unless ($canBeHtml) @error('emailTemplateFormat') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror @endunless
                         </div>
                     @endunless
                     <div class="full">
@@ -992,10 +1067,27 @@ class extends Component
                         <input type="text" id="emailTemplateSubject" wire:model.live.debounce.400ms="emailTemplateSubject" x-on:focus="target = $el">
                         @error('emailTemplateSubject') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
+                    @if ($canBeHtml)
+                        <div class="full" role="radiogroup" aria-label="סוג התוכן" style="display:flex; gap:var(--sp-xl); flex-wrap:wrap">
+                            <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="text" wire:model.live="emailTemplateFormat" style="width:auto; margin:0">טקסט בתבנית המיילים של המערכת</label>
+                            <label style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer"><input type="radio" value="html" wire:model.live="emailTemplateFormat" style="width:auto; margin:0">HTML משלי</label>
+                        </div>
+                        @error('emailTemplateFormat') <div class="full" style="color: var(--color-error); font-size: var(--fs-caption);">{{ $message }}</div> @enderror
+                    @endif
+                    @if ($isHtml)
+                        <div class="full">
+                            <label for="emailTemplateHtmlFile">העלאת קובץ HTML (מחליף את הקוד שלמטה)</label>
+                            <input type="file" id="emailTemplateHtmlFile" wire:model="emailTemplateHtmlFile" accept=".html,.htm,text/html">
+                            @error('emailTemplateHtmlFile') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                    @endif
                     <div class="full">
-                        <label for="emailTemplateContent">גוף המייל</label>
-                        <textarea id="emailTemplateContent" x-ref="body" wire:model.live.debounce.400ms="emailTemplateContent" x-on:focus="target = $el" rows="10"></textarea>
+                        <label for="emailTemplateContent">{{ $isHtml ? 'קוד ה-HTML' : 'גוף המייל' }}</label>
+                        <textarea id="emailTemplateContent" x-ref="body" wire:model.live.debounce.400ms="emailTemplateContent" x-on:focus="target = $el" rows="{{ $isHtml ? 14 : 10 }}" @if ($isHtml) dir="ltr" style="font-family:ui-monospace, Menlo, Consolas, monospace; font-size:var(--fs-caption)" @endif></textarea>
                         @error('emailTemplateContent') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        @if ($isHtml)
+                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">ה-HTML נשלח כמו שהוא, בלי מסגרת המיילים של המערכת.</div>
+                        @endif
                     </div>
                     <div class="full">
                         <label>הוספת שדה (נכנס במקום הסמן)</label>
@@ -1008,18 +1100,24 @@ class extends Component
                             @endforeach
                         </div>
                         @if ($spec['blocks'])
-                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">רכיב שלא מופיע בטקסט יתווסף בסוף המייל.</div>
+                            <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">{{ in_array($emailTemplateType, [EmailTemplate::MATERIAL_DELIVERY, EmailTemplate::GENERAL], true) ? 'רכיב שלא מופיע בנוסח לא ייכלל במייל — אלא אם מסמנים בשליחה עצמה להוסיף אותו בסוף.' : 'רכיב שלא מופיע בטקסט יתווסף בסוף המייל.' }}</div>
                         @endif
                     </div>
                     <div class="full">
                         <label>תצוגה מקדימה (עם פרטים לדוגמה)</label>
-                        <div style="border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-md); background:var(--color-background)">
+                        @if ($isHtml)
                             <div style="font-weight:600; margin-bottom:var(--sp-sm)">{{ $preview['subject'] }}</div>
-                            {!! $this->emailTemplatePreviewHtml() !!}
-                        </div>
+                            {{-- sandbox: the template's scripts never run inside the app. --}}
+                            <iframe sandbox srcdoc="{{ $this->emailTemplateMessage()->html }}" title="תצוגה מקדימה של התבנית" style="width:100%; height:420px; border:1px solid var(--color-border); border-radius:var(--radius-control); background:#FFFFFF"></iframe>
+                        @else
+                            <div style="border:1px solid var(--color-border); border-radius:var(--radius-control); padding:var(--sp-md); background:var(--color-background)">
+                                <div style="font-weight:600; margin-bottom:var(--sp-sm)">{{ $preview['subject'] }}</div>
+                                {!! $this->emailTemplatePreviewHtml() !!}
+                            </div>
+                        @endif
                     </div>
                     <div class="full" style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
-                        <button type="submit" class="btn btn-primary">שמירת נוסח המייל</button>
+                        <button type="submit" class="btn btn-primary">{{ $selectedEmailTemplateId === 0 ? 'יצירת התבנית' : 'שמירת נוסח המייל' }}</button>
                         <button type="button" class="btn btn-secondary" wire:click="previewEmailTemplateEmail">תצוגה מקדימה מדויקת ושליחת בדיקה</button>
                     </div>
                 </form>

@@ -44,16 +44,41 @@ final class EmailMessage
      * inside the branded shell — or, when $isHtml, her own uploaded HTML used
      * as is. Either way the links list and the "received" button
      * (MaterialDelivery::acknowledge(), which also stops the reminder)
-     * replace their tokens, or are added at the end.
+     * replace their tokens; one the body doesn't place is added at the end
+     * only when $append names it (owner's call: nothing is added by default).
+     *
+     * @param  array<int, array{name: string, url: string}>  $links
+     * @param  list<string>  $append  tokens to add at the end when the body doesn't place them
+     */
+    public static function materials(string $subject, string $body, array $links, string $acknowledgeUrl, bool $isHtml = false, array $append = []): self
+    {
+        $blocks = array_filter([
+            EmailTemplate::MATERIALS_LIST_TOKEN => BrandedEmail::linksList($links),
+            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'),
+        ], fn (string $token) => str_contains($body, $token) || in_array($token, $append, true), ARRAY_FILTER_USE_KEY);
+
+        return new self($subject, $isHtml
+            ? BrandedEmail::htmlWithBlocks($body, $blocks)
+            : BrandedEmail::wrap(BrandedEmail::textWithBlocks($body, $blocks)));
+    }
+
+    /**
+     * An email composed by hand (a mailing-list send, a general template):
+     * the text inside the branded shell, or the owner's own HTML as is. The
+     * attached materials replace {{רשימת_החומרים}}, or — only when
+     * $appendList — go at the end under their own heading; nothing is added
+     * when nothing is attached.
      *
      * @param  array<int, array{name: string, url: string}>  $links
      */
-    public static function materials(string $subject, string $body, array $links, string $acknowledgeUrl, bool $isHtml = false): self
+    public static function composed(string $subject, string $body, bool $isHtml, array $links = [], bool $appendList = false): self
     {
-        $blocks = [
-            EmailTemplate::MATERIALS_LIST_TOKEN => BrandedEmail::linksList($links),
-            EmailTemplate::ACKNOWLEDGE_BUTTON_TOKEN => BrandedEmail::primaryButton($acknowledgeUrl, 'קיבלתי את החומרים'),
-        ];
+        $blocks = [];
+
+        if ($links && ($appendList || str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN))) {
+            $heading = str_contains($body, EmailTemplate::MATERIALS_LIST_TOKEN) ? '' : '<p style="font-weight:700;">חומרים מצורפים:</p>';
+            $blocks[EmailTemplate::MATERIALS_LIST_TOKEN] = $heading.BrandedEmail::linksList($links);
+        }
 
         return new self($subject, $isHtml
             ? BrandedEmail::htmlWithBlocks($body, $blocks)

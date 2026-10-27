@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * (matching ReferenceDataSeeder's seeded 'אישור קליטת ליד' template content
  * exactly), used by Lead::createFromLandingPage() (FR-1.18).
  */
-#[Fillable(['name', 'template_type', 'subject', 'content', 'is_active'])]
+#[Fillable(['name', 'template_type', 'subject', 'content', 'content_format', 'is_active'])]
 class EmailTemplate extends Model
 {
     use HasFactory;
@@ -30,6 +30,21 @@ class EmailTemplate extends Model
         'lead_confirmation' => 'אישור קליטת ליד (נשלח אוטומטית)',
         'general' => 'כללי',
     ];
+
+    /** A template nothing sends automatically — created, named and deleted in settings, picked when sending to mailing lists or sending materials. */
+    public const GENERAL = 'general';
+
+    /** The template's text goes inside the branded shell (BrandedEmail::wrap()). */
+    public const FORMAT_TEXT = 'text';
+
+    /** The template is the owner's own HTML (typed or uploaded), sent as is. */
+    public const FORMAT_HTML = 'html';
+
+    /** The types whose template may be HTML — the others are text only. */
+    public const HTML_TYPES = [self::GENERAL, self::MATERIAL_DELIVERY];
+
+    /** Placeholders filled per customer — a mailing-list send can't fill them. */
+    public const PERSONAL_PLACEHOLDERS = ['שם_איש_הקשר', 'שם_בית_הספר', 'תוכנית'];
 
     /**
      * The Hebrew placeholders a template's subject/content can use, mapped to
@@ -99,6 +114,23 @@ class EmailTemplate extends Model
 
     /** Emails that are always sent — settings offers no disable button for them. */
     public const ALWAYS_ACTIVE_TYPES = [self::MATERIAL_DELIVERY];
+
+    public function isHtml(): bool
+    {
+        return $this->content_format === self::FORMAT_HTML;
+    }
+
+    /**
+     * The templates offered when composing an email by hand: the active
+     * general ones, plus $alsoTypes (e.g. the materials email on the customer card).
+     *
+     * @param  list<string>  $alsoTypes
+     */
+    public static function pickable(array $alsoTypes = [])
+    {
+        return self::whereIn('template_type', [self::GENERAL, ...$alsoTypes])->where('is_active', true)->orderBy('name')->get()
+            ->sortBy(fn (self $template) => $template->template_type === self::GENERAL)->values();
+    }
 
     public static function materialDelivery(): ?self
     {
