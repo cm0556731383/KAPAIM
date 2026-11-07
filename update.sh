@@ -32,6 +32,8 @@ step "עדכון מסד הנתונים והפעלה מחדש"
 compose up -d
 compose exec -T app php artisan migrate --force
 compose exec -T app php artisan optimize:clear
-compose restart queue scheduler
+# nginx resolves the app container once at start; a rebuilt app gets a new
+# address, so without this restart the site answers 502.
+compose restart queue scheduler nginx
 
 step "העדכון הושלם"
