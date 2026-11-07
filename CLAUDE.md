@@ -26,14 +26,19 @@ The user is the business owner, not a developer: talk to her in Hebrew, plainly.
    - For a move: where the old server is. You need a bundle made there by
      `./move-export.sh` (step 5). If you can't reach the old server, ask her to run it and copy the file over.
 2. **Prerequisites:** `docker info` and `git --version` (install per DEPLOY.md §1 if missing).
-   Ports 80/443 must be free for the web server, and `APP_PORT` (default 8090) for the app:
-   `ss -ltn`. If 8090 is taken, set `APP_PORT` in `.env` after step 3 creates it, then `docker compose up -d --force-recreate`.
+   Check ports with `ss -ltnp`: `APP_PORT` (default 8090) must be free for the app. If it's taken,
+   **before** `install.sh`: `cp .env.example .env` and set `APP_PORT` (and `CONTAINER_PREFIX` if
+   containers named `crm_*` already exist, `docker ps -a`). install.sh keeps that `.env` and fills in
+   the DB password and APP_KEY. Note who holds 80/443 for step 4: nothing, nginx, or something else.
 3. **Install:** `git clone <url> ~/kapaim && cd ~/kapaim && ./install.sh <admin-email> https://<domain>`.
    It builds the containers, installs packages, builds CSS/JS, migrates, seeds the base data
    (`InstallSeeder`) and creates the admin. **It prints the admin password once — give it to the user.**
    Re-running it is safe.
-4. **HTTPS:** Caddy in front of `127.0.0.1:$APP_PORT`, exactly as in DEPLOY.md §4
-   (keep `max_size 100MB` — material uploads go up to 95MB). Check that
+4. **HTTPS:** a reverse proxy in front of `127.0.0.1:$APP_PORT`, as in DEPLOY.md §4.
+   Ports 80/443 free → Caddy (option A). nginx already on the host (other sites) → add a
+   server block + certbot (option B); never replace the existing sites. Either way keep
+   the 100MB body limit (material uploads go up to 95MB) and pass `X-Forwarded-Proto`.
+   DNS must point at this server before the certificate is issued. Check that
    `curl -sI https://<domain>/login` returns 200. If Cloudflare proxies the domain, its SSL mode must be **Full**.
 5. **Moving data** (only for a move). On the **old** server, `./move-export.sh` stops its
    queue and scheduler, so nothing goes out twice, and writes `backups/kapaim-move_….tar.gz`.

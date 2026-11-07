@@ -51,13 +51,19 @@ fi
 if [[ ! -f .env ]]; then
     step "יצירת קובץ .env"
     cp .env.example .env
-    DB_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
     sed -i \
-        -e "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASSWORD}|" \
         -e "s|^APP_UID=.*|APP_UID=${APP_UID}|" \
         -e "s|^APP_GID=.*|APP_GID=${APP_GID}|" \
         .env
     [[ "${APP_UID}" == "$(id -u)" ]] || chown "${APP_UID}:${APP_GID}" .env
+fi
+
+# A .env made by hand from .env.example (e.g. to change APP_PORT first) has an
+# empty DB_PASSWORD, and postgres refuses to start without one — so an empty
+# value always means the database was never created and it is safe to set.
+if grep -qE '^DB_PASSWORD=$' .env; then
+    DB_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+    sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASSWORD}|" .env
 fi
 
 if [[ -n "${SITE_URL}" ]]; then

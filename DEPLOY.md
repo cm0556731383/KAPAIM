@@ -32,6 +32,10 @@ cd kapaim
 
 ## 3. התקנה
 
+**אם פורט 8090 כבר תפוס בשרת** (`ss -ltn | grep 8090`), לפני ההתקנה:
+`cp .env.example .env` ומשנים בו את `APP_PORT` לפורט פנוי (למשל 8091).
+הסקריפט ישאיר את הקובץ וישלים בו את הסיסמאות.
+
 פקודה אחת — עם המייל של המשתמשת הראשונה וכתובת האתר:
 
 ```bash
@@ -51,7 +55,10 @@ cd kapaim
 ## 4. חיבור הדומיין עם HTTPS
 
 המערכת מאזינה רק בתוך השרת (פורט 8090), ושרת אינטרנט מקבל את הגלישה מבחוץ
-עם תעודת SSL. הדרך הפשוטה — Caddy, שמנפיק ומחדש את התעודה לבד:
+עם תעודת SSL. לפני כן הדומיין צריך כבר להצביע לשרת (רשומת DNS).
+בודקים מי תופס את פורטים 80/443: `sudo ss -ltnp | grep -E ':(80|443) '`.
+
+**אפשרות א' — הפורטים פנויים: Caddy**, שמנפיק ומחדש את התעודה לבד:
 
 ```bash
 sudo apt-get install -y caddy
@@ -64,8 +71,37 @@ echo 'crm.example.co.il {
 sudo systemctl reload caddy
 ```
 
-(מחליפים את `crm.example.co.il` בדומיין האמיתי. אם הדומיין עובר דרך
-Cloudflare עם ענן כתום, יש להגדיר שם SSL במצב **Full**.)
+**אפשרות ב' — כבר יש nginx בשרת** (אתרים אחרים): מוסיפים לו אתר ותעודה
+מ-Let's Encrypt, בלי לגעת באתרים הקיימים:
+
+```bash
+sudo apt-get install -y certbot python3-certbot-nginx
+echo 'server {
+    listen 80;
+    listen [::]:80;
+    server_name crm.example.co.il;
+    client_max_body_size 100M;
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}' | sudo tee /etc/nginx/sites-available/crm.example.co.il
+sudo ln -s /etc/nginx/sites-available/crm.example.co.il /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d crm.example.co.il --redirect
+```
+
+certbot מוסיף את ה-HTTPS לקובץ ומחדש את התעודה אוטומטית.
+(כך מותקן השרת הנוכחי, new.chanimeir.work.)
+
+(בשתי האפשרויות מחליפים את `crm.example.co.il` בדומיין האמיתי, ואת `8090` אם
+שיניתם את `APP_PORT`. אם הדומיין עובר דרך Cloudflare עם ענן כתום, יש להגדיר
+שם SSL במצב **Full**.)
 
 עכשיו נכנסים לכתובת האתר ומתחברים עם המייל והסיסמה מסעיף 3.
 
