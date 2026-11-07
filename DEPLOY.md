@@ -97,7 +97,6 @@ sudo certbot --nginx -d crm.example.co.il --redirect
 ```
 
 certbot מוסיף את ה-HTTPS לקובץ ומחדש את התעודה אוטומטית.
-(כך מותקן השרת הנוכחי, new.chanimeir.work.)
 
 (בשתי האפשרויות מחליפים את `crm.example.co.il` בדומיין האמיתי, ואת `8090` אם
 שיניתם את `APP_PORT`. אם הדומיין עובר דרך Cloudflare עם ענן כתום, יש להגדיר

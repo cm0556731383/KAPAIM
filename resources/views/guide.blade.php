@@ -138,7 +138,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <!-- 1 -->
 <section class="chapter" id="login">
   <h2><span class="num">1</span>כניסה למערכת</h2>
-  <p class="lead-text">המערכת זמינה בכתובת <a href="https://new.chanimeir.work">new.chanimeir.work</a> מכל מחשב, טאבלט או טלפון.</p>
+  <p class="lead-text">המערכת זמינה בכתובת @endverbatim<a href="{{ url('/') }}">{{ parse_url(url('/'), PHP_URL_HOST) }}</a>@verbatim מכל מחשב, טאבלט או טלפון.</p>
   <ol class="steps">
     <li>מזינים את <b class="ui">אימייל</b> ואת ה<b class="ui">סיסמה</b> שקיבלת מבעלת העסק.</li>
     <li>אפשר לסמן <b class="ui">זכרי אותי</b> כדי להישאר מחוברת במחשב הזה.</li>
