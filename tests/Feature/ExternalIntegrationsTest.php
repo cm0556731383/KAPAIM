@@ -266,16 +266,11 @@ class ExternalIntegrationsTest extends TestCase
     }
 
     /**
-     * Regression test for the 2026-09-06 finding: Smove resets an
-     * already-confirmed contact's canReceiveEmails back to false whenever a
-     * POST /Contacts call includes lists_ToSubscribe — even for a list the
-     * contact was never on before. MailingMembership::pushToSmove() must
-     * therefore never issue a 'join' call at all once
-     * SmoveClient::hasConfirmedConsent() says the contact is already
-     * confirmed — joining a brand-new list is still recorded locally, just
-     * never mirrored to Smove.
+     * 2026-11-07 (business owner's decision): a contact that already exists
+     * in Smove with confirmed consent is still pushed to Smove on join, so it
+     * gets added to the system's list too.
      */
-    public function test_an_already_confirmed_smove_contact_is_never_re_subscribed(): void
+    public function test_an_already_confirmed_smove_contact_is_still_pushed_on_join(): void
     {
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
 
@@ -302,8 +297,8 @@ class ExternalIntegrationsTest extends TestCase
                 ->where('membership_status', MailingMembership::STATUS_ACTIVE)
                 ->exists(),
         );
-        // ...but no new Smove push was attempted (would have reset consent).
-        $this->assertSame($joinsBefore, ExternalOperation::where('operation_type', 'mailing_list_join')->count());
+        // ...and pushed to Smove as well.
+        $this->assertSame($joinsBefore + 1, ExternalOperation::where('operation_type', 'mailing_list_join')->count());
     }
 
     /** Since 2026-10-14 every join targets the one Smove list set in the Smove integration setting. */

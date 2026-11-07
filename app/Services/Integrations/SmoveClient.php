@@ -101,10 +101,9 @@ class SmoveClient
      * survive: every list included in the *same* request as the one that
      * earns the contact's first confirmation stays confirmed together —
      * one click covers the whole set (also confirmed empirically,
-     * 2026-09-06). So a 'join' call must never be made at all once
-     * hasConfirmedConsent() is true (see that method and its one caller,
-     * MailingMembership::pushToSmove()) — and while it's still false, that
-     * caller passes EVERY mailing list this app currently knows about here,
+     * 2026-09-06). Since 2026-11-07 (business owner's decision) the caller,
+     * MailingMembership::pushToSmove(), no longer skips an already-confirmed
+     * contact: every join is sent. That caller passes EVERY mailing list this app currently knows about here,
      * not just the one the caller actually cares about, so the contact's
      * eventual single confirmation pre-clears every future list join too.
      *

@@ -274,13 +274,11 @@ class MailingMembership extends Model
      * recording — so it's skipped here entirely, same as ProcessMaterial
      * Reminders/ProcessExpenseReminders skip a reminder for the same reason.
      *
-     * 'join' additionally never touches Smove at all once the contact
-     * already shows confirmed consent there (SmoveClient::hasConfirmedConsent())
-     * — see that method's docblock for why. The local membership row is
-     * already saved by the caller before pushToSmove() runs (addLead()/
-     * addCustomer()/addSupplier() above), so skipping the network call here
-     * still leaves this list membership correctly recorded — it just isn't
-     * mirrored to Smove for an already-confirmed contact, on purpose.
+     * 2026-11-07, the business owner's decision: 'join' is pushed to Smove
+     * even when the contact already exists there with confirmed consent
+     * (the earlier skip via SmoveClient::hasConfirmedConsent() is gone), so
+     * contacts already in Smove get added to the system's list too. The
+     * join request itself sends canReceiveEmails: true.
      *
      * Since 2026-10-14 there is exactly one Smove list (SmoveClient::listId())
      * — every join targets it, whichever local list $list is, so a contact
@@ -301,10 +299,6 @@ class MailingMembership extends Model
         }
 
         $smove = app(SmoveClient::class);
-
-        if ($action === 'join' && $smove->isConfigured() && $smove->hasConfirmedConsent($contact['email'])) {
-            return;
-        }
 
         app(ExternalOperationRunner::class)->run(
             'smove',
