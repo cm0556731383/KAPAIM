@@ -33,6 +33,23 @@ class Task extends Model
         SoftDeletes::restore as private restoreSoftDelete;
     }
 
+    public const STATUS_OPEN = 'open';
+
+    public const STATUS_DONE = 'done';
+
+    public function isDone(): bool
+    {
+        return $this->status === self::STATUS_DONE;
+    }
+
+    /** open → done. Idempotent: a task already done keeps its completed_at. */
+    public function markDone(): void
+    {
+        if (! $this->isDone()) {
+            $this->update(['status' => self::STATUS_DONE, 'completed_at' => now()]);
+        }
+    }
+
     protected function casts(): array
     {
         return [

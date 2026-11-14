@@ -395,6 +395,11 @@ class extends Component
 
     public function updateStatus(ActivityLogger $activityLogger): void
     {
+        // A converted lead's status is frozen — the customer card carries on from here.
+        if ($this->lead->converted_at) {
+            return;
+        }
+
         $data = $this->validate([
             'selectedStatusId' => ['required', \Illuminate\Validation\Rule::exists('status_definitions', 'id')->where('scope', 'lead')],
             'selectedSubStatus' => ['nullable', 'string', 'max:255'],
@@ -761,7 +766,7 @@ class extends Component
             'user_id' => auth()->id(),
             'lead_id' => $this->lead->id,
             'task_type' => 'reminder',
-            'status' => 'open',
+            'status' => \App\Models\Task::STATUS_OPEN,
             'title' => $data['taskTitle'],
             'description' => $data['taskDescription'] ?: null,
             'due_at' => $data['taskDueAt'] ?: null,
@@ -814,7 +819,7 @@ class extends Component
     public function completeTask(int $id, ActivityLogger $activityLogger): void
     {
         $task = Task::where('lead_id', $this->lead->id)->findOrFail($id);
-        $task->update(['status' => 'done', 'completed_at' => now()]);
+        $task->markDone();
 
         $activityLogger->log('task.completed', "הושלמה תזכורת \"{$task->title}\"", ['lead_id' => $this->lead->id, 'task_id' => $task->id]);
 
@@ -978,7 +983,12 @@ class extends Component
 <div>
     <div class="topbar">
         <div>
-            <span class="badge {{ \App\Models\Lead::badgeClassForStatusName($lead->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $lead->status?->name }}@if ($lead->sub_status) · {{ $lead->sub_status }} @endif</span>
+            @if ($lead->converted_at)
+                {{-- Conversion is the lead's final state; its last sales status no longer means anything. --}}
+                <span class="badge badge-success" style="margin-bottom:8px; display:inline-flex">{{ \App\Models\Lead::CONVERTED_LABEL }} · {{ $lead->converted_at->format('d/m/Y') }}</span>
+            @else
+                <span class="badge {{ \App\Models\Lead::badgeClassForStatusName($lead->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $lead->status?->name }}@if ($lead->sub_status) · {{ $lead->sub_status }} @endif</span>
+            @endif
             <h1>{{ $lead->school?->name ?? $lead->email.' (ללא בית ספר)' }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">נפתח <span class="ltr-num">{{ $lead->created_at->format('d/m/Y') }}</span> · מטפלת: {{ $lead->assignedUser?->name ?? '—' }}</p>
         </div>
@@ -1414,10 +1424,10 @@ class extends Component
                     @endif
                     <div class="list-item">
                         <div>
-                            <div style="font-weight:600; {{ $task->status === 'done' ? 'text-decoration:line-through; color:var(--color-text-secondary)' : '' }}">{{ $task->title }}</div>
+                            <div style="font-weight:600; {{ $task->isDone() ? 'text-decoration:line-through; color:var(--color-text-secondary)' : '' }}">{{ $task->title }}</div>
                             <div class="who">{{ $task->due_at?->format('d/m/Y') ?? 'ללא מועד יעד' }}</div>
                         </div>
-                        @if ($task->status !== 'done')
+                        @if (! $task->isDone())
                             <div style="display:flex; gap:6px">
                                 <button type="button" class="btn btn-ghost btn-sm" wire:click="completeTask({{ $task->id }})">הושלם</button>
                                 <button type="button" class="btn btn-ghost btn-sm" wire:click="editTask({{ $task->id }})">עריכה</button>

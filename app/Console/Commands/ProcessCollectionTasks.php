@@ -52,12 +52,12 @@ class ProcessCollectionTasks extends Command
         $paidStatusId = StatusDefinition::where('scope', 'deal')->where('name', Deal::PAID_STATUS_NAME)->value('id');
 
         Task::where('task_type', self::TASK_TYPE)
-            ->where('status', 'open')
+            ->where('status', Task::STATUS_OPEN)
             ->with('deal.status')
             ->get()
             // Paid — or what's left is covered by checks already received.
             ->filter(fn (Task $task) => ($paidStatusId && $task->deal?->status_id === $paidStatusId) || ($task->deal && $task->deal->uncoveredBalance() <= 0))
-            ->each(fn (Task $task) => $task->update(['status' => 'done', 'completed_at' => now()]));
+            ->each(fn (Task $task) => $task->markDone());
     }
 
     private function createOrRenewTasksForUnpaidInvoicedDeals(): void
@@ -80,7 +80,7 @@ class ProcessCollectionTasks extends Command
     {
         $openTask = Task::where('task_type', self::TASK_TYPE)
             ->where('deal_id', $deal->id)
-            ->where('status', 'open')
+            ->where('status', Task::STATUS_OPEN)
             ->latest('id')
             ->first();
 
@@ -89,7 +89,7 @@ class ProcessCollectionTasks extends Command
             // fresh one once it's at least 7 days old, rather than mutating
             // it in place.
             if ($openTask->created_at->lte(now()->subDays(7))) {
-                $openTask->update(['status' => 'done', 'completed_at' => now()]);
+                $openTask->markDone();
                 $this->createTask($deal);
             }
 
@@ -120,7 +120,7 @@ class ProcessCollectionTasks extends Command
             'customer_id' => $deal->customer_id,
             'deal_id' => $deal->id,
             'task_type' => self::TASK_TYPE,
-            'status' => 'open',
+            'status' => Task::STATUS_OPEN,
             'title' => 'משימת גבייה — '.($deal->program_name_snapshot ?? $deal->bundle_name_snapshot),
             'description' => 'העסקה נשלחה לחיוב וטרם שולמה במלואה. משימה פנימית בלבד — אין לשלוח הודעה אוטומטית ללקוחה (FR-4.37).',
             'due_at' => now()->addDays(7),

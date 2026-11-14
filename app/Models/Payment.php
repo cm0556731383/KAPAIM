@@ -33,6 +33,15 @@ class Payment extends Model
 
     public const CHECK_CLEARED = 'cleared';
 
+    /**
+     * STATUS_DEFINITION scope='payment' — this payment's own state, kept in
+     * step with isSettled() by syncStatus(): an uncleared or un-receipted
+     * check is "ממתין", anything that counts toward the deal is "שולם".
+     */
+    public const STATUS_PENDING_NAME = 'ממתין';
+
+    public const STATUS_SETTLED_NAME = 'שולם';
+
     /** Israeli bank codes (בנק ישראל) for a check's bank — the number SUMIT's receipt takes. */
     public const BANKS = [
         4 => 'בנק יהב', 9 => 'בנק הדואר', 10 => 'בנק לאומי', 11 => 'בנק דיסקונט', 12 => 'בנק הפועלים',
@@ -157,5 +166,19 @@ class Payment extends Model
 
         $this->update(['check_status' => self::CHECK_CLEARED, 'cleared_date' => now()]);
         $this->deal->refreshPaidStatus();
+    }
+
+    /** Points status_id at the status isSettled() implies; a no-op when it already does. */
+    public function syncStatus(): void
+    {
+        $settled = $this->isSettled();
+        $status = StatusDefinition::firstOrCreate(
+            ['scope' => 'payment', 'name' => $settled ? self::STATUS_SETTLED_NAME : self::STATUS_PENDING_NAME],
+            ['is_active' => true, 'sort_order' => $settled ? 2 : 1],
+        );
+
+        if ($this->status_id !== $status->id) {
+            $this->update(['status_id' => $status->id]);
+        }
     }
 }

@@ -46,6 +46,13 @@ class Lead extends Model
 
     public const CLOSED_NO_SALE_STATUS_NAME = 'נסגר ללא מכירה';
 
+    /**
+     * Shown instead of the status once converted_at is set: conversion is the
+     * lead's terminal state, tracked by that date rather than a status row
+     * (the status keeps whatever the lead had when it was converted).
+     */
+    public const CONVERTED_LABEL = 'הומר ללקוחה';
+
     private const TRAFFIC_LIGHT_COLORS = [
         'חדש' => 'yellow',
         'בתהליך מכירה' => 'yellow',

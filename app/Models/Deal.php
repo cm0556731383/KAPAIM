@@ -488,6 +488,52 @@ class Deal extends Model
     }
 
     /**
+     * Why a user may not move this deal to $newStatus by hand, or null when
+     * they may. "שולמה" and "נשלחה חשבונית" follow from what actually
+     * happened (payments, a sent invoice), so the dropdown can't claim them
+     * on its own — and can't take a fully paid deal out of "שולמה" either.
+     * A cancellation is final, and a subscription deal is cancelled from the
+     * subscription (which credits the cancelled months), not from here.
+     */
+    public function manualStatusChangeError(StatusDefinition $newStatus): ?string
+    {
+        $current = $this->status?->name;
+        $target = $newStatus->name;
+
+        if ($target === $current) {
+            return null;
+        }
+
+        if ($current === self::CANCELLED_STATUS_NAME) {
+            return 'העסקה בוטלה, וביטול אינו הפיך — לא ניתן לפתוח אותה מחדש. לעסקה חדשה יש ליצור עסקה בכרטיס הלקוחה.';
+        }
+
+        if ($target === self::CANCELLED_STATUS_NAME) {
+            return $this->subscription
+                ? 'עסקת מנוי מבטלים מכרטיס הלקוחה (ביטול המנוי), כדי שהחודשים והזיכוי יחושבו נכון.'
+                : null;
+        }
+
+        if ($target === self::PAID_STATUS_NAME && ! $this->isFullyPaid()) {
+            return 'העסקה עוד לא שולמה במלואה. היא תסומן "שולמה" אוטומטית כשהתשלומים יכסו את הסכום.';
+        }
+
+        if ($target === self::INVOICE_SENT_STATUS_NAME && ! $this->issuedInvoice()) {
+            return 'עוד לא נשלחה חשבונית לעסקה. הסטטוס יתעדכן אוטומטית עם שליחת החשבונית.';
+        }
+
+        if ($current === self::PAID_STATUS_NAME && $this->isFullyPaid()) {
+            return 'העסקה שולמה במלואה, ולכן הסטטוס נשאר "שולמה". אם נרשם תשלום בטעות, יש לתקן אותו ברשימת התשלומים.';
+        }
+
+        if ($target !== self::PAID_STATUS_NAME && $this->isFullyPaid()) {
+            return 'העסקה שולמה במלואה, ולכן הסטטוס שלה הוא "שולמה".';
+        }
+
+        return null;
+    }
+
+    /**
      * Document::sendTo(): sending an invoice moves a still-open, not yet
      * paid deal to "נשלחה חשבונית" (bumping version like any status
      * change). A deal already further along keeps its status.
@@ -623,9 +669,10 @@ class Deal extends Model
                 throw new RuntimeException('העסקה עודכנה על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
             }
 
+            // A check waits until it clears and is receipted (Payment::syncStatus()).
             $paymentStatus = StatusDefinition::firstOrCreate(
-                ['scope' => 'payment', 'name' => $becomesFullyPaid ? 'שולם' : 'חלקי'],
-                ['is_active' => true, 'sort_order' => $becomesFullyPaid ? 2 : 3],
+                ['scope' => 'payment', 'name' => $isCheck ? Payment::STATUS_PENDING_NAME : Payment::STATUS_SETTLED_NAME],
+                ['is_active' => true, 'sort_order' => $isCheck ? 1 : 2],
             );
 
             $payment = $this->payments()->create([
@@ -720,6 +767,9 @@ class Deal extends Model
     {
         $this->refresh();
         $statusName = $this->status?->name;
+
+        // Each payment's own status follows the same events (cleared, receipted, edited).
+        $this->payments()->with(['paymentMethod', 'receipt'])->get()->each->syncStatus();
 
         if ($statusName === self::CANCELLED_STATUS_NAME) {
             return;

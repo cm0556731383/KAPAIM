@@ -204,9 +204,9 @@ class extends Component
         $oldStatusName = $this->deal->status?->name;
         $newStatus = StatusDefinition::findOrFail($data['selectedStatusId']);
 
-        // The cancel dialog says it can't be undone — keep that promise.
-        if ($oldStatusName === Deal::CANCELLED_STATUS_NAME && $newStatus->name !== Deal::CANCELLED_STATUS_NAME) {
-            $this->statusError = 'העסקה בוטלה, וביטול אינו הפיך — לא ניתן לפתוח אותה מחדש. לעסקה חדשה יש ליצור עסקה בכרטיס הלקוחה.';
+        // Cancellation is final; "שולמה"/"נשלחה חשבונית" follow payments and invoices.
+        if ($error = $this->deal->manualStatusChangeError($newStatus)) {
+            $this->statusError = $error;
             $this->syncFields();
 
             return;
@@ -247,6 +247,15 @@ class extends Component
     public function dealStatuses()
     {
         return StatusDefinition::where('scope', 'deal')->where('is_active', true)->orderBy('sort_order')->get();
+    }
+
+    /** The dropdown offers only the current status and the ones a user may set by hand. */
+    #[Computed]
+    public function selectableDealStatuses()
+    {
+        return $this->dealStatuses
+            ->filter(fn (StatusDefinition $status) => $status->id === $this->deal->status_id || ! $this->deal->manualStatusChangeError($status))
+            ->values();
     }
 
     #[Computed]
@@ -1229,10 +1238,11 @@ class extends Component
                     <div class="full">
                         <label for="selectedStatusId">סטטוס</label>
                         <select id="selectedStatusId" wire:model.live="selectedStatusId">
-                            @foreach ($this->dealStatuses as $status)
+                            @foreach ($this->selectableDealStatuses as $status)
                                 <option value="{{ $status->id }}">{{ $status->name }}</option>
                             @endforeach
                         </select>
+                        <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">"נשלחה חשבונית" ו"שולמה" מתעדכנים אוטומטית לפי החשבונית והתשלומים.</div>
                         @error('selectedStatusId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div class="full">

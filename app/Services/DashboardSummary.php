@@ -249,7 +249,7 @@ class DashboardSummary
         }
 
         return Task::where('task_type', 'reminder')
-            ->where('status', 'open')
+            ->where('status', \App\Models\Task::STATUS_OPEN)
             ->where('user_id', $user->id)
             ->whereNotNull('due_at')
             ->where('due_at', '<=', Carbon::tomorrow()->endOfDay())
@@ -277,7 +277,7 @@ class DashboardSummary
         }
 
         return Task::where('task_type', 'collection')
-            ->where('status', 'open')
+            ->where('status', \App\Models\Task::STATUS_OPEN)
             ->whereNotNull('due_at')
             ->where('due_at', '<', Carbon::today())
             ->with('deal.customer.school')
@@ -437,7 +437,7 @@ class DashboardSummary
     private function dealsWithOpenCollectionTasks(): Collection
     {
         return Task::where('task_type', 'collection')
-            ->where('status', 'open')
+            ->where('status', \App\Models\Task::STATUS_OPEN)
             ->with('deal')
             ->get()
             ->map(fn (Task $task) => $task->deal)

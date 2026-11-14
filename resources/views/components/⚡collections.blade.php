@@ -41,7 +41,7 @@ class extends Component
             // Checks already received cover their part — not a debt to chase.
             ->filter(fn (Deal $deal) => $deal->uncoveredBalance() > 0);
 
-        $tasks = Task::where('task_type', 'collection')->where('status', 'open')
+        $tasks = Task::where('task_type', 'collection')->where('status', \App\Models\Task::STATUS_OPEN)
             ->whereIn('deal_id', $deals->pluck('id'))
             ->get()
             ->keyBy('deal_id');

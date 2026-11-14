@@ -238,12 +238,49 @@ class extends Component
      */
     private const MATERIALS_FILE_RULES = \App\Models\MaterialDeliveryAttachment::FILE_RULES;
 
+    /** The customer's status (פעילה / לא פעילה, or any custom one) — set by hand, logged like a lead's. */
+    public string $selectedCustomerStatusId = '';
+
+    #[Computed]
+    public function customerStatuses()
+    {
+        return \App\Models\StatusDefinition::where('scope', 'customer')
+            ->where(fn ($q) => $q->where('is_active', true)->orWhere('id', $this->customer->status_id))
+            ->orderBy('sort_order')->get();
+    }
+
+    public function updatedSelectedCustomerStatusId(): void
+    {
+        $activityLogger = app(ActivityLogger::class);
+        $data = $this->validate([
+            'selectedCustomerStatusId' => ['required', \Illuminate\Validation\Rule::exists('status_definitions', 'id')->where('scope', 'customer')],
+        ]);
+
+        $newStatusId = (int) $data['selectedCustomerStatusId'];
+        if ($newStatusId === $this->customer->status_id) {
+            return;
+        }
+
+        $oldStatusName = $this->customer->status?->name;
+        $this->customer->update(['status_id' => $newStatusId]);
+        $this->customer->load('status');
+
+        $activityLogger->log('customer.status_changed', "סטטוס לקוחה #{$this->customer->id} שונה מ\"{$oldStatusName}\" ל\"{$this->customer->status->name}\"", [
+            'customer_id' => $this->customer->id,
+            'lead_id' => $this->customer->lead_id,
+            'metadata' => ['old_status' => $oldStatusName, 'new_status' => $this->customer->status->name],
+        ]);
+
+        $this->notifySuccess("סטטוס הלקוחה עודכן ל\"{$this->customer->status->name}\".");
+    }
+
     public function mount(Customer $customer): void
     {
         abort_unless(auth()->user()->can('customers.view'), 403);
 
-        $this->customer = $customer->load(['school', 'lead']);
+        $this->customer = $customer->load(['school', 'lead', 'status']);
         $this->syncSchoolFields();
+        $this->selectedCustomerStatusId = (string) $this->customer->status_id;
 
         // ?tab=materials etc. — a dashboard item opens the card on the tab it's about.
         if (in_array(request()->query('tab'), ['info', 'subscription', 'deals', 'billing', 'materials', 'activity'], true)) {
@@ -1244,7 +1281,7 @@ class extends Component
     public function openCollectionTask(): ?Task
     {
         return Task::where('task_type', 'collection')
-            ->where('status', 'open')
+            ->where('status', \App\Models\Task::STATUS_OPEN)
             ->whereIn('deal_id', $this->customer->deals()->pluck('id'))
             ->with('deal')
             ->latest('id')
@@ -1409,7 +1446,13 @@ class extends Component
                 @endif
             </p>
         </div>
-        <div style="display:flex; gap:var(--sp-sm)">
+        <div style="display:flex; gap:var(--sp-sm); align-items:center">
+            <label for="selectedCustomerStatusId" class="sr-only">סטטוס לקוחה</label>
+            <select id="selectedCustomerStatusId" wire:model.live="selectedCustomerStatusId" title="סטטוס לקוחה" style="width:auto">
+                @foreach ($this->customerStatuses as $status)
+                    <option value="{{ $status->id }}">{{ $status->name }}</option>
+                @endforeach
+            </select>
             <a href="{{ route('customers') }}" class="btn btn-ghost">חזרה לרשימה</a>
             @if ($customer->lead)
                 <a href="{{ route('lead-detail', $customer->lead) }}" class="btn btn-ghost">כרטיס הליד המקורי</a>

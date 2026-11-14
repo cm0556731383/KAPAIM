@@ -43,7 +43,7 @@ class SendTaskReminders extends Command
             return self::SUCCESS;
         }
 
-        $tasks = Task::where('status', 'open')
+        $tasks = Task::where('status', Task::STATUS_OPEN)
             ->whereNull('reminder_sent_at')
             ->where(fn ($q) => $q
                 ->where(fn ($r) => $r->where('task_type', 'reminder')->whereDate('due_at', today()))

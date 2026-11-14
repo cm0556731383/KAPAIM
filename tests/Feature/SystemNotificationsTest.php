@@ -85,13 +85,14 @@ class SystemNotificationsTest extends TestCase
 
     public function test_changing_a_deal_status_dispatches_a_success_notification(): void
     {
-        $deal = $this->createDeal();
-        $paid = StatusDefinition::create(['scope' => 'deal', 'name' => 'שולמה', 'is_active' => true, 'sort_order' => 3]);
+        $deal = $this->createDeal(agreedAmount: 1000);
+        // "שולמה" can't be chosen by hand any more (Deal::manualStatusChangeError()); a custom status can.
+        $custom = StatusDefinition::create(['scope' => 'deal', 'name' => 'ממתינה לאישור הנהלה', 'is_active' => true, 'sort_order' => 5]);
 
         Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])
-            ->set('selectedStatusId', (string) $paid->id)
+            ->set('selectedStatusId', (string) $custom->id)
             ->call('updateStatus')
-            ->assertDispatched('notify', type: 'success', message: "סטטוס העסקה עודכן ל\"{$paid->name}\".");
+            ->assertDispatched('notify', type: 'success', message: "סטטוס העסקה עודכן ל\"{$custom->name}\".");
     }
 
     /** FR-7.26 spot check: the toast is additional feedback, never a replacement for the activity log. */

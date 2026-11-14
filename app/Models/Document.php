@@ -43,6 +43,11 @@ class Document extends Model
 
     public const DEFAULT_STATUS_NAME = 'טיוטה';
 
+    /** STATUS_DEFINITION scope='document' — derived from the dates by syncStatusFromDates(). */
+    public const SENT_STATUS_NAME = 'נשלח';
+
+    public const CONFIRMED_STATUS_NAME = 'נחתם/אושר';
+
     /**
      * How every quote/order form/contract is sent (owner's call, 2026-10-27):
      * one email with the online form button and the PDF attached. 'digital'
@@ -539,6 +544,34 @@ class Document extends Model
     private static function createDocumentRow(array $attributes): self
     {
         return self::create($attributes);
+    }
+
+    /**
+     * status_id is never set by hand: whenever sent_at/confirmed_at/signed_at
+     * change, it follows them — signed or confirmed → "נחתם/אושר", sent →
+     * "נשלח", otherwise "טיוטה". The dates stay the source of truth; this
+     * keeps the status column (filters, reports, linked fields) honest.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $document) {
+            if ($document->exists && ! $document->isDirty(['sent_at', 'confirmed_at', 'signed_at'])) {
+                return;
+            }
+
+            $document->status_id = self::statusForDates($document)->id;
+        });
+    }
+
+    public static function statusForDates(self $document): StatusDefinition
+    {
+        [$name, $order] = match (true) {
+            (bool) ($document->confirmed_at || $document->signed_at) => [self::CONFIRMED_STATUS_NAME, 3],
+            (bool) $document->sent_at => [self::SENT_STATUS_NAME, 2],
+            default => [self::DEFAULT_STATUS_NAME, 1],
+        };
+
+        return StatusDefinition::firstOrCreate(['scope' => 'document', 'name' => $name], ['is_active' => true, 'sort_order' => $order]);
     }
 
     private static function defaultDraftStatus(): StatusDefinition
@@ -1144,8 +1177,8 @@ class Document extends Model
     /**
      * The "סטטוס" badge (⚡deal-detail.blade.php/⚡document-view.blade.php) —
      * computed from real customer engagement (viewed_at/confirmed_at)
-     * rather than status_id, which nothing in this codebase ever
-     * transitions past its draft default. Empty until the document is
+     * rather than status_id (which tracks sent/signed — see booted()), since
+     * "opened" isn't a status. Empty until the document is
      * actually opened, so an unopened document shows nothing rather than a
      * misleadingly official-looking "טיוטה".
      */
