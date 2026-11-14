@@ -21,7 +21,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 #[Fillable([
     'school_id', 'customer_id', 'name', 'role', 'phone', 'phone_secondary',
-    'email', 'email_secondary', 'is_primary', 'is_accounting_contact',
+    'email', 'email_secondary', 'is_primary', 'is_accounting_contact', 'smove_contact_id',
 ])]
 class Contact extends Model
 {

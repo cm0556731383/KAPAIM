@@ -13,9 +13,10 @@ use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
- * Runs a customer import (settings → יבוא נתונים) in the background: each
- * new customer joins the mailing list, which is a call to Smove, so a few
- * hundred rows are far too slow for the click itself. The file is checked
+ * Runs a customer import (settings → יבוא נתונים) in the background: the
+ * Smove list is read, and each new customer is linked to it or joins it — a
+ * call to Smove per contact, so a few hundred rows are far too slow for the
+ * click itself. The file is checked
  * again here — the screen only shows the check, it never hands over the rows —
  * and progress is kept in the cache under self::cacheKey($importId) for the
  * screen to poll.
@@ -57,7 +58,10 @@ class ImportCustomers implements ShouldQueue
 
             $this->put(['state' => 'running', 'total' => $valid, 'done' => 0]);
 
-            $result = $import->import($rows, $user, $activityLogger, fn (int $done) => $this->put(['state' => 'running', 'total' => $valid, 'done' => $done]));
+            // Read once, up front: who is already on the Smove list gets linked, not re-joined.
+            $smove = $import->smoveList();
+
+            $result = $import->import($rows, $user, $activityLogger, fn (int $done) => $this->put(['state' => 'running', 'total' => $valid, 'done' => $done]), $smove);
 
             $this->put([
                 'state' => 'done',
@@ -65,6 +69,7 @@ class ImportCustomers implements ShouldQueue
                 'done' => $valid,
                 'created' => count($result['created']),
                 'failed' => $result['failed'],
+                'smove' => ['state' => $smove['state'], 'message' => $smove['message'] ?? null] + $result['smove'],
             ]);
         } catch (Throwable $e) {
             report($e);

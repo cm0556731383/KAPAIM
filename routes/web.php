@@ -285,9 +285,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/import/customers-template', function (\App\Services\CustomerImport $import) {
         abort_unless(auth()->user()->can('settings.view'), 403);
 
+        $book = $import->template();
         ob_start();
-        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($import->template()))->save('php://output');
+        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($book))->save('php://output');
         $xlsx = (string) ob_get_clean();
+        $book->disconnectWorksheets();
 
         return response($xlsx, 200, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

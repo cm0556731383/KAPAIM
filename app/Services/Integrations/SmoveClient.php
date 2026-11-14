@@ -85,6 +85,51 @@ class SmoveClient
     }
 
     /**
+     * Every contact on a Smove list, keyed by lower-cased email:
+     * ['id' => Smove contact id, 'can_receive' => canReceiveEmails]. Read page
+     * by page (GET /Lists/{id}/Contacts). Throws when Smove can't be read, so
+     * a caller never mistakes "couldn't check" for "not on the list".
+     *
+     * @return array<string, array{id: int, can_receive: bool}>
+     */
+    public function listContacts(int $listId): array
+    {
+        $this->assertConfigured();
+
+        $contacts = [];
+        $perPage = 500;
+
+        for ($page = 1; $page <= 400; $page++) {
+            $response = $this->http()->get("/Lists/{$listId}/Contacts", [
+                'page' => $page,
+                'itemsPerPage' => $perPage,
+                'fields' => 'id,email,canReceiveEmails',
+            ]);
+
+            if ($response->failed()) {
+                throw new RuntimeException('לא ניתן לקרוא את רשימת התפוצה מ-Smove ('.$response->status().').');
+            }
+
+            $batch = $response->json() ?? [];
+
+            foreach ($batch as $contact) {
+                if (is_array($contact) && filled($contact['email'] ?? null)) {
+                    $contacts[mb_strtolower(trim($contact['email']))] = [
+                        'id' => (int) $contact['id'],
+                        'can_receive' => (bool) ($contact['canReceiveEmails'] ?? false),
+                    ];
+                }
+            }
+
+            if (count($batch) < $perPage) {
+                break;
+            }
+        }
+
+        return $contacts;
+    }
+
+    /**
      * FR-1.17/FR-5.21-FR-5.26: join/remove a lead/customer/supplier on a
      * Smove mailing list. Smove has no lookup-by-name — $listId is the one
      * Smove list id set in the Smove integration setting (listId()); none set

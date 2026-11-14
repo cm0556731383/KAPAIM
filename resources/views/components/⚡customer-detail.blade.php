@@ -1623,6 +1623,7 @@ class extends Component
                                     <div class="actions">
                                         @if ($contact->is_primary)<span class="badge badge-primary">ראשי</span>@endif
                                         @if ($contact->is_accounting_contact)<span class="badge badge-neutral">חשבונאי</span>@endif
+                                        @if ($contact->smove_contact_id)<span class="badge badge-success" title="מקושר לאיש הקשר ברשימת התפוצה ב־Smove">Smove</span>@endif
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="editContact({{ $contact->id }})">עריכה</button>
                                     </div>
                                 </div>

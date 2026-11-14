@@ -38,6 +38,28 @@ class MailingMembership extends Model
 
     public const STATUS_REMOVED = 'removed';
 
+    /** Emails (lower-cased) not to push to Smove right now — see withoutPushing(). */
+    private static array $skipSmoveEmails = [];
+
+    /**
+     * Runs $callback with no Smove push for these emails. The customer import
+     * uses it for contacts already on the Smove list: they're linked, never
+     * re-joined, since a join resets a confirmed contact's consent (see
+     * SmoveClient::syncMailingListMembership()) and would resubscribe one who
+     * unsubscribed.
+     */
+    public static function withoutPushing(array $emails, \Closure $callback): mixed
+    {
+        $previous = self::$skipSmoveEmails;
+        self::$skipSmoveEmails = array_merge($previous, array_map(fn ($email) => mb_strtolower(trim((string) $email)), $emails));
+
+        try {
+            return $callback();
+        } finally {
+            self::$skipSmoveEmails = $previous;
+        }
+    }
+
     protected function casts(): array
     {
         return [
@@ -288,6 +310,10 @@ class MailingMembership extends Model
     private static function pushToSmove(string $action, MailingList $list, array $contact, array $context): void
     {
         if (empty($contact['email'])) {
+            return;
+        }
+
+        if (in_array(mb_strtolower(trim($contact['email'])), self::$skipSmoveEmails, true)) {
             return;
         }
 

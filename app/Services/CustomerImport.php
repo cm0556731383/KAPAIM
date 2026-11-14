@@ -6,10 +6,12 @@ use App\Models\Contact;
 use App\Models\Customer;
 use App\Models\Lead;
 use App\Models\LeadSource;
+use App\Models\MailingMembership;
 use App\Models\School;
 use App\Models\StatusDefinition;
 use App\Models\User;
 use App\Rules\Phone;
+use App\Services\Integrations\SmoveClient;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -37,6 +39,12 @@ use Throwable;
  * A school already in the system (by name or ח.פ.), as a lead or a customer,
  * is reported and never imported: the import only adds, it never changes an
  * existing card.
+ *
+ * Smove: the system's Smove list is read first (smoveList()). A contact whose
+ * email is already on it is LINKED (contacts.smove_contact_id) and never
+ * pushed — a join would reset a confirmed contact's consent or resubscribe
+ * one who unsubscribed. A contact not on it joins the list as any new
+ * customer does. If the list can't be read, nothing is pushed at all.
  */
 class CustomerImport
 {
@@ -219,8 +227,21 @@ class CustomerImport
      */
     public function analyze(string $path): array
     {
+        $book = null;
+
         try {
-            $sheet = IOFactory::load($path)->getSheet(0);
+            return $this->analyzeFile($path, $book);
+        } finally {
+            // PhpSpreadsheet's objects reference each other — free them explicitly.
+            $book?->disconnectWorksheets();
+        }
+    }
+
+    private function analyzeFile(string $path, ?Spreadsheet &$book): array
+    {
+        try {
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheet(0);
         } catch (Throwable) {
             return ['fileError' => 'לא ניתן לקרוא את הקובץ. יש להעלות קובץ אקסל (xlsx) שהורד מכאן ומולא.', 'rows' => []];
         }
@@ -456,14 +477,16 @@ class CustomerImport
      * @param  callable(int $done): void|null  $progress
      * @return array{created: list<int>, failed: list<array{row: int, school: string, error: string}>}
      */
-    public function import(array $rows, User $user, ActivityLogger $activityLogger, ?callable $progress = null): array
+    public function import(array $rows, User $user, ActivityLogger $activityLogger, ?callable $progress = null, ?array $smove = null): array
     {
+        $smove ??= ['state' => 'off', 'members' => []];
         $created = [];
         $failed = [];
+        $this->smoveStats = ['linked' => 0, 'not_receiving' => 0, 'joined' => 0];
 
         foreach (array_values(array_filter($rows, fn ($row) => $row['data'] !== null)) as $i => $row) {
             try {
-                $created[] = $this->importRow($row['data'], $user, $activityLogger)->id;
+                $created[] = $this->importRow($row['data'], $user, $activityLogger, $smove)->id;
             } catch (Throwable $e) {
                 report($e);
                 $failed[] = ['row' => $row['row'], 'school' => $row['school'], 'error' => $e instanceof \RuntimeException ? $e->getMessage() : 'שגיאה לא צפויה בשמירה.'];
@@ -474,15 +497,79 @@ class CustomerImport
             }
         }
 
-        $activityLogger->log('customers.imported', 'יובאו '.count($created).' לקוחות מקובץ אקסל'.($failed ? ' ('.count($failed).' נכשלו)' : ''), [
+        $activityLogger->log('customers.imported', 'יובאו '.count($created).' לקוחות מקובץ אקסל'.($failed ? ' ('.count($failed).' נכשלו)' : '')
+            .($smove['state'] === 'ok' ? " — {$this->smoveStats['linked']} אנשי קשר קושרו לרשימת Smove, {$this->smoveStats['joined']} צורפו אליה" : ''), [
             'user' => $user,
-            'metadata' => ['created' => count($created), 'failed' => count($failed)],
+            'metadata' => ['created' => count($created), 'failed' => count($failed), 'smove' => $smove['state']] + $this->smoveStats,
         ]);
 
-        return ['created' => $created, 'failed' => $failed];
+        return ['created' => $created, 'failed' => $failed, 'smove' => $this->smoveStats];
     }
 
-    private function importRow(array $data, User $user, ActivityLogger $activityLogger): Customer
+    private array $smoveStats = ['linked' => 0, 'not_receiving' => 0, 'joined' => 0];
+
+    /**
+     * The system's Smove list, read once before a check or an import:
+     *   state 'off'   — Smove isn't connected (nothing to link; joins behave as everywhere else)
+     *         'error' — connected but the list couldn't be read (message says why)
+     *         'ok'    — members = SmoveClient::listContacts()
+     */
+    public function smoveList(): array
+    {
+        // Checked first: SmoveClient would otherwise create the settings row, a
+        // write a view-only user's check isn't allowed (ReadOnlyGuard).
+        if (! \App\Models\ExternalIntegrationSetting::where('system', 'smove')->exists()) {
+            return ['state' => 'off', 'members' => []];
+        }
+
+        $smove = app(SmoveClient::class);
+
+        if (! $smove->isConfigured() || ! $smove->listId()) {
+            return ['state' => 'off', 'members' => []];
+        }
+
+        try {
+            return ['state' => 'ok', 'members' => $smove->listContacts($smove->listId())];
+        } catch (Throwable $e) {
+            return ['state' => 'error', 'members' => [], 'message' => $e instanceof \RuntimeException ? $e->getMessage() : 'לא ניתן לקרוא את רשימת התפוצה מ-Smove.'];
+        }
+    }
+
+    /** For the check screen: how the valid rows' contacts match the Smove list. */
+    public function smovePreview(array $rows, array $smove): array
+    {
+        $preview = ['state' => $smove['state'], 'message' => $smove['message'] ?? null, 'linked' => 0, 'not_receiving' => 0, 'new' => 0];
+
+        foreach ($rows as $row) {
+            foreach (self::contactEmails($row['data']) as $email) {
+                $member = $smove['members'][$email] ?? null;
+
+                if (! $member) {
+                    $preview['new']++;
+                } else {
+                    $preview['linked']++;
+                    $preview['not_receiving'] += $member['can_receive'] ? 0 : 1;
+                }
+            }
+        }
+
+        return $preview;
+    }
+
+    /** The lower-cased emails of a row's contacts (primary + accounting), once each. */
+    private static function contactEmails(?array $data): array
+    {
+        if (! $data) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter([
+            mb_strtolower(trim((string) $data['contact']['email'])),
+            mb_strtolower(trim((string) ($data['accounting']['email'] ?? ''))),
+        ])));
+    }
+
+    private function importRow(array $data, User $user, ActivityLogger $activityLogger, array $smove): Customer
     {
         $customer = DB::transaction(function () use ($data, $user) {
             if (Lead::findExactDuplicateSchool($data['school']['name'])) {
@@ -512,9 +599,26 @@ class CustomerImport
             ]);
         });
 
-        // Converting also files the contacts under the customer and joins it to the mailing list.
+        // Converting also files the contacts under the customer and joins it
+        // to the mailing list — pushing to Smove only the contacts not already
+        // on its list (none at all when the list couldn't be read).
         $convertedAt = $data['converted_at'] ? Carbon::parse($data['converted_at']) : null;
-        $result = $customer->convertToCustomer($activityLogger, $convertedAt);
+        $emails = self::contactEmails($data);
+        $onList = array_values(array_filter($emails, fn ($email) => isset($smove['members'][$email])));
+        $noPush = $smove['state'] === 'error' ? $emails : $onList;
+
+        $result = MailingMembership::withoutPushing($noPush, fn () => $customer->convertToCustomer($activityLogger, $convertedAt));
+
+        foreach ($onList as $email) {
+            $member = $smove['members'][$email];
+            $result->contacts()->whereRaw('LOWER(TRIM(email)) = ?', [$email])->update(['smove_contact_id' => $member['id']]);
+            $this->smoveStats['linked']++;
+            $this->smoveStats['not_receiving'] += $member['can_receive'] ? 0 : 1;
+        }
+
+        if ($smove['state'] === 'ok') {
+            $this->smoveStats['joined'] += count($emails) - count($onList);
+        }
 
         if ($data['status'] && $data['status'] !== Customer::DEFAULT_STATUS_NAME) {
             $statusId = StatusDefinition::where('scope', 'customer')->where('name', $data['status'])->value('id');

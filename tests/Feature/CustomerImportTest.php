@@ -83,8 +83,12 @@ class CustomerImportTest extends TestCase
 
         $path = tempnam(sys_get_temp_dir(), 'imp').'.xlsx';
         (new Xlsx($book))->save($path);
+        $book->disconnectWorksheets();
 
-        return UploadedFile::fake()->createWithContent('customers.xlsx', file_get_contents($path));
+        $file = UploadedFile::fake()->createWithContent('customers.xlsx', file_get_contents($path));
+        unlink($path);
+
+        return $file;
     }
 
     public function test_the_template_downloads_with_every_customer_card_column(): void
@@ -225,5 +229,80 @@ class CustomerImportTest extends TestCase
 
         $this->assertSame(0, Customer::count());
         $this->assertSame(0, Lead::count());
+    }
+
+    private function connectSmove(int $listStatus = 200): void
+    {
+        \App\Models\ExternalIntegrationSetting::updateOrCreate(['system' => 'smove'], ['is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+
+        \Illuminate\Support\Facades\Http::fake(function ($request) use ($listStatus) {
+            if (str_contains($request->url(), '/Lists/111/Contacts')) {
+                return \Illuminate\Support\Facades\Http::response($listStatus === 200 ? [
+                    ['id' => 900, 'email' => 'Rachel@Orot.test', 'canReceiveEmails' => true],
+                    ['id' => 901, 'email' => 'gone@noam.test', 'canReceiveEmails' => false],
+                ] : ['message' => 'down'], $listStatus);
+            }
+
+            return \Illuminate\Support\Facades\Http::response($request->method() === 'GET' ? [] : ['id' => 42], 200);
+        });
+    }
+
+    private function joinRequestsFor(string $email): int
+    {
+        return \Illuminate\Support\Facades\Http::recorded(fn ($request) => $request->method() === 'POST'
+            && str_contains($request->url(), '/Contacts')
+            && strcasecmp($request['email'] ?? '', $email) === 0)->count();
+    }
+
+    public function test_contacts_already_on_the_smove_list_are_linked_not_rejoined_and_new_ones_join(): void
+    {
+        $this->connectSmove();
+
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([
+                $this->validRow(),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact_email' => 'gone@noam.test', 'accounting_name' => '', 'accounting_email' => '']),
+            ]))
+            ->call('checkImport')
+            ->assertSet('importCheck.smove.state', 'ok')
+            ->assertSet('importCheck.smove.linked', 2)
+            ->assertSet('importCheck.smove.new', 1)
+            ->assertSet('importCheck.smove.not_receiving', 1)
+            ->assertSee('אנשי קשר כבר נמצאים ברשימה ויקושרו אליה')
+            ->call('runImport')
+            ->assertSee('Smove: 2 אנשי קשר קושרו לרשימה הקיימת, 1 צורפו אליה.');
+
+        $primary = Contact::where('email', 'rachel@orot.test')->sole();
+        $this->assertSame(900, (int) $primary->smove_contact_id);
+        $this->assertSame(901, (int) Contact::where('email', 'gone@noam.test')->value('smove_contact_id'));
+        $this->assertNull(Contact::where('email', 'books@orot.test')->value('smove_contact_id'));
+
+        // Linked contacts are never posted to Smove (that would reset consent / resubscribe); the new one joins.
+        $this->assertSame(0, $this->joinRequestsFor('rachel@orot.test'));
+        $this->assertSame(0, $this->joinRequestsFor('gone@noam.test'));
+        $this->assertSame(1, $this->joinRequestsFor('books@orot.test'));
+
+        // Both customers are on the system's own list, so a mailing reaches them.
+        $this->assertSame(2, \App\Models\MailingMembership::whereNotNull('customer_id')->where('membership_status', 'active')->count());
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $primary->customer])->assertSee('title="מקושר לאיש הקשר ברשימת התפוצה ב־Smove"', false);
+    }
+
+    public function test_when_the_smove_list_cannot_be_read_nothing_is_pushed_and_it_says_so(): void
+    {
+        $this->connectSmove(500);
+
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([$this->validRow()]))
+            ->call('checkImport')
+            ->assertSet('importCheck.smove.state', 'error')
+            ->assertSee('לא ניתן לקרוא את רשימת התפוצה מ-Smove')
+            ->call('runImport')
+            ->assertSee('הלקוחות נשמרו במערכת, אבל לא קושרו ל־Smove');
+
+        $this->assertSame(1, Customer::count());
+        $this->assertSame(0, $this->joinRequestsFor('rachel@orot.test'));
+        $this->assertSame(0, $this->joinRequestsFor('books@orot.test'));
+        $this->assertSame(0, Contact::whereNotNull('smove_contact_id')->count());
     }
 }

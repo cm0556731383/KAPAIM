@@ -32,6 +32,14 @@
             closes that gap for APP_ENV specifically.
         -->
         <server name="APP_ENV" value="testing" force="true"/>
+        <!--
+            The container gets APP_URL from .env as a real env var; on a server
+            running under a sub-path (e.g. https://example.com/1) every route()
+            in a test would then point at /1/... and 404. Tests always run at
+            the root of http://localhost.
+        -->
+        <env name="APP_URL" value="http://localhost" force="true"/>
+        <server name="APP_URL" value="http://localhost" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
