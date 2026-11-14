@@ -14,9 +14,8 @@ use Throwable;
 
 /**
  * Runs a customer import (settings → יבוא נתונים) in the background: the
- * Smove list is read, and each new customer is linked to it or joins it — a
- * call to Smove per contact, so a few hundred rows are far too slow for the
- * click itself. The file is checked
+ * file is checked against the Smove list again and each customer is created
+ * and linked to it, too slow for the click itself on a few hundred rows. The file is checked
  * again here — the screen only shows the check, it never hands over the rows —
  * and progress is kept in the cache under self::cacheKey($importId) for the
  * screen to poll.
@@ -53,13 +52,21 @@ class ImportCustomers implements ShouldQueue
         Auth::setUser($user);
 
         try {
-            $rows = $import->analyze(Storage::disk('local')->path($this->path))['rows'];
+            // Checked again from scratch, Smove list included: a contact that
+            // left the list since the check screen is a row error now too.
+            $analysis = $import->analyze(Storage::disk('local')->path($this->path));
+
+            if ($analysis['fileError']) {
+                $this->put(['state' => 'error', 'message' => 'היבוא לא בוצע: '.$analysis['fileError']]);
+
+                return;
+            }
+
+            $rows = $analysis['rows'];
+            $smove = $analysis['smove'];
             $valid = count(array_filter($rows, fn ($row) => $row['data'] !== null));
 
             $this->put(['state' => 'running', 'total' => $valid, 'done' => 0]);
-
-            // Read once, up front: who is already on the Smove list gets linked, not re-joined.
-            $smove = $import->smoveList();
 
             $result = $import->import($rows, $user, $activityLogger, fn (int $done) => $this->put(['state' => 'running', 'total' => $valid, 'done' => $done]), $smove);
 
@@ -69,7 +76,9 @@ class ImportCustomers implements ShouldQueue
                 'done' => $valid,
                 'created' => count($result['created']),
                 'failed' => $result['failed'],
-                'smove' => ['state' => $smove['state'], 'message' => $smove['message'] ?? null] + $result['smove'],
+                'smove' => $result['smove'],
+                // Rows that failed the check here (e.g. a contact removed from Smove since the check screen).
+                'skipped' => count($rows) - $valid,
             ]);
         } catch (Throwable $e) {
             report($e);

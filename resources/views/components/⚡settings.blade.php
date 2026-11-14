@@ -183,8 +183,8 @@ class extends Component
             'valid' => $valid,
             'invalidRows' => count($result['rows']) - $valid,
             'errors' => $errors,
-            // Which of the valid rows' contacts are already on the Smove list (they'll be linked) and which will join it.
-            'smove' => $valid > 0 ? $import->smovePreview($result['rows'], $import->smoveList()) : null,
+            // How many contacts will be linked to the Smove list (every one was checked to be on it).
+            'smove' => $valid > 0 ? $import->smovePreview($result['rows'], $result['smove']) : null,
         ];
 
         if ($result['fileError'] || $valid === 0) {
@@ -1454,7 +1454,7 @@ class extends Component
             <div class="card">
                 <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא.
+                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא, וגם שורה שאיש קשר בה לא נמצא ברשימת התפוצה ב־Smove (לפי כתובת הדוא"ל).
                 </p>
                 <form wire:submit="checkImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
                     <input type="file" id="importFile" wire:model="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
@@ -1480,10 +1480,9 @@ class extends Component
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">אפשר לעזוב את המסך — היבוא ממשיך ברקע.</p>
                 @elseif ($status['state'] === 'done')
                     <h3 style="margin:0 0 var(--sp-sm)">✓ היבוא הסתיים: נוספו {{ $status['created'] }} לקוחות</h3>
-                    @if (($status['smove']['state'] ?? null) === 'ok')
-                        <p style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">Smove: {{ $status['smove']['linked'] }} אנשי קשר קושרו לרשימה הקיימת, {{ $status['smove']['joined'] }} צורפו אליה.</p>
-                    @elseif (($status['smove']['state'] ?? null) === 'error')
-                        <p style="{{ $errStyle }}">Smove: {{ $status['smove']['message'] }} הלקוחות נשמרו במערכת, אבל לא קושרו ל־Smove.</p>
+                    <p style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">{{ $status['smove']['linked'] ?? 0 }} אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove.</p>
+                    @if (! empty($status['skipped']))
+                        <p style="{{ $errStyle }}">{{ $status['skipped'] }} שורות לא יובאו כי לא עברו את הבדיקה החוזרת בזמן היבוא (למשל איש קשר שהוסר בינתיים מרשימת התפוצה ב־Smove). אפשר להעלות את הקובץ שוב כדי לראות את השגיאות.</p>
                     @endif
                     @if (! empty($status['failed']))
                         <p style="{{ $errStyle }}">{{ count($status['failed']) }} שורות לא יובאו:</p>
@@ -1543,19 +1542,12 @@ class extends Component
                     @if ($importCheck['valid'] > 0 && ($smove = $importCheck['smove'] ?? null))
                         <div class="card" style="margin-bottom:var(--sp-md)">
                             <h4 style="margin:0 0 6px">רשימת התפוצה ב־Smove</h4>
-                            @if ($smove['state'] === 'ok')
-                                <ul style="font-size:var(--fs-caption); margin:0; padding-inline-start:18px">
-                                    <li><strong>{{ $smove['linked'] }}</strong> אנשי קשר כבר נמצאים ברשימה ויקושרו אליה, בלי לשלוח להם אישור הרשמה מחדש.</li>
-                                    <li><strong>{{ $smove['new'] }}</strong> אנשי קשר לא נמצאים ברשימה ויצורפו אליה (Smove תשלח להם בקשה לאישור קבלת מיילים).</li>
-                                    @if ($smove['not_receiving'])
-                                        <li style="color:var(--color-warning)"><strong>{{ $smove['not_receiving'] }}</strong> מאלה שברשימה לא מאשרים כרגע קבלת מיילים ב־Smove (הוסרו או לא אישרו). הם יקושרו, אבל מיילים לא יגיעו אליהם עד שיאשרו.</li>
-                                    @endif
-                                </ul>
-                            @elseif ($smove['state'] === 'error')
-                                <p style="color: var(--color-error); font-size:var(--fs-caption); margin:0">{{ $smove['message'] }} אם תייבאי עכשיו, הלקוחות ייכנסו למערכת אבל לא יקושרו ל־Smove ולא יצורפו אליה. עדיף לבדוק את החיבור בהגדרות ← אינטגרציות ולהעלות את הקובץ שוב.</p>
-                            @else
-                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">Smove לא מחובר (או שלא הוגדר מזהה רשימה), ולכן אין מול מה לקשר. הלקוחות יצורפו לרשימת התפוצה במערכת בלבד.</p>
-                            @endif
+                            <ul style="font-size:var(--fs-caption); margin:0; padding-inline-start:18px">
+                                <li>כל אנשי הקשר בשורות התקינות נמצאו ברשימה. <strong>{{ $smove['linked'] }}</strong> אנשי קשר יקושרו אליה, בלי לשלוח להם אישור הרשמה מחדש.</li>
+                                @if ($smove['not_receiving'])
+                                    <li style="color:var(--color-warning)"><strong>{{ $smove['not_receiving'] }}</strong> מהם לא מאשרים כרגע קבלת מיילים ב־Smove (הוסרו או לא אישרו). הם יקושרו, אבל מיילים לא יגיעו אליהם עד שיאשרו.</li>
+                                @endif
+                            </ul>
                         </div>
                     @endif
 
