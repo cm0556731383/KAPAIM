@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>מדריך למשתמשת — כפיים</title>
 <meta name="robots" content="noindex">
-<link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ asset('images/favicon-32.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -144,7 +144,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
     <li>אפשר לסמן <b class="ui">זכרי אותי</b> כדי להישאר מחוברת במחשב הזה.</li>
     <li>לוחצים <b class="ui">כניסה</b>, והמערכת עוברת ל<b>מסך העבודה</b>.</li>
   </ol>
-  <figure><img src="/images/guide/01-login.png" alt="מסך ההתחברות" loading="lazy" width="1440" height="900"><figcaption>מסך ההתחברות</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/01-login.png') }}" alt="מסך ההתחברות" loading="lazy" width="1440" height="900"><figcaption>מסך ההתחברות</figcaption></figure>
   <div class="note info"><strong>אין הרשמה עצמית</strong><p>משתמשות חדשות מוסיפים רק דרך <a href="#users">משתמשות והרשאות</a>. אם שכחת את הסיסמה, בעלת העסק יכולה לאפס אותה משם.</p></div>
   <p>ליציאה מהמערכת לוחצים <b class="ui">יציאה</b> בפינה העליונה של המסך.</p>
 </section>
@@ -165,8 +165,8 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
   <h3>עבודה מהטלפון</h3>
   <p>המערכת מותאמת למסך קטן. בטלפון התפריט מוסתר, ופותחים אותו בכפתור ☰ שבראש המסך.</p>
   <figure class="phones">
-    <img src="/images/guide/20-mobile-home.png" alt="מסך העבודה בטלפון" loading="lazy" width="780" height="1688">
-    <img src="/images/guide/20-mobile-menu.png" alt="התפריט פתוח בטלפון" loading="lazy" width="780" height="1688">
+    <img src="{{ asset('images/guide/20-mobile-home.png') }}" alt="מסך העבודה בטלפון" loading="lazy" width="780" height="1688">
+    <img src="{{ asset('images/guide/20-mobile-menu.png') }}" alt="התפריט פתוח בטלפון" loading="lazy" width="780" height="1688">
     <figcaption style="width:100%">מסך העבודה בטלפון, משמאל עם התפריט פתוח</figcaption>
   </figure>
 </section>
@@ -175,7 +175,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="home">
   <h2><span class="num">3</span>מסך העבודה</h2>
   <p class="lead-text">זה המסך שנפתח אחרי הכניסה. הוא מרכז את מה שדורש טיפול היום, בלי שצריך לחפש.</p>
-  <figure><img src="/images/guide/02-home.png" alt="מסך העבודה" loading="lazy" width="1440" height="900"><figcaption>מסך העבודה: כרטיסי סיכום, משימות ופריטי טיפול</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/02-home.png') }}" alt="מסך העבודה" loading="lazy" width="1440" height="900"><figcaption>מסך העבודה: כרטיסי סיכום, משימות ופריטי טיפול</figcaption></figure>
   <h3>מה רואים במסך</h3>
   <ul>
     <li><b>כותרת:</b> ברכה, התאריך העברי והלועזי, מספר הפריטים שמחכים לטיפול היום, וכפתור <b class="ui">+ ליד חדש</b> לקליטה מהירה.</li>
@@ -191,7 +191,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
   <h2><span class="num">4</span>לידים</h2>
   <p class="lead-text">כל בית ספר שמתעניין נקלט כליד, ונשאר בכרטיס אחד לאורך כל תהליך המכירה. פנייה חוזרת מאותו בית ספר מתועדת באותו כרטיס, ולא נפתח כרטיס חדש.</p>
   <h3>רשימת הלידים</h3>
-  <figure><img src="/images/guide/03-leads.png" alt="רשימת הלידים" loading="lazy" width="1440" height="900"><figcaption>רשימת הלידים עם הסינונים</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/03-leads.png') }}" alt="רשימת הלידים" loading="lazy" width="1440" height="900"><figcaption>רשימת הלידים עם הסינונים</figcaption></figure>
   <ul>
     <li><b>סינון:</b> לפי בית ספר, עיר, מקור פנייה, סטטוס ותוכנית או מארז מבוקש. אפשר לשלב כמה סינונים יחד.</li>
     <li><b>עמודות:</b> בית ספר, איש קשר ראשי, תוכניות מבוקשות, סטטוס, מטפלת, מועד ה־Follow Up הבא ועדכון אחרון.</li>
@@ -205,11 +205,11 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
     <li>בוחרים <b class="ui">מקור פנייה</b> ומוסיפים הערות לפי הצורך.</li>
     <li>לוחצים <b class="ui">+ ליד חדש</b> בתחתית החלון. הליד נוצר עם הסטטוס "חדש", ומשויך אלייך כמטפלת.</li>
   </ol>
-  <figure><img src="/images/guide/03b-new-lead.png" alt="חלון ליד חדש" loading="lazy" width="1440" height="900"><figcaption>חלון קליטת ליד חדש</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/03b-new-lead.png') }}" alt="חלון ליד חדש" loading="lazy" width="1440" height="900"><figcaption>חלון קליטת ליד חדש</figcaption></figure>
   <div class="note info"><strong>לידים מדף הנחיתה</strong><p>כשהחיבור לדף הנחיתה מופעל (ב<a href="#settings">הגדרות מערכת</a> ← אינטגרציות), פניות מהאתר נכנסות כלידים חדשים בלי הקלדה ידנית, ומצורפות לרשימת התפוצה הראשית.</p></div>
 
   <h3>כרטיס הליד</h3>
-  <figure class="tall"><img src="/images/guide/04-lead-detail.png" alt="כרטיס ליד" loading="lazy" width="1440" height="1722"><figcaption>כרטיס ליד: פרטי בית הספר, אנשי קשר, היסטוריה וסטטוס</figcaption></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/04-lead-detail.png') }}" alt="כרטיס ליד" loading="lazy" width="1440" height="1722"><figcaption>כרטיס ליד: פרטי בית הספר, אנשי קשר, היסטוריה וסטטוס</figcaption></figure>
   <p>הכרטיס מחולק לאזורים. כל אזור נשמר בכפתור השמירה שלו.</p>
   <div class="table-wrap"><table>
     <tr><th>אזור</th><th>מה עושים בו</th></tr>
@@ -262,14 +262,14 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="customers">
   <h2><span class="num">5</span>לקוחות</h2>
   <p class="lead-text">לכל בית ספר יש כרטיס לקוחה אחד לאורך כל תקופת ההתקשרות. סניף של רשת מנוהל ככרטיס נפרד.</p>
-  <figure><img src="/images/guide/05-customers.png" alt="רשימת הלקוחות" loading="lazy" width="1440" height="900"><figcaption>רשימת הלקוחות</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/05-customers.png') }}" alt="רשימת הלקוחות" loading="lazy" width="1440" height="900"><figcaption>רשימת הלקוחות</figcaption></figure>
   <p>אפשר לחפש לפי שם בית ספר ולסנן לפי עיר, תוכנית שנרכשה, מנוי פעיל וסטטוס. לקוחות עם מנוי פעיל מסומנות בתגית <b>מנויה פעילה</b>.</p>
 
   <h3>כרטיס הלקוחה</h3>
   <p>בראש הכרטיס מופיעות תגיות מצב (פעילה, מנויה פעילה, חוב פתוח), התאריך שממנו היא לקוחה ושם איש הקשר הראשי. הקישור <b class="ui">כרטיס הליד המקורי</b> מחזיר להיסטוריית המכירה. התוכן מחולק ללשוניות:</p>
 
   <h4>לשונית "בית ספר ואנשי קשר"</h4>
-  <figure><img src="/images/guide/06-customer-info.png" alt="כרטיס לקוחה – בית ספר ואנשי קשר" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/06-customer-info.png') }}" alt="כרטיס לקוחה – בית ספר ואנשי קשר" loading="lazy" width="1440" height="900"></figure>
   <ul>
     <li><b>פרטי בית ספר</b>, כולל <b>שם לחשבונית</b> ו<b>ח.פ.</b>, שמשמשים בהפקת חשבוניות.</li>
     <li><b>אנשי קשר</b>: איש הקשר הראשי הוא ברירת המחדל לנמעני מסמכים, הודעות וחומרי לימוד. הגורם החשבונאי משמש לחשבוניות.</li>
@@ -277,14 +277,14 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
   </ul>
 
   <h4>לשונית "עסקאות"</h4>
-  <figure><img src="/images/guide/06c-customer-deals.png" alt="לשונית עסקאות" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/06c-customer-deals.png') }}" alt="לשונית עסקאות" loading="lazy" width="1440" height="900"></figure>
   <p>כאן רואים את כל העסקאות של הלקוחה, ופותחים עסקה חדשה. ההסבר המלא נמצא בפרק <a href="#deals">עסקאות</a>.</p>
 
   <h4>לשונית "מנוי"</h4>
   <p>המנוי השנתי ויומן האספקה שלו. ההסבר המלא נמצא בפרק <a href="#subscription">מנוי שנתי</a>.</p>
 
   <h4>לשונית "מסמכים ותשלומים"</h4>
-  <figure><img src="/images/guide/06d-customer-billing.png" alt="לשונית מסמכים ותשלומים" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/06d-customer-billing.png') }}" alt="לשונית מסמכים ותשלומים" loading="lazy" width="1440" height="900"></figure>
   <p>תמונת מצב כספית של הלקוחה: יתרת החוב הכוללת, ולכל עסקה הסכום, כמה שולם והיתרה. <b class="ui">פתיחת עסקה</b> מובילה לכרטיס העסקה, ושם מפיקים מסמכים ורושמים תשלומים.</p>
 
   <h4>לשונית "חומרים"</h4>
@@ -310,7 +310,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
   <div class="note info"><strong>מחיר נעול</strong><p>שם התוכנית ומחירה נשמרים בעסקה ברגע המכירה. שינוי מחיר בקטלוג בהמשך לא משנה עסקאות קיימות.</p></div>
 
   <h3>כרטיס העסקה</h3>
-  <figure class="tall"><img src="/images/guide/07-deal.png" alt="כרטיס עסקה" loading="lazy" width="1440" height="2117"><figcaption>כרטיס עסקה: פרטים, סטטוס, מסמכים ותשלומים</figcaption></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/07-deal.png') }}" alt="כרטיס עסקה" loading="lazy" width="1440" height="2117"><figcaption>כרטיס עסקה: פרטים, סטטוס, מסמכים ותשלומים</figcaption></figure>
   <ul>
     <li><b>פרטי המוצר בעת המכירה:</b> התוכנית או המארז והמחיר כפי שנמכרו.</li>
     <li><b>פרטי עסקה:</b> סכום מוסכם, אמצעי תשלום מתוכנן, מספר תלמידות והערות. שומרים ב<b class="ui">שמירת פרטי עסקה</b>.</li>
@@ -354,7 +354,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="documents">
   <h2><span class="num">7</span>מסמכים ושליחתם</h2>
   <p class="lead-text">הצעת מחיר, טופס הזמנה וחוזה נוצרים מתבנית, ונשלחים ללקוחה במייל אחד: קישור לטופס המקוון לאישור, והמסמך מצורף גם כקובץ PDF.</p>
-  <figure class="tall"><img src="/images/guide/08-document-2.png" alt="מסך מסמך" loading="lazy" width="1440" height="1386"><figcaption>מסך מסמך (טופס הזמנה): תוכן, שדות, נמענים וסטטוס תהליך</figcaption></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/08-document-2.png') }}" alt="מסך מסמך" loading="lazy" width="1440" height="1386"><figcaption>מסך מסמך (טופס הזמנה): תוכן, שדות, נמענים וסטטוס תהליך</figcaption></figure>
   <h3>מה יש במסך המסמך</h3>
   <ul>
     <li><b>תוכן המסמך</b>: הטקסט של המסמך, כפי שהלקוחה תראה אותו.</li>
@@ -369,7 +369,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
     <div class="card"><h4>קישור לטופס המקוון</h4><p>הלקוחה ממלאת את השדות החסרים ולוחצת <b>אישור וחתימה</b>. המערכת מתעדכנת מיד, ואין צורך בסימון ידני.</p></div>
     <div class="card"><h4>המסמך כקובץ PDF מצורף</h4><p>אם הלקוחה מעדיפה להדפיס ולחתום, וכשהטופס חוזר חתום, מסמנים במסך המסמך <b class="ui">סימון כטופס שהתקבל</b> או <b class="ui">סימון כחוזה שנחתם</b>, או בטבלת המסמכים בעסקה <b class="ui">סמן כנחתם</b>.</p></div>
   </div>
-  <figure><img src="/images/guide/21-sign-form.png" alt="הטופס הדיגיטלי כפי שהלקוחה רואה" loading="lazy" width="1440" height="900"><figcaption>כך הלקוחה רואה חוזה שנשלח כטופס דיגיטלי</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/21-sign-form.png') }}" alt="הטופס הדיגיטלי כפי שהלקוחה רואה" loading="lazy" width="1440" height="900"><figcaption>כך הלקוחה רואה חוזה שנשלח כטופס דיגיטלי</figcaption></figure>
   <div class="note info"><strong>כל המיילים יוצאים דרך Smove</strong><p>מסמכים, חומרי לימוד ודיוורים נשלחים דרך חשבון ה־Smove של העסק. מסמך שנשלח כבר לא נשלח שוב בטעות, גם אם לוחצים פעמיים או מלשונית ישנה.</p></div>
   <h3>חשבוניות</h3>
   <p>במסך חשבונית מופיע <b>פירוט</b> של שורות (תיאור, כמות, מחיר יחידה וסכום), ואפשר להוסיף שורה ב<b class="ui">+ הוספת שורה נוספת</b>. לוחצים <b class="ui">הפקה מול Summit</b>, והחשבונית מופקת רשמית ב־SUMIT ונשלחת ללקוחה.</p>
@@ -379,7 +379,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="subscription">
   <h2><span class="num">8</span>מנוי שנתי</h2>
   <p class="lead-text">מנוי שנתי הוא עסקה שנותנת זכאות ל־10 תוכניות חודשיות ולהנחה של 10% על תוכניות פרימיום. הוא נפתח כשמוכרים מארז מסוג "מנוי שנתי".</p>
-  <figure class="tall"><img src="/images/guide/06b-customer-subscription.png" alt="לשונית מנוי" loading="lazy" width="1440" height="1254"><figcaption>לשונית המנוי: פרטים ויומן אספקה של 10 התוכניות</figcaption></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/06b-customer-subscription.png') }}" alt="לשונית מנוי" loading="lazy" width="1440" height="1254"><figcaption>לשונית המנוי: פרטים ויומן אספקה של 10 התוכניות</figcaption></figure>
   <h3>פרטי המנוי</h3>
   <p>תאריך התחלה, המחיר שסוכם, ההתקדמות (כמה תוכניות מתוך 10 סופקו) וגובה התשלום החודשי. אפשר לערוך את התשלום החודשי בלחיצה על <b class="ui">עריכה</b>.</p>
   <h3>יומן אספקה</h3>
@@ -405,7 +405,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="materials">
   <h2><span class="num">9</span>שליחת חומרי לימוד</h2>
   <p class="lead-text">שולחים מתוך כרטיס הלקוחה ← לשונית <b>חומרים</b>. השליחה עצמה יוצאת דרך Smove.</p>
-  <figure><img src="/images/guide/06e-customer-materials.png" alt="שליחת חומרים" loading="lazy" width="1440" height="900"><figcaption>שליחת חומרים והיסטוריית משלוחים</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/06e-customer-materials.png') }}" alt="שליחת חומרים" loading="lazy" width="1440" height="900"><figcaption>שליחת חומרים והיסטוריית משלוחים</figcaption></figure>
   <ol class="steps">
     <li>בוחרים <b>תוכנית</b> מבין התוכניות שהלקוחה רכשה.</li>
     <li>מצרפים קבצים: PDF, Word, PowerPoint, תמונה, וידאו או שמע, עד 95MB לקובץ. סרטון גדול יותר מוסיפים כקישור (<b class="ui">+ הוספת קישור</b>), למשל ליוטיוב או לדרייב.</li>
@@ -420,7 +420,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="collections">
   <h2><span class="num">10</span>גבייה ותשלומים</h2>
   <p class="lead-text">מסך מרוכז של כל מה שפתוח לגבייה בכל הלקוחות.</p>
-  <figure><img src="/images/guide/09-collections.png" alt="גבייה ותשלומים" loading="lazy" width="1440" height="900"><figcaption>מסך גבייה ותשלומים</figcaption></figure>
+  <figure><img src="{{ asset('images/guide/09-collections.png') }}" alt="גבייה ותשלומים" loading="lazy" width="1440" height="900"><figcaption>מסך גבייה ותשלומים</figcaption></figure>
   <ul>
     <li><b>סך פתוח לגבייה</b> ו<b>מספר עסקאות ממתינות לתשלום</b>.</li>
     <li><b>עסקאות ממתינות לתשלום</b>: לכל עסקה מוצגים בית הספר, הסכום, כמה שולם, יתרת החוב, אמצעי התשלום, מה נשלח ללקוחה (חשבונית או קישור תשלום) ויעד משימת הגבייה. הכפתור <b class="ui">רישום תשלום</b> מוביל ישר לעסקה.</li>
@@ -433,7 +433,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="mailing">
   <h2><span class="num">11</span>רשימות תפוצה</h2>
   <p class="lead-text">המערכת מעדכנת לבד את חברות הרשימות לפי המצב העסקי, וממסך זה אפשר גם לשלוח מייל לרשימות.</p>
-  <figure class="tall"><img src="/images/guide/10-mailing-lists.png" alt="רשימות תפוצה" loading="lazy" width="1440" height="1380"><figcaption>רשימות התפוצה ושליחת מייל</figcaption></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/10-mailing-lists.png') }}" alt="רשימות תפוצה" loading="lazy" width="1440" height="1380"><figcaption>רשימות התפוצה ושליחת מייל</figcaption></figure>
   <h3>איך הרשימות מתעדכנות אוטומטית</h3>
   <ul>
     <li><b>ליד חדש</b> מצטרף לרשימה הכללית.</li>
@@ -457,17 +457,17 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
   <h2><span class="num">12</span>ספקים, הוצאות ודוח הכנסות והוצאות</h2>
   <p class="lead-text">שלושה מסכים מקושרים, שעוברים ביניהם בכפתורים שבראש כל מסך.</p>
   <h3>ספקים</h3>
-  <figure><img src="/images/guide/11-suppliers.png" alt="ספקים" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/11-suppliers.png') }}" alt="ספקים" loading="lazy" width="1440" height="900"></figure>
   <p>מוסיפים ספק עם שם, מספר חברה, סיווג עסקי, טלפון, דוא"ל והערות. כל ספק חדש מצטרף אוטומטית לרשימת התפוצה של הספקים.</p>
   <h3>הוצאות</h3>
-  <figure><img src="/images/guide/12-expenses.png" alt="הוצאות" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/12-expenses.png') }}" alt="הוצאות" loading="lazy" width="1440" height="900"></figure>
   <ol class="steps">
     <li>ממלאים תאריך, סכום וספק. אפשר גם לשייך את ההוצאה לתוכנית, וזה לא חובה.</li>
     <li>לוחצים <b class="ui">שמירת הוצאה</b>.</li>
     <li>בטבלה רואים לכל הוצאה אם יש לה חשבונית. <b class="ui">צירוף חשבונית</b> מאפשר לצרף אותה מאוחר יותר, והשורה תעבור מ"חסרה חשבונית" ל"יש חשבונית".</li>
   </ol>
   <h3>דוח הכנסות והוצאות</h3>
-  <figure class="tall"><img src="/images/guide/13-cashflow.png" alt="דוח הכנסות והוצאות" loading="lazy" width="1440" height="1063"></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/13-cashflow.png') }}" alt="דוח הכנסות והוצאות" loading="lazy" width="1440" height="1063"></figure>
   <ul>
     <li><b>בנוי כמו דוח רווח והפסד:</b> כרטיסי סיכום של הכנסות, הוצאות ורווח נקי, ומתחתם טבלה שנפתחת מרוכזת. לחיצה על הכנסות פותחת את התוכניות ומשם את התשלומים, ולחיצה על הוצאות פותחת את הספקים ומשם את ההוצאות. הכנסה ממנוי נפרשת שווה בשווה על פני 10 חודשי המנוי, גם אם שולם מראש. במנוי שבוטל נספרים רק החודשים שלפני הביטול, בניכוי הזיכוי.</li>
     <li><b>סינון:</b> שלוש רשימות בשורה אחת: שנים, חודשים ותוכניות, בכל שילוב. בהתחלה הכול מסומן. לחיצה על "הכל" מסירה את כל הסימונים, כדי לבחור פריט אחד או כמה, ולחיצה נוספת מסמנת שוב הכול. אפשר גם לבטל סימון של פריט בודד.</li>
@@ -478,7 +478,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <!-- 13 -->
 <section class="chapter" id="catalog">
   <h2><span class="num">13</span>קטלוג תוכניות ומארזים</h2>
-  <figure><img src="/images/guide/14-programs.png" alt="קטלוג תוכניות" loading="lazy" width="1440" height="955"></figure>
+  <figure><img src="{{ asset('images/guide/14-programs.png') }}" alt="קטלוג תוכניות" loading="lazy" width="1440" height="955"></figure>
   <h3>תוכניות</h3>
   <p>מוסיפים תוכנית חודשית או פרימיום עם שם, תיאור ומחיר. מסמנים <b>תוכנית פרימיום</b> כשרלוונטי, ולוחצים <b class="ui">יצירת תוכנית</b>.</p>
   <ul>
@@ -496,7 +496,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <section class="chapter" id="templates">
   <h2><span class="num">14</span>תבניות מסמכים</h2>
   <p class="lead-text">מכאן קובעים איך ייראו הצעת המחיר, טופס ההזמנה והחוזה. התבניות נמצאות ב<a href="#settings">הגדרות מערכת</a> ← לשונית <b>תבניות מסמכים</b>.</p>
-  <figure class="tall"><img src="/images/guide/15-templates.png" alt="תבניות מסמכים" loading="lazy" width="1440" height="1693"></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/15-templates.png') }}" alt="תבניות מסמכים" loading="lazy" width="1440" height="1693"></figure>
   <ol class="steps">
     <li>לוחצים <b class="ui">עריכה</b> בתבנית הרצויה.</li>
     <li>נותנים שם, בוחרים <b>סוג מסמך</b> וכותבים את <b>מלל התבנית</b>. אפשר לבחור גם גודל גופן.</li>
@@ -522,7 +522,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
     <tr><td><b>אינטגרציות</b></td><td>חיבור ל־Smove, ל־SUMIT ולדף הנחיתה (ראו בהמשך).</td></tr>
   </table></div>
   <h3>אינטגרציות</h3>
-  <figure class="tall"><img src="/images/guide/16g-settings-integrations.png" alt="הגדרות – אינטגרציות" loading="lazy" width="1440" height="1426"></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/16g-settings-integrations.png') }}" alt="הגדרות – אינטגרציות" loading="lazy" width="1440" height="1426"></figure>
   <ul>
     <li>לכל חיבור יש כרטיס משלו, ובראשו הסטטוס וכפתור <b class="ui">השבתה</b>/<b class="ui">הפעלה</b>. כשחיבור <b>מושבת</b>, המערכת לא פונה אליו בכלל.</li>
     <li><b>Smove:</b> מפתח API (בתוך המסך יש הסבר איפה מוצאים אותו), מזהה רשימה ומספר השעות לפני התזכורת על חומרים שלא אושרו.</li>
@@ -535,7 +535,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <!-- 16 -->
 <section class="chapter" id="users">
   <h2><span class="num">16</span>משתמשות והרשאות</h2>
-  <figure class="tall"><img src="/images/guide/17-users.png" alt="משתמשות והרשאות" loading="lazy" width="1440" height="1312"></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/17-users.png') }}" alt="משתמשות והרשאות" loading="lazy" width="1440" height="1312"></figure>
   <h3>הוספת משתמשת</h3>
   <ol class="steps">
     <li>באזור <b>הוספת משתמשת חדשה</b> ממלאים שם מלא, אימייל מערכת (לכניסה), אימייל אישי ותפקיד.</li>
@@ -552,7 +552,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <!-- 17 -->
 <section class="chapter" id="activity">
   <h2><span class="num">17</span>יומן פעילות</h2>
-  <figure class="tall"><img src="/images/guide/18-activity.png" alt="יומן פעילות" loading="lazy" width="1440" height="1835"></figure>
+  <figure class="tall"><img src="{{ asset('images/guide/18-activity.png') }}" alt="יומן פעילות" loading="lazy" width="1440" height="1835"></figure>
   <p>כל פעולה משמעותית במערכת נרשמת כאן: מי עשתה, מתי ומה. פעולות שהמערכת ביצעה לבד מסומנות <b>אוטומטי</b>, למשל משיכת תשלום מ־SUMIT או הצטרפות לרשימת תפוצה. אפשר לסנן לפי משתמשת וטווח תאריכים.</p>
   <div class="note tip"><strong>מתי זה שימושי?</strong><p>כשרוצים לדעת מי שינתה סטטוס, מתי נשלח מסמך, או למה פעולה מול Smove או SUMIT נכשלה. הודעת השגיאה המלאה מופיעה בתיאור.</p></div>
 </section>
@@ -560,7 +560,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 <!-- 18 -->
 <section class="chapter" id="search">
   <h2><span class="num">18</span>חיפוש גלובלי</h2>
-  <figure><img src="/images/guide/19-search.png" alt="חיפוש גלובלי" loading="lazy" width="1440" height="900"></figure>
+  <figure><img src="{{ asset('images/guide/19-search.png') }}" alt="חיפוש גלובלי" loading="lazy" width="1440" height="900"></figure>
   <p>מקלידים שם, טלפון או שם בית ספר, והתוצאות מופיעות תוך כדי הקלדה. החיפוש מוצא גם לידים וגם לקוחות, כך שלא צריך לדעת מראש אם בית הספר עדיין ליד או כבר לקוחה.</p>
 </section>
 
@@ -589,7 +589,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 4
 
 <nav class="toc" id="toc" aria-label="תוכן העניינים">
   <div class="toc-inner">
-    <img src="/images/logo-transparent.png" alt="כפיים">
+    <img src="{{ asset('images/logo-transparent.png') }}" alt="כפיים">
     <h2>תוכן העניינים</h2>
     <ol>
       <li><a href="#login">כניסה למערכת</a></li>
