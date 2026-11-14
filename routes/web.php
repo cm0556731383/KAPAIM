@@ -281,6 +281,22 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/mailing-lists', 'mailing-lists')->name('mailing-lists');
     Route::livewire('/suppliers', 'suppliers')->name('suppliers');
     Route::livewire('/expenses', 'expenses')->name('expenses');
+    // Settings → יבוא נתונים: the blank customers file to fill in (App\Services\CustomerImport::template()).
+    Route::get('/settings/import/customers-template', function (\App\Services\CustomerImport $import) {
+        abort_unless(auth()->user()->can('settings.view'), 403);
+
+        ob_start();
+        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($import->template()))->save('php://output');
+        $xlsx = (string) ob_get_clean();
+
+        return response($xlsx, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Length' => strlen($xlsx),
+            'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+                'attachment', 'יבוא לקוחות.xlsx', 'customers-import.xlsx',
+            ),
+        ]);
+    })->name('settings.import-template');
     Route::get('/expenses/export', function (\App\Services\ExpensesSpreadsheet $spreadsheet) {
         abort_unless(auth()->user()->can('expenses.view'), 403);
 

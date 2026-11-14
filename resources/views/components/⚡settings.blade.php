@@ -97,6 +97,22 @@ class extends Component
     // ===== מנויים =====
     public string $subscriptionStartMonth = '';
 
+    // ===== יבוא נתונים (App\Services\CustomerImport) =====
+    /** The filled customers file, just uploaded. */
+    public $importFile = null;
+
+    /** Where the checked file waits on disk for the import (storage/app/imports). */
+    #[\Livewire\Attributes\Locked]
+    public ?string $importPath = null;
+
+    /** The check's outcome: fileError, total, valid, errors (row, school, column, message). */
+    #[\Livewire\Attributes\Locked]
+    public array $importCheck = [];
+
+    /** The import running in the background (App\Jobs\ImportCustomers), once started. */
+    #[\Livewire\Attributes\Locked]
+    public ?string $importId = null;
+
     public function mount(): void
     {
         abort_unless(auth()->user()->can('settings.view'), 403);
@@ -132,6 +148,101 @@ class extends Component
      * is no longer one of them — it's a fixed vendor address, hardcoded in
      * SmoveClient — the business owner never had a "server address" to know.
      */
+    // ----- יבוא נתונים -----
+
+    /** Reads the uploaded file and checks every row — nothing is saved yet. */
+    public function checkImport(\App\Services\CustomerImport $import): void
+    {
+        $this->validate(['importFile' => ['required', 'file', 'max:10240', 'mimes:xlsx']], [
+            'importFile.required' => 'יש לבחור קובץ.',
+            'importFile.mimes' => 'יש להעלות קובץ אקסל (xlsx).',
+            'importFile.max' => 'הקובץ גדול מדי (עד 10MB).',
+        ]);
+
+        $this->discardImportFile();
+        $this->importId = null;
+
+        $path = $this->importFile->store('imports', 'local');
+        $this->importFile = null;
+
+        $result = $import->analyze(\Illuminate\Support\Facades\Storage::disk('local')->path($path));
+
+        $errors = [];
+
+        foreach ($result['rows'] as $row) {
+            foreach ($row['errors'] as $column => $message) {
+                $errors[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column, 'message' => $message];
+            }
+        }
+
+        $valid = count(array_filter($result['rows'], fn ($row) => $row['data'] !== null));
+
+        $this->importCheck = [
+            'fileError' => $result['fileError'],
+            'total' => count($result['rows']),
+            'valid' => $valid,
+            'invalidRows' => count($result['rows']) - $valid,
+            'errors' => $errors,
+        ];
+
+        if ($result['fileError'] || $valid === 0) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($path);
+        } else {
+            $this->importPath = $path;
+        }
+    }
+
+    /** Imports the rows that passed the check, in the background. */
+    public function runImport(): void
+    {
+        if (! auth()->user()->hasPermission('settings', 'edit')) {
+            $this->notifyError('אין לך הרשאת עריכה בהגדרות — לא ניתן לייבא.');
+
+            return;
+        }
+
+        if (! $this->importPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->importPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetImport();
+
+            return;
+        }
+
+        $this->importId = (string) \Illuminate\Support\Str::uuid();
+        \Illuminate\Support\Facades\Cache::put(\App\Jobs\ImportCustomers::cacheKey($this->importId), ['state' => 'queued', 'total' => $this->importCheck['valid'] ?? 0, 'done' => 0], now()->addDay());
+
+        \App\Jobs\ImportCustomers::dispatch($this->importId, $this->importPath, auth()->id());
+
+        // The job owns the file now and deletes it when done.
+        $this->importPath = null;
+    }
+
+    public function resetImport(): void
+    {
+        $this->discardImportFile();
+        $this->reset(['importFile', 'importCheck', 'importId']);
+    }
+
+    private function discardImportFile(): void
+    {
+        if ($this->importPath) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($this->importPath);
+            $this->importPath = null;
+        }
+    }
+
+    #[Computed]
+    public function importStatus(): ?array
+    {
+        return $this->importId ? \App\Jobs\ImportCustomers::status($this->importId) : null;
+    }
+
+    #[Computed]
+    public function importColumns(): array
+    {
+        return \App\Services\CustomerImport::COLUMNS;
+    }
+
     /** HebrewCalendar: the Hebrew month that is month 1 of a newly opened subscription. */
     public function saveSubscriptionSettings(ActivityLogger $activityLogger): void
     {
@@ -780,6 +891,7 @@ class extends Component
         <span class="{{ $activeTab === 'document-templates' ? 'active' : '' }}" wire:click="$set('activeTab', 'document-templates')">תבניות מסמכים</span>
         @endcan
         <span class="{{ $activeTab === 'integrations' ? 'active' : '' }}" wire:click="$set('activeTab', 'integrations')">אינטגרציות</span>
+        <span class="{{ $activeTab === 'import' ? 'active' : '' }}" wire:click="$set('activeTab', 'import')">יבוא נתונים</span>
     </div>
 
     @if ($activeTab === 'subscriptions')
@@ -1316,6 +1428,136 @@ class extends Component
                 </form>
             </div>
         </div>
+    </section>
+    @endif
+    @if ($activeTab === 'import')
+    {{-- ===== יבוא נתונים — customers from an Excel file (App\Services\CustomerImport) ===== --}}
+    @php($errStyle = 'color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;')
+    <section class="settings-section">
+        <div class="section-head">
+            <h2>יבוא לקוחות מאקסל</h2>
+            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מורידים את הקובץ, ממלאים שורה לכל לקוחה ומעלים. המערכת בודקת את כל הקובץ ומציגה את השגיאות לפני שמשהו נשמר.</p>
+        </div>
+
+        <div class="cols2">
+            <div class="card">
+                <h3 style="margin:0 0 4px">1. הורדת הקובץ למילוי</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
+                    קובץ אקסל עם כל השדות של כרטיס הלקוח: פרטי המוסד, פרטים נוספים, איש קשר ראשי ואיש קשר להנהלת חשבונות.
+                    עמודות החובה מסומנות ב־* ובכתום. בגיליון "הוראות" יש הסבר על כל עמודה.
+                </p>
+                <a href="{{ route('settings.import-template') }}" class="btn btn-secondary">הורדת קובץ האקסל</a>
+            </div>
+
+            <div class="card">
+                <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
+                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
+                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא.
+                </p>
+                <form wire:submit="checkImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
+                    <input type="file" id="importFile" wire:model="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                    @error('importFile') <div style="{{ $errStyle }}">{{ $message }}</div> @enderror
+                    <div>
+                        <button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="importFile,checkImport">
+                            <span wire:loading.remove wire:target="checkImport">בדיקת הקובץ</span>
+                            <span wire:loading wire:target="checkImport">בודקת…</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        @if ($this->importStatus)
+            @php($status = $this->importStatus)
+            <div class="card" style="margin-top: var(--sp-md)" @if (in_array($status['state'], ['queued', 'running'], true)) wire:poll.2s @endif>
+                @if (in_array($status['state'], ['queued', 'running'], true))
+                    <h3 style="margin:0 0 var(--sp-sm)">מייבאת… {{ $status['done'] ?? 0 }} מתוך {{ $status['total'] ?? 0 }}</h3>
+                    <div style="height:8px; background:var(--color-border); border-radius:4px; overflow:hidden">
+                        <div style="height:100%; width:{{ ($status['total'] ?? 0) ? round(100 * ($status['done'] ?? 0) / $status['total']) : 0 }}%; background:var(--color-primary); transition:width .3s"></div>
+                    </div>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">אפשר לעזוב את המסך — היבוא ממשיך ברקע.</p>
+                @elseif ($status['state'] === 'done')
+                    <h3 style="margin:0 0 var(--sp-sm)">✓ היבוא הסתיים: נוספו {{ $status['created'] }} לקוחות</h3>
+                    @if (! empty($status['failed']))
+                        <p style="{{ $errStyle }}">{{ count($status['failed']) }} שורות לא יובאו:</p>
+                        <ul style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
+                            @foreach ($status['failed'] as $failure)
+                                <li>שורה {{ $failure['row'] }} ({{ $failure['school'] }}): {{ $failure['error'] }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+                    <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                        @can('customers.view')<a href="{{ route('customers') }}" class="btn btn-primary">למסך הלקוחות</a>@endcan
+                        <button type="button" wire:click="resetImport" class="btn btn-ghost">יבוא קובץ נוסף</button>
+                    </div>
+                @else
+                    <p style="{{ $errStyle }}">{{ $status['message'] ?? 'היבוא נכשל.' }}</p>
+                    <button type="button" wire:click="resetImport" class="btn btn-ghost">התחלה מחדש</button>
+                @endif
+            </div>
+        @elseif ($importCheck)
+            <div class="card" style="margin-top: var(--sp-md)">
+                @if ($importCheck['fileError'])
+                    <p style="color: var(--color-error); margin:0 0 var(--sp-sm)">{{ $importCheck['fileError'] }}</p>
+                    <button type="button" wire:click="resetImport" class="btn btn-ghost">העלאת קובץ אחר</button>
+                @else
+                    <h3 style="margin:0 0 var(--sp-sm)">תוצאות הבדיקה</h3>
+                    <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap; margin-bottom:var(--sp-md)">
+                        <span class="badge badge-neutral">{{ $importCheck['total'] }} שורות בקובץ</span>
+                        <span class="badge badge-success">{{ $importCheck['valid'] }} תקינות</span>
+                        @if ($importCheck['invalidRows'])
+                            <span class="badge badge-error">{{ $importCheck['invalidRows'] }} עם שגיאות</span>
+                        @endif
+                    </div>
+
+                    @if ($importCheck['errors'])
+                        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+                            <div class="table-scroll" style="max-height:420px; overflow-y:auto">
+                            <table>
+                                <thead><tr><th>שורה</th><th>מוסד</th><th>עמודה</th><th>שגיאה</th></tr></thead>
+                                <tbody>
+                                    @foreach (array_slice($importCheck['errors'], 0, 500) as $error)
+                                        <tr>
+                                            <td class="ltr-num">{{ $error['row'] }}</td>
+                                            <td>{{ $error['school'] ?: '—' }}</td>
+                                            <td>{{ $error['column'] }}</td>
+                                            <td style="color: var(--color-error)">{{ $error['message'] }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                            </div>
+                        </div>
+                        @if (count($importCheck['errors']) > 500)
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption)">מוצגות 500 השגיאות הראשונות מתוך {{ count($importCheck['errors']) }}.</p>
+                        @endif
+                    @endif
+
+                    @if ($importCheck['valid'] > 0)
+                        @if ($importCheck['invalidRows'])
+                            <p class="text-text-secondary" style="font-size:var(--fs-caption)">
+                                אפשר לתקן את השגיאות בקובץ ולהעלות אותו שוב, או לייבא עכשיו רק את השורות התקינות.
+                                השורות עם השגיאות לא ייובאו. אם אחר כך מעלים את אותו קובץ אחרי תיקון, השורות שכבר יובאו יסומנו כקיימות וידולגו.
+                            </p>
+                        @endif
+                        <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
+                            @can('settings.edit')
+                                <button type="button" wire:click="runImport" wire:loading.attr="disabled" class="btn btn-primary"
+                                    wire:confirm="לייבא {{ $importCheck['valid'] }} לקוחות חדשות? לא ניתן למחוק לקוחות אחרי היבוא.">
+                                    ייבוא {{ $importCheck['valid'] }} {{ $importCheck['invalidRows'] ? 'השורות התקינות' : 'לקוחות' }}
+                                </button>
+                            @else
+                                <span class="text-text-secondary" style="font-size:var(--fs-caption)">ליבוא עצמו נדרשת הרשאת עריכה בהגדרות.</span>
+                            @endcan
+                            <button type="button" wire:click="resetImport" class="btn btn-ghost">ביטול</button>
+                        </div>
+                    @else
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין שורות תקינות ליבוא. יש לתקן את השגיאות בקובץ ולהעלות אותו שוב.</p>
+                        <button type="button" wire:click="resetImport" class="btn btn-ghost">העלאת קובץ אחר</button>
+                    @endif
+                @endif
+            </div>
+        @endif
     </section>
     @endif
     <x-email-preview />
