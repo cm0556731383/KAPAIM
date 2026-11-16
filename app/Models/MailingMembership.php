@@ -183,7 +183,7 @@ class MailingMembership extends Model
      */
     public static function syncContact(Customer $customer, Contact $contact): void
     {
-        if (empty($contact->email)) {
+        if (empty($contact->email) || $contact->isAccountingOnly()) {
             return;
         }
 
@@ -203,12 +203,12 @@ class MailingMembership extends Model
         }
     }
 
-    /** Every CONTACT row (2026-09-08: all of them, not just the primary) with a real email, shaped for pushToSmove()'s $contact param — tagged with a per-contact externalId so Smove keeps one distinct record per row. */
-    private static function contactsToSync(Customer $customer): array
+    /** Every CONTACT row (2026-09-08: all of them, not just the primary; 2026-11-16: minus accounting-only ones, which get accounting mail only) with a real email, shaped for pushToSmove()'s $contact param — tagged with a per-contact externalId so Smove keeps one distinct record per row. */
+    private static function contactsToSync(Customer $customer, bool $includeAccountingOnly = false): array
     {
         return $customer->contacts()
             ->get()
-            ->filter(fn (Contact $contact) => filled($contact->email))
+            ->filter(fn (Contact $contact) => filled($contact->email) && ($includeAccountingOnly || ! $contact->isAccountingOnly()))
             ->map(fn (Contact $contact) => [
                 'email' => $contact->email,
                 'name' => $contact->name,
@@ -276,7 +276,8 @@ class MailingMembership extends Model
             ->update(['membership_status' => self::STATUS_REMOVED, 'removed_at' => now()]);
 
         if ($affected > 0) {
-            foreach (self::contactsToSync($customer) as $contact) {
+            // Including accounting-only contacts, in case one was joined before that rule.
+            foreach (self::contactsToSync($customer, includeAccountingOnly: true) as $contact) {
                 self::pushToSmove('remove', $list, $contact, ['customer_id' => $customer->id]);
             }
         }

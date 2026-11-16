@@ -75,7 +75,8 @@ class MailingList extends Model
 
     /**
      * Who an email to this list reaches: each active member's email(s) — a
-     * lead's own, every contact with an email of a customer, a supplier's —
+     * lead's own, every contact with an email of a customer (except an
+     * accounting-only one, Contact::isAccountingOnly()), a supplier's —
      * one entry per address.
      *
      * @return array<int, array{email: string, name: ?string}>
@@ -90,7 +91,7 @@ class MailingList extends Model
             // new customer_id (Lead::convertToCustomer()) — the customer's
             // contacts are who it reaches from then on.
             ->flatMap(fn (MailingMembership $m) => match (true) {
-                $m->customer_id !== null => ($m->customer?->contacts ?? collect())->map(fn ($c) => ['email' => $c->email, 'name' => $c->name])->all(),
+                $m->customer_id !== null => ($m->customer?->contacts ?? collect())->reject(fn ($c) => $c->isAccountingOnly())->map(fn ($c) => ['email' => $c->email, 'name' => $c->name])->all(),
                 $m->lead_id !== null => [['email' => $m->lead?->email, 'name' => $m->lead?->school?->name]],
                 $m->supplier_id !== null => [['email' => $m->supplier?->email, 'name' => $m->supplier?->name]],
                 default => [],

@@ -449,6 +449,33 @@ class MaterialsMailingTest extends TestCase
         });
     }
 
+    public function test_an_accounting_only_contact_gets_no_mailing_list_or_materials_email(): void
+    {
+        $customer = $this->createCustomerWithEmailContact();
+        $primary = Contact::where('customer_id', $customer->id)->first();
+        $accounting = Contact::create([
+            'school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'הנהלת חשבונות',
+            'email' => 'books@example.com', 'is_primary' => false, 'is_accounting_contact' => true,
+        ]);
+        $both = Contact::create([
+            'school_id' => $customer->school_id, 'customer_id' => $customer->id, 'name' => 'מנהלת וגם חשבונאית',
+            'email' => 'both@example.com', 'is_primary' => true, 'is_accounting_contact' => true,
+        ]);
+        MailingMembership::addCustomer(MailingList::primaryList(), $customer);
+
+        $listEmails = collect(MailingList::primaryList()->recipients())->pluck('email');
+        $this->assertContains($primary->email, $listEmails);
+        $this->assertContains($both->email, $listEmails);
+        $this->assertNotContains($accounting->email, $listEmails);
+
+        $materialIds = MaterialDelivery::defaultRecipients($customer)->pluck('id');
+        $this->assertNotContains($accounting->id, $materialIds);
+        $this->assertContains($both->id, $materialIds);
+
+        $this->assertTrue($accounting->isAccountingOnly());
+        $this->assertFalse($both->isAccountingOnly());
+    }
+
     public function test_materials_can_be_attached_to_a_mailing_list_email(): void
     {
         \Illuminate\Support\Facades\Queue::fake();

@@ -1254,7 +1254,7 @@ class Document extends Model
         // A lead's quote goes to the school's primary contacts — any contact
         // with an email when none is flagged, else the lead's own email.
         if ($this->isPendingLeadQuote()) {
-            $contacts = Contact::where('school_id', $this->lead->school_id)->orderByDesc('is_primary')->orderBy('id')->get()
+            $contacts = Contact::where('school_id', $this->lead->school_id)->receivesGeneralMail()->orderByDesc('is_primary')->orderBy('id')->get()
                 ->filter(fn (Contact $c) => filled($c->email));
             $primary = $contacts->where('is_primary', true);
 

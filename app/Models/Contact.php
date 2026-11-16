@@ -37,6 +37,23 @@ class Contact extends Model
         ];
     }
 
+    /**
+     * A contact flagged only as the accounting contact (גורם חשבונאי, not
+     * also primary) receives accounting mail only — invoices, receipts,
+     * payment links — never mailing-list sends, study materials or quotes.
+     * A contact who is both primary and accounting gets everything.
+     */
+    public function isAccountingOnly(): bool
+    {
+        return $this->is_accounting_contact && ! $this->is_primary;
+    }
+
+    /** Contacts that may receive general (non-accounting) mail — see isAccountingOnly(). */
+    public function scopeReceivesGeneralMail($query)
+    {
+        return $query->where(fn ($q) => $q->where('is_accounting_contact', false)->orWhere('is_primary', true));
+    }
+
     public function school(): BelongsTo
     {
         return $this->belongsTo(School::class);
