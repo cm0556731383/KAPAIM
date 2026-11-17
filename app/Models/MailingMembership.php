@@ -199,6 +199,7 @@ class MailingMembership extends Model
                 'email' => $contact->email,
                 'name' => $contact->name,
                 'external_id' => "contact-{$contact->id}",
+                'contact_id' => $contact->id,
             ], ['customer_id' => $customer->id, 'contact_id' => $contact->id]);
         }
     }
@@ -213,6 +214,7 @@ class MailingMembership extends Model
                 'email' => $contact->email,
                 'name' => $contact->name,
                 'external_id' => "contact-{$contact->id}",
+                'contact_id' => $contact->id,
             ])
             ->all();
     }
@@ -278,6 +280,12 @@ class MailingMembership extends Model
         if ($affected > 0) {
             // Including accounting-only contacts, in case one was joined before that rule.
             foreach (self::contactsToSync($customer, includeAccountingOnly: true) as $contact) {
+                // Smove keeps ONE contact per email: an email another customer still
+                // on this list also uses must stay subscribed for that customer.
+                if (self::emailUsedByAnotherActiveCustomer($list, $customer, $contact['email'])) {
+                    continue;
+                }
+
                 self::pushToSmove('remove', $list, $contact, ['customer_id' => $customer->id]);
             }
         }
@@ -308,6 +316,19 @@ class MailingMembership extends Model
      * confirms once and every later local list join (a program, the
      * subscribers list) is purely local.
      */
+    private static function emailUsedByAnotherActiveCustomer(MailingList $list, Customer $customer, string $email): bool
+    {
+        $activeCustomers = self::where('mailing_list_id', $list->id)
+            ->where('membership_status', self::STATUS_ACTIVE)
+            ->whereNotNull('customer_id')
+            ->where('customer_id', '!=', $customer->id)
+            ->select('customer_id');
+
+        return Contact::whereIn('customer_id', $activeCustomers)
+            ->whereRaw('LOWER(TRIM(email)) = ?', [mb_strtolower(trim($email))])
+            ->exists();
+    }
+
     private static function pushToSmove(string $action, MailingList $list, array $contact, array $context): void
     {
         if (empty($contact['email'])) {
@@ -327,12 +348,19 @@ class MailingMembership extends Model
 
         $smove = app(SmoveClient::class);
 
-        app(ExternalOperationRunner::class)->run(
+        $operation = app(ExternalOperationRunner::class)->run(
             'smove',
             'mailing_list_'.$action,
             'app_action',
             fn () => $smove->syncMailingListMembership($smove->listId(), $action, $contact),
             array_merge($context, ['description' => ($action === 'join' ? 'הצטרפות' : 'הסרה')." מרשימת תפוצה \"{$list->name}\""]),
         );
+
+        // A joined contact is linked to its Smove contact (contacts.smove_contact_id),
+        // like the customer import links them — the card shows it as "Smove".
+        if ($action === 'join' && ($contact['contact_id'] ?? null) && $smove->lastContactId
+            && $operation->status === ExternalOperation::STATUS_SUCCESS) {
+            Contact::whereKey($contact['contact_id'])->update(['smove_contact_id' => $smove->lastContactId]);
+        }
     }
 }

@@ -29,6 +29,18 @@ class Contact extends Model
         SoftDeletes::restore as private restoreSoftDelete;
     }
 
+    protected static function booted(): void
+    {
+        // A new email is a different person on Smove: drop the old link until
+        // the next join / smove:link-contacts finds the new one.
+        static::updating(function (Contact $contact) {
+            if ($contact->isDirty('email') && ! $contact->isDirty('smove_contact_id')
+                && mb_strtolower(trim((string) $contact->email)) !== mb_strtolower(trim((string) $contact->getOriginal('email')))) {
+                $contact->smove_contact_id = null;
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

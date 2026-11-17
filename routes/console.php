@@ -40,3 +40,8 @@ Schedule::command('subscriptions:end-expired')->daily();
 // owner's request (each SUMIT API call may be billed). The command reads 3
 // days back, so a missed run is caught up. See App\Console\Commands\SyncSumitPayments.
 Schedule::command('sumit:sync-payments')->twiceDaily(8, 20)->withoutOverlapping();
+
+// Marks which contacts are on the Smove list (by email) — the "Smove" badge on
+// the customer card. Reads the list only, sends nothing. See
+// App\Console\Commands\LinkSmoveContacts.
+Schedule::command('smove:link-contacts')->dailyAt('03:30')->withoutOverlapping();

@@ -129,6 +129,9 @@ class SmoveClient
         return $contacts;
     }
 
+    /** The Smove contact id the last syncMailingListMembership() answered with, when it gave one. */
+    public ?int $lastContactId = null;
+
     /**
      * FR-1.17/FR-5.21-FR-5.26: join/remove a lead/customer/supplier on a
      * Smove mailing list. Smove has no lookup-by-name — $listId is the one
@@ -165,6 +168,7 @@ class SmoveClient
      */
     public function syncMailingListMembership(int|array|null $listId, string $action, array $contact): string
     {
+        $this->lastContactId = null;
         $this->assertConfigured();
 
         $listIds = array_values(array_filter(is_array($listId) ? $listId : [$listId]));
@@ -182,7 +186,11 @@ class SmoveClient
             'lists_ToUnsubscribe' => $action === 'remove' ? $listIds : null,
         ], fn ($v) => $v !== null));
 
-        return $this->referenceOrFail($response);
+        $reference = $this->referenceOrFail($response);
+        $id = $response->json('id');
+        $this->lastContactId = is_numeric($id) && (int) $id > 0 ? (int) $id : null;
+
+        return $reference;
     }
 
     /**

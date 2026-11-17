@@ -276,7 +276,7 @@ class CustomerImport
     /**
      * Reads and checks a filled file. Returns:
      *   'fileError' => a reason the file can't be imported at all, else null
-     *   'rows'      => [['row' => sheet row number, 'school' => name, 'data' => normalized values, 'errors' => [column header => message]]]
+     *   'rows'      => [['row' => sheet row number, 'school' => name, 'data' => normalized values, 'errors' => [column header => message], 'warnings' => [column header => message]]]
      *   'smove'     => the Smove list it was checked against (smoveList())
      */
     public function analyze(string $path, ?array $smove = null): array
@@ -409,6 +409,16 @@ class CustomerImport
         $seenNames = [];
         $seenNumbers = [];
 
+        // A contact email already used elsewhere is a warning, not an error (an
+        // accountant may well serve several schools) — but Smove keeps one
+        // contact per email, so both customers share that one Smove contact.
+        $existingEmails = Contact::query()->join('schools', 'schools.id', '=', 'contacts.school_id')
+            ->whereNotNull('contacts.email')->where('contacts.email', '!=', '')
+            ->get(['contacts.email', 'schools.name'])
+            ->groupBy(fn ($contact) => mb_strtolower(trim($contact->email)))
+            ->map(fn ($contacts) => $contacts->pluck('name')->unique()->values()->all());
+        $seenEmails = [];
+
         foreach ($rows as &$row) {
             $v = $row['raw'];
             $v['gefen_budget'] = mb_strtolower($v['gefen_budget']);
@@ -540,7 +550,38 @@ class CustomerImport
                 }
             }
 
+            $warnings = [];
+
+            foreach ($filled as $n) {
+                $column = $columns["contact{$n}_email"][0];
+                $email = mb_strtolower(trim($v["contact{$n}_email"]));
+
+                if ($email === '' || isset($errors[$column])) {
+                    continue;
+                }
+
+                $elsewhere = [];
+
+                foreach ($existingEmails[$email] ?? [] as $school) {
+                    $elsewhere[] = "\"{$school}\"";
+                }
+
+                foreach ($seenEmails[$email] ?? [] as [$otherRow, $otherSchool]) {
+                    if ($otherRow !== $row['row']) {
+                        $elsewhere[] = "\"{$otherSchool}\" (שורה {$otherRow} בקובץ)";
+                    }
+                }
+
+                if ($elsewhere) {
+                    $warnings[$column] = 'כתובת זו כבר שייכת לאיש קשר של '.implode(', ', array_unique($elsewhere))
+                        .'. ב־Smove זה איש קשר אחד לכולן — הוא ייובא וישויך לשתי הלקוחות.';
+                }
+
+                $seenEmails[$email][$row['row']] = [$row['row'], trim($v['school_name'])];
+            }
+
             $row['errors'] = $errors;
+            $row['warnings'] = $errors === [] ? $warnings : [];
             $row['data'] = $errors === [] ? $this->normalize($v, $formats, $filled, $primary) : null;
             unset($row['raw']);
         }

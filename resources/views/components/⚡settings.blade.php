@@ -177,12 +177,22 @@ class extends Component
 
         $valid = count(array_filter($result['rows'], fn ($row) => $row['data'] !== null));
 
+        // Contacts whose email another customer (or another row) already uses — imported, but shown.
+        $warnings = [];
+
+        foreach ($result['rows'] as $row) {
+            foreach ($row['warnings'] ?? [] as $column => $message) {
+                $warnings[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column, 'message' => $message];
+            }
+        }
+
         $this->importCheck = [
             'fileError' => $result['fileError'],
             'total' => count($result['rows']),
             'valid' => $valid,
             'invalidRows' => count($result['rows']) - $valid,
             'errors' => $errors,
+            'warnings' => $warnings,
             // How many contacts will be linked to the Smove list (every one was checked to be on it).
             'smove' => $valid > 0 ? $import->smovePreview($result['rows'], $result['smove']) : null,
         ];
@@ -1537,6 +1547,33 @@ class extends Component
                         @if (count($importCheck['errors']) > 500)
                             <p class="text-text-secondary" style="font-size:var(--fs-caption)">מוצגות 500 השגיאות הראשונות מתוך {{ count($importCheck['errors']) }}.</p>
                         @endif
+                    @endif
+
+                    @if ($importCheck['warnings'] ?? [])
+                        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
+                            <div style="padding: var(--sp-sm) var(--sp-md)">
+                                <h4 style="margin:0 0 4px; color:var(--color-warning)">שימי לב: {{ count($importCheck['warnings']) }} אנשי קשר שהכתובת שלהם כבר שייכת ללקוחה אחרת</h4>
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">
+                                    השורות האלה תקינות וייובאו. ב־Smove יש איש קשר אחד לכל כתובת דוא"ל, ולכן הוא ישויך לכל הלקוחות האלה יחד.
+                                    אם זו טעות — יש לתקן את הכתובת בקובץ ולהעלות שוב.
+                                </p>
+                            </div>
+                            <div class="table-scroll" style="max-height:320px; overflow-y:auto">
+                            <table>
+                                <thead><tr><th>שורה</th><th>מוסד</th><th>עמודה</th><th>אזהרה</th></tr></thead>
+                                <tbody>
+                                    @foreach (array_slice($importCheck['warnings'], 0, 500) as $warning)
+                                        <tr>
+                                            <td class="ltr-num">{{ $warning['row'] }}</td>
+                                            <td>{{ $warning['school'] ?: '—' }}</td>
+                                            <td>{{ $warning['column'] }}</td>
+                                            <td style="color: var(--color-warning)">{{ $warning['message'] }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                            </div>
+                        </div>
                     @endif
 
                     @if ($importCheck['valid'] > 0 && ($smove = $importCheck['smove'] ?? null))

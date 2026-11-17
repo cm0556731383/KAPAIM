@@ -437,6 +437,95 @@ class ExternalIntegrationsTest extends TestCase
             && ($request->data()['externalId'] ?? null) === "contact-{$newContact->id}");
     }
 
+    /** 2026-11-17: a contact joined to Smove is linked to the Smove contact it answered with — the card's "Smove" mark, as for imported contacts. */
+    public function test_a_contact_joined_to_smove_is_linked_to_its_smove_contact(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+        $nextId = 7001;
+        Http::fake(function ($request) use (&$nextId) {
+            return $request->method() === 'GET' ? Http::response([], 200) : Http::response(['id' => $nextId], 200);
+        });
+
+        $customer = $this->createCustomer();
+        $this->assertSame(7001, (int) $customer->contacts()->sole()->smove_contact_id);
+
+        $nextId = 7002;
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('contactName', 'הורה שני')
+            ->set('contactEmail', 'second'.random_int(1, 999999).'@example.com')
+            ->call('addContact')
+            ->assertSee('title="נמצא ברשימת התפוצה ב־Smove (לפי כתובת הדוא״ל)"', false);
+
+        $contact = $customer->contacts()->latest('id')->first();
+        $this->assertSame(7002, (int) $contact->smove_contact_id);
+
+        // A new email is a different Smove contact: the old link goes.
+        $contact->update(['email' => 'other'.random_int(1, 999999).'@example.com']);
+        $this->assertNull($contact->fresh()->smove_contact_id);
+    }
+
+    public function test_a_failed_or_idless_smove_join_links_nothing(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+
+        $answer = [['id' => 'ext-123'], 200];
+        Http::fake(function ($request) use (&$answer) {
+            return $request->method() === 'GET' ? Http::response([], 200) : Http::response(...$answer);
+        });
+        $this->assertNull($this->createCustomer()->contacts()->sole()->smove_contact_id);
+
+        $answer = [['id' => 7003], 500];
+        $this->assertNull($this->createCustomer()->contacts()->sole()->smove_contact_id);
+    }
+
+    public function test_smove_link_contacts_links_by_email_and_unlinks_those_no_longer_on_the_list(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+        $list = [];
+        Http::fake(function ($request) use (&$list) {
+            if (str_contains($request->url(), '/Lists/111/Contacts')) {
+                return Http::response($list, 200);
+            }
+
+            return Http::response(['id' => 'ext-123'], 200);
+        });
+
+        $on = $this->createCustomer()->contacts()->sole();
+        $gone = $this->createCustomer()->contacts()->sole();
+        $gone->update(['smove_contact_id' => 555]);
+        $list = [['id' => 8001, 'email' => strtoupper($on->email).' ', 'canReceiveEmails' => true]];
+        $sentBefore = collect(Http::recorded())->count();
+
+        $this->artisan('smove:link-contacts')->assertSuccessful();
+
+        $this->assertSame(8001, (int) $on->fresh()->smove_contact_id);
+        $this->assertNull($gone->fresh()->smove_contact_id);
+        // It only reads the list.
+        $this->assertTrue(collect(Http::recorded())->slice($sentBefore)->every(fn ($pair) => $pair[0]->method() === 'GET'));
+    }
+
+    /** Smove keeps one contact per email: a customer leaving the list must not unsubscribe an email another customer on it still uses. */
+    public function test_removing_a_customer_keeps_an_email_another_active_customer_shares_subscribed(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);
+        Http::fake(['rest.smoove.io/*' => Http::response(['id' => 'ext-123'], 200)]);
+
+        $leaving = $this->createCustomer();
+        $staying = $this->createCustomer();
+        $shared = 'shared'.random_int(1, 999999).'@example.com';
+        $leaving->contacts()->create(['school_id' => $leaving->school_id, 'customer_id' => $leaving->id, 'name' => 'הנהלת חשבונות', 'email' => $shared]);
+        $staying->contacts()->create(['school_id' => $staying->school_id, 'customer_id' => $staying->id, 'name' => 'הנהלת חשבונות', 'email' => strtoupper($shared)]);
+        $own = $leaving->contacts()->where('email', '!=', $shared)->value('email');
+
+        MailingMembership::removeCustomer(MailingList::primaryList(), $leaving);
+
+        $unsubscribed = collect(Http::recorded())->map(fn ($pair) => $pair[0]->data())
+            ->filter(fn ($data) => isset($data['lists_ToUnsubscribe']))->pluck('email')->all();
+
+        $this->assertSame([$own], $unsubscribed);
+    }
+
     public function test_syncing_a_contact_with_no_email_touches_nothing(): void
     {
         ExternalIntegrationSetting::create(['system' => 'smove', 'is_active' => true, 'settings' => ['api_key' => 'x', 'list_id' => 111]]);

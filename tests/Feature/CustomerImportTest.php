@@ -217,6 +217,34 @@ class CustomerImportTest extends TestCase
         $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
     }
 
+    /** 2026-11-17: a contact email another customer (or another row) already uses is imported, but shown as a warning — Smove holds one contact per email. */
+    public function test_a_contact_email_another_customer_already_uses_is_a_warning_not_an_error(): void
+    {
+        $school = School::create(['name' => 'קיימת']);
+        Contact::create(['school_id' => $school->id, 'name' => 'לאה', 'email' => 'Books@Orot.test']);
+
+        $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([
+                $this->validRow(),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact1_email' => 'n@noam.test', 'contact2_email' => '', 'contact2_name' => 'שרה', 'contact3_name' => 'רחל', 'contact3_email' => 'rachel@orot.test']),
+            ]))
+            ->call('checkImport')
+            ->assertSet('importCheck.valid', 2)
+            ->assertSet('importCheck.errors', [])
+            ->assertSee('אנשי קשר שהכתובת שלהם כבר שייכת ללקוחה אחרת');
+
+        $warnings = collect($component->get('importCheck.warnings'))->groupBy('row')->map(fn ($w) => $w->pluck('message', 'column')->all());
+
+        $this->assertStringContainsString('"קיימת"', $warnings[2]['איש קשר 2 — דוא"ל']);
+        $this->assertStringContainsString('"אורות" (שורה 2 בקובץ)', $warnings[3]['איש קשר 3 — דוא"ל']);
+        $this->assertArrayNotHasKey('איש קשר 1 — דוא"ל', $warnings[2]);
+
+        $component->call('runImport');
+
+        $this->assertSame(2, Customer::count());
+        $this->assertSame(2, Contact::whereRaw('LOWER(email) = ?', ['rachel@orot.test'])->count());
+    }
+
     public function test_errors_are_listed_per_row_and_column_and_nothing_is_saved(): void
     {
         School::create(['name' => 'קיים']);
@@ -333,7 +361,7 @@ class CustomerImportTest extends TestCase
         // Both customers are on the system's own list, so a mailing reaches them.
         $this->assertSame(2, \App\Models\MailingMembership::whereNotNull('customer_id')->where('membership_status', 'active')->count());
 
-        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $primary->customer])->assertSee('title="מקושר לאיש הקשר ברשימת התפוצה ב־Smove"', false);
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $primary->customer])->assertSee('title="נמצא ברשימת התפוצה ב־Smove (לפי כתובת הדוא״ל)"', false);
     }
 
     public function test_a_row_whose_contact_is_not_on_the_smove_list_is_an_error_and_is_not_imported(): void
