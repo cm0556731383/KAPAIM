@@ -90,12 +90,13 @@ class CustomerImportTest extends TestCase
             'classes_per_grade' => '3',
             'gefen_budget' => 'כן',
             'content_format' => 'וידאו',
-            'contact_name' => 'רחל כהן',
-            'contact_role' => 'מנהלת',
-            'contact_phone' => '0501234567',
-            'contact_email' => 'rachel@orot.test',
-            'accounting_name' => 'לאה לוי',
-            'accounting_email' => 'books@orot.test',
+            'contact1_name' => 'רחל כהן',
+            'contact1_role' => 'מנהלת',
+            'contact1_phone' => '0501234567',
+            'contact1_email' => 'rachel@orot.test',
+            'contact2_name' => 'לאה לוי',
+            'contact2_email' => 'books@orot.test',
+            'contact2_accounting' => 'כן',
         ], $overrides);
     }
 
@@ -132,13 +133,13 @@ class CustomerImportTest extends TestCase
         $this->assertSame('לקוחות', $sheet->getTitle());
         $this->assertTrue($sheet->getRightToLeft());
         $this->assertSame('שם המוסד *', $sheet->getCell('A1')->getValue());
-        $this->assertSame(count(CustomerImport::COLUMNS), \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestDataColumn()));
+        $this->assertSame(count(CustomerImport::columns()), \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestDataColumn()));
     }
 
     public function test_a_valid_file_is_checked_then_imported_as_customers_with_their_contacts(): void
     {
         Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
-            ->set('importFile', $this->filledFile([$this->validRow(), $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact_email' => 'n@noam.test', 'accounting_name' => '', 'accounting_email' => ''])]))
+            ->set('importFile', $this->filledFile([$this->validRow(), $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact1_email' => 'n@noam.test', 'contact2_name' => '', 'contact2_email' => ''])]))
             ->call('checkImport')
             ->assertHasNoErrors()
             ->assertSet('importCheck.valid', 2)
@@ -171,16 +172,61 @@ class CustomerImportTest extends TestCase
         Storage::disk('local')->assertDirectoryEmpty('imports');
     }
 
+    public function test_each_row_takes_several_contacts_each_with_its_own_primary_and_accounting_answer(): void
+    {
+        $this->smoveList[] = ['id' => 904, 'email' => 'third@orot.test', 'canReceiveEmails' => true];
+
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([$this->validRow([
+                'contact1_primary' => 'לא', 'contact1_accounting' => 'כן',
+                'contact2_primary' => 'כן', 'contact2_accounting' => 'כן', 'contact2_phone' => '0527654321',
+                'contact3_name' => 'דינה', 'contact3_email' => 'third@orot.test', 'contact3_primary' => 'כן', 'contact3_phone' => '0531112222',
+            ])]))
+            ->call('checkImport')
+            ->assertSet('importCheck.errors', [])
+            ->call('runImport');
+
+        $contacts = School::where('name', 'אורות')->first()->customer->contacts()->orderBy('id')->get();
+
+        $this->assertSame(['רחל כהן', 'לאה לוי', 'דינה'], $contacts->pluck('name')->all());
+        $this->assertSame([false, true, true], $contacts->pluck('is_primary')->all());
+        $this->assertSame([true, true, false], $contacts->pluck('is_accounting_contact')->all());
+        $this->assertTrue($contacts[0]->isAccountingOnly());
+        // The lead is opened from the first primary contact.
+        $this->assertSame('books@orot.test', Lead::sole()->email);
+        $this->assertSame(904, (int) $contacts[2]->smove_contact_id);
+    }
+
+    public function test_contact_flags_must_be_yes_or_no_and_a_primary_contact_needs_phone_and_email(): void
+    {
+        $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([
+                $this->validRow(['contact1_primary' => 'אולי', 'contact2_accounting' => 'בטח']),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact2_primary' => 'כן']),
+                $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact1_name' => '', 'contact1_phone' => '', 'contact1_email' => '', 'contact1_role' => '']),
+            ]))
+            ->call('checkImport')
+            ->assertSet('importCheck.valid', 0);
+
+        $errors = collect($component->get('importCheck.errors'))->groupBy('row')->map(fn ($e) => $e->pluck('message', 'column')->all());
+
+        $this->assertSame('יש לכתוב כן או לא.', $errors[2]['איש קשר 1 — ראשי']);
+        $this->assertSame('יש לכתוב כן או לא.', $errors[2]['איש קשר 2 — גורם חשבונאי']);
+        $this->assertSame('חובה לאיש קשר ראשי — חסר.', $errors[3]['איש קשר 2 — טלפון']);
+        // At least one contact: contact 1's name is required.
+        $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
+    }
+
     public function test_errors_are_listed_per_row_and_column_and_nothing_is_saved(): void
     {
         School::create(['name' => 'קיים']);
 
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
-                $this->validRow(['contact_email' => 'not-an-email', 'contact_phone' => '12']),
+                $this->validRow(['contact1_email' => 'not-an-email', 'contact1_phone' => '12']),
                 $this->validRow(['school_name' => 'קיים', 'business_number' => '1']),
-                $this->validRow(['school_name' => '', 'contact_name' => '', 'business_number' => 'abc', 'status' => 'מומצא', 'converted_at' => '31/02/2025', 'gefen_budget' => 'אולי', 'classes_per_grade' => '-1']),
-                $this->validRow(['school_name' => 'נוסף', 'business_number' => '2', 'accounting_name' => '', 'accounting_email' => 'x@y.test']),
+                $this->validRow(['school_name' => '', 'contact1_name' => '', 'business_number' => 'abc', 'status' => 'מומצא', 'converted_at' => '31/02/2025', 'gefen_budget' => 'אולי', 'classes_per_grade' => '-1']),
+                $this->validRow(['school_name' => 'נוסף', 'business_number' => '2', 'contact2_name' => '', 'contact2_email' => 'x@y.test']),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 0)
@@ -189,17 +235,17 @@ class CustomerImportTest extends TestCase
 
         $errors = collect($component->get('importCheck.errors'))->groupBy('row')->map(fn ($e) => $e->pluck('message', 'column')->all());
 
-        $this->assertSame('כתובת דוא"ל לא תקינה.', $errors[2]['איש קשר ראשי — דוא"ל']);
-        $this->assertArrayHasKey('איש קשר ראשי — טלפון', $errors[2]);
+        $this->assertSame('כתובת דוא"ל לא תקינה.', $errors[2]['איש קשר 1 — דוא"ל']);
+        $this->assertArrayHasKey('איש קשר 1 — טלפון', $errors[2]);
         $this->assertStringContainsString('כבר קיים במערכת', $errors[3]['שם המוסד']);
         $this->assertSame('שדה חובה — חסר.', $errors[4]['שם המוסד']);
-        $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר ראשי — שם']);
+        $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
         $this->assertArrayHasKey('ח.פ.', $errors[4]);
         $this->assertArrayHasKey('סטטוס לקוחה', $errors[4]);
         $this->assertArrayHasKey('תאריך הצטרפות', $errors[4]);
         $this->assertArrayHasKey('תקציב גפן', $errors[4]);
         $this->assertArrayHasKey('מספר כיתות בשנתון', $errors[4]);
-        $this->assertArrayHasKey('הנהלת חשבונות — שם', $errors[5]);
+        $this->assertArrayHasKey('איש קשר 2 — שם', $errors[5]);
 
         $this->assertSame(0, Customer::count());
         $this->assertSame(1, School::count());
@@ -213,7 +259,7 @@ class CustomerImportTest extends TestCase
                 $this->validRow(),
                 $this->validRow(['business_number' => '']),
                 $this->validRow(['school_name' => 'אחר']),
-                $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact_phone' => 501234567]),
+                $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact1_phone' => 501234567]),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 2)
@@ -266,7 +312,7 @@ class CustomerImportTest extends TestCase
         Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
                 $this->validRow(),
-                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact_email' => 'gone@noam.test', 'accounting_name' => '', 'accounting_email' => '']),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact1_email' => 'gone@noam.test', 'contact2_name' => '', 'contact2_email' => '']),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 2)
@@ -295,16 +341,16 @@ class CustomerImportTest extends TestCase
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
                 $this->validRow(),
-                $this->validRow(['school_name' => 'חדש', 'business_number' => '', 'contact_email' => 'stranger@new.test', 'accounting_name' => '', 'accounting_email' => '']),
-                $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact_email' => 'n@noam.test', 'accounting_email' => 'unknown@noam.test']),
+                $this->validRow(['school_name' => 'חדש', 'business_number' => '', 'contact1_email' => 'stranger@new.test', 'contact2_name' => '', 'contact2_email' => '']),
+                $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact1_email' => 'n@noam.test', 'contact2_email' => 'unknown@noam.test']),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 1)
             ->assertSet('importCheck.invalidRows', 2);
 
         $errors = collect($component->get('importCheck.errors'))->groupBy('row')->map(fn ($e) => $e->pluck('message', 'column')->all());
-        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[3]['איש קשר ראשי — דוא"ל']);
-        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[4]['הנהלת חשבונות — דוא"ל']);
+        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[3]['איש קשר 1 — דוא"ל']);
+        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[4]['איש קשר 2 — דוא"ל']);
 
         $component->call('runImport');
 
@@ -346,7 +392,7 @@ class CustomerImportTest extends TestCase
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
                 $this->validRow(),
-                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact_email' => 'n@noam.test', 'accounting_name' => '', 'accounting_email' => '']),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact1_email' => 'n@noam.test', 'contact2_name' => '', 'contact2_email' => '']),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 2);

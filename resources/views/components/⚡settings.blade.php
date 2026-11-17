@@ -242,7 +242,7 @@ class extends Component
     #[Computed]
     public function importColumns(): array
     {
-        return \App\Services\CustomerImport::COLUMNS;
+        return \App\Services\CustomerImport::columns();
     }
 
     /** HebrewCalendar: the Hebrew month that is month 1 of a newly opened subscription. */
@@ -1445,7 +1445,7 @@ class extends Component
             <div class="card">
                 <h3 style="margin:0 0 4px">1. הורדת הקובץ למילוי</h3>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                    קובץ אקסל עם כל השדות של כרטיס הלקוח: פרטי המוסד, פרטים נוספים, איש קשר ראשי ואיש קשר להנהלת חשבונות.
+                    קובץ אקסל עם כל השדות של כרטיס הלקוח: פרטי המוסד, פרטים נוספים ועד {{ \App\Services\CustomerImport::CONTACTS }} אנשי קשר — לכל אחד כן / לא ל"ראשי" ול"גורם חשבונאי".
                     עמודות החובה מסומנות ב־* ובכתום. בגיליון "הוראות" יש הסבר על כל עמודה.
                 </p>
                 <a href="{{ route('settings.import-template') }}" class="btn btn-secondary">הורדת קובץ האקסל</a>

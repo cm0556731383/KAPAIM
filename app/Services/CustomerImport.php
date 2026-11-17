@@ -30,11 +30,13 @@ use Throwable;
  * fill, the check of a filled file against the same rules the customer card
  * applies, and the import itself.
  *
- * One row = one customer: its school card, its primary contact and,
- * optionally, its accounting contact. A customer only ever exists as a
- * converted lead (Lead::convertToCustomer()), so each row opens a lead from
- * the primary contact's email and phone — which, like a lead, are required —
- * and converts it at once.
+ * One row = one customer: its school card and up to CONTACTS contacts, each
+ * with its own כן/לא for "ראשי" and "גורם חשבונאי" (2026-11-17). At least one
+ * contact (contact 1) is required; when no contact is marked ראשי, contact 1
+ * is. A customer only ever exists as a converted lead
+ * (Lead::convertToCustomer()), so each row opens a lead from the first
+ * primary contact's email and phone — which, like a lead's, are required for
+ * every primary contact — and converts it at once.
  *
  * A school already in the system (by name or ח.פ.), as a lead or a customer,
  * is reported and never imported: the import only adds, it never changes an
@@ -58,12 +60,11 @@ class CustomerImport
 
     private const NO = ['לא', 'no', 'n', 'false', '0', ''];
 
-    /**
-     * The template's columns, in order: key => [header, required, help].
-     * The header is how a column is found in an uploaded file, so the
-     * columns may be reordered (or optional ones removed) freely.
-     */
-    public const COLUMNS = [
+    /** How many contact column groups the template has. */
+    public const CONTACTS = 3;
+
+    /** School / customer columns: key => [header, required, help]. The contact groups follow (columns()). */
+    private const SCHOOL_COLUMNS = [
         'school_name' => ['שם המוסד', true, 'שם בית הספר / המוסד, כפי שיופיע בכרטיס הלקוח.'],
         'city' => ['עיר', false, ''],
         'address' => ['כתובת', false, ''],
@@ -80,23 +81,60 @@ class CustomerImport
         'gefen_budget' => ['תקציב גפן', false, 'כן / לא. ריק = לא.'],
         'content_format' => ['פורמט תוכן', false, 'וידאו / שקופיות.'],
         'notes' => ['הערות', false, ''],
-        'contact_name' => ['איש קשר ראשי — שם', true, 'שם מלא.'],
-        'contact_role' => ['איש קשר ראשי — תפקיד', false, ''],
-        'contact_phone' => ['איש קשר ראשי — טלפון', true, 'לפחות 7 ספרות.'],
-        'contact_phone_secondary' => ['איש קשר ראשי — טלפון נוסף', false, ''],
-        'contact_email' => ['איש קשר ראשי — דוא"ל', true, 'כתובת דוא"ל תקינה, שנמצאת ברשימת התפוצה ב־Smove.'],
-        'contact_email_secondary' => ['איש קשר ראשי — דוא"ל נוסף', false, ''],
-        'accounting_name' => ['הנהלת חשבונות — שם', false, 'חובה אם מולא פרט כלשהו של איש הקשר להנהלת חשבונות.'],
-        'accounting_role' => ['הנהלת חשבונות — תפקיד', false, ''],
-        'accounting_phone' => ['הנהלת חשבונות — טלפון', false, ''],
-        'accounting_email' => ['הנהלת חשבונות — דוא"ל', false, 'אם ממלאים — חייבת להימצא ברשימת התפוצה ב־Smove.'],
     ];
 
-    private const PHONE_COLUMNS = ['school_phone', 'contact_phone', 'contact_phone_secondary', 'accounting_phone'];
+    /** Each contact group's fields: field => [header suffix, help]. Keys are "contact{n}_{field}". */
+    private const CONTACT_FIELDS = [
+        'name' => ['שם', 'שם מלא. חובה אם מולא פרט כלשהו של איש הקשר.'],
+        'role' => ['תפקיד', ''],
+        'phone' => ['טלפון', 'לפחות 7 ספרות. חובה לאיש קשר ראשי.'],
+        'phone_secondary' => ['טלפון נוסף', ''],
+        'email' => ['דוא"ל', 'כתובת דוא"ל תקינה, שנמצאת ברשימת התפוצה ב־Smove. חובה לאיש קשר ראשי.'],
+        'email_secondary' => ['דוא"ל נוסף', ''],
+        'primary' => ['ראשי', 'כן / לא. אפשר יותר מאחד. אם אף איש קשר לא סומן — איש קשר 1 יהיה הראשי.'],
+        'accounting' => ['גורם חשבונאי', 'כן / לא. גורם חשבונאי שאינו ראשי מקבל רק דואר הנהלת חשבונות (חשבוניות, קבלות, קישורי תשלום).'],
+    ];
 
-    private const TEXT_COLUMNS = ['school_phone', 'contact_phone', 'contact_phone_secondary', 'accounting_phone', 'business_number'];
+    /** Contact fields that are a phone / a yes-no choice. */
+    private const CONTACT_PHONE_FIELDS = ['phone', 'phone_secondary'];
 
-    private const ACCOUNTING_COLUMNS = ['accounting_name', 'accounting_role', 'accounting_phone', 'accounting_email'];
+    private const CONTACT_FLAG_FIELDS = ['primary', 'accounting'];
+
+    /**
+     * The template's columns, in order: key => [header, required, help].
+     * The header is how a column is found in an uploaded file, so the
+     * columns may be reordered (or optional ones removed) freely.
+     */
+    public static function columns(): array
+    {
+        $columns = self::SCHOOL_COLUMNS;
+
+        for ($n = 1; $n <= self::CONTACTS; $n++) {
+            foreach (self::CONTACT_FIELDS as $field => [$label, $help]) {
+                $columns["contact{$n}_{$field}"] = ["איש קשר {$n} — {$label}", $n === 1 && $field === 'name', $help];
+            }
+        }
+
+        return $columns;
+    }
+
+    private static function phoneColumns(): array
+    {
+        $keys = ['school_phone'];
+
+        for ($n = 1; $n <= self::CONTACTS; $n++) {
+            foreach (self::CONTACT_PHONE_FIELDS as $field) {
+                $keys[] = "contact{$n}_{$field}";
+            }
+        }
+
+        return $keys;
+    }
+
+    private static function textColumns(): array
+    {
+        return [...self::phoneColumns(), 'business_number'];
+    }
 
     // ===== The blank template =====
 
@@ -112,7 +150,7 @@ class CustomerImport
         $lastRow = self::MAX_ROWS + 1;
         $index = 0;
 
-        foreach (self::COLUMNS as $key => [$header, $required, $help]) {
+        foreach (self::columns() as $key => [$header, $required, $help]) {
             $letter = Coordinate::stringFromColumnIndex(++$index);
             $sheet->setCellValue("{$letter}1", $required ? "{$header} *" : $header);
             $sheet->getColumnDimension($letter)->setWidth(max(14, mb_strlen($header) + 6));
@@ -126,7 +164,7 @@ class CustomerImport
                 $sheet->getComment("{$letter}1")->getText()->createTextRun($help);
             }
 
-            if (in_array($key, self::TEXT_COLUMNS, true)) {
+            if (in_array($key, self::textColumns(), true)) {
                 $sheet->getStyle("{$letter}2:{$letter}{$lastRow}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
 
@@ -156,6 +194,12 @@ class CustomerImport
             'content_format' => array_values(School::CONTENT_FORMATS),
         ];
 
+        for ($n = 1; $n <= self::CONTACTS; $n++) {
+            foreach (self::CONTACT_FLAG_FIELDS as $field) {
+                $lists["contact{$n}_{$field}"] = ['כן', 'לא'];
+            }
+        }
+
         $listSheet = $book->createSheet();
         $listSheet->setTitle('רשימות');
         $listSheet->setSheetState('hidden');
@@ -163,12 +207,15 @@ class CustomerImport
         $sheet = $book->getSheet(0);
         $listColumn = 0;
 
+        $listLetters = [];
+
         foreach ($lists as $key => $values) {
             if ($values === []) {
                 continue;
             }
 
-            $listLetter = Coordinate::stringFromColumnIndex(++$listColumn);
+            // Identical lists (the many כן/לא columns) share one column of the hidden sheet.
+            $listLetter = $listLetters[implode("\n", $values)] ??= Coordinate::stringFromColumnIndex(++$listColumn);
 
             foreach (array_values($values) as $i => $value) {
                 $listSheet->setCellValueExplicit($listLetter.($i + 1), $value, 's');
@@ -203,18 +250,22 @@ class CustomerImport
             ['• בית ספר שכבר קיים במערכת (כליד או כלקוחה, לפי שם או ח.פ.) לא ייובא, וכך גם שורה כפולה בקובץ.'],
             ['• כל כתובת דוא"ל של איש קשר חייבת להופיע ברשימת התפוצה ב־Smove. שורה עם כתובת שלא נמצאה שם לא תיובא.'],
             ['• לפני היבוא המערכת בודקת את כל הקובץ ומציגה את השגיאות לפי מספר שורה. אפשר לתקן ולהעלות שוב.'],
+            ['• אפשר למלא עד '.self::CONTACTS.' אנשי קשר לכל לקוחה (איש קשר 1 חובה). לכל אחד כותבים כן / לא ב"ראשי" וב"גורם חשבונאי".'],
+            ['• אם אף איש קשר לא סומן "ראשי" — איש קשר 1 יהיה הראשי. לאיש קשר ראשי חובה טלפון ודוא"ל.'],
             ['• אנשי קשר נוספים, עסקאות ומסמכים מוסיפים אחר כך בכרטיס הלקוח.'],
             [''],
             ['עמודה', 'חובה', 'הסבר'],
         ];
 
-        foreach (self::COLUMNS as [$header, $required, $help]) {
+        $headerRow = count($lines);
+
+        foreach (self::columns() as [$header, $required, $help]) {
             $lines[] = [$header, $required ? 'כן' : '', $help];
         }
 
         $sheet->fromArray($lines, null, 'A1', true);
         $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-        $sheet->getStyle('A10:C10')->getFont()->setBold(true);
+        $sheet->getStyle("A{$headerRow}:C{$headerRow}")->getFont()->setBold(true);
         $sheet->getColumnDimension('A')->setWidth(32);
         $sheet->getColumnDimension('B')->setWidth(8);
         $sheet->getColumnDimension('C')->setWidth(70);
@@ -252,20 +303,21 @@ class CustomerImport
         }
 
         // Find each column by its header (a trailing "*" and spaces ignored).
+        $columns = self::columns();
         $columnOf = [];
         $highestColumn = Coordinate::columnIndexFromString($sheet->getHighestDataColumn());
 
         for ($i = 1; $i <= $highestColumn; $i++) {
             $header = self::normalizeHeader((string) $sheet->getCell([$i, 1])->getValue());
 
-            foreach (self::COLUMNS as $key => [$label]) {
+            foreach ($columns as $key => [$label]) {
                 if ($header === self::normalizeHeader($label)) {
                     $columnOf[$key] = $i;
                 }
             }
         }
 
-        $missing = collect(self::COLUMNS)
+        $missing = collect($columns)
             ->filter(fn ($column, $key) => $column[1] && ! isset($columnOf[$key]))
             ->map(fn ($column) => $column[0]);
 
@@ -279,7 +331,7 @@ class CustomerImport
         for ($r = 2; $r <= $highestRow; $r++) {
             $values = [];
 
-            foreach (array_keys(self::COLUMNS) as $key) {
+            foreach (array_keys($columns) as $key) {
                 $values[$key] = isset($columnOf[$key]) ? $this->cellValue($sheet->getCell([$columnOf[$key], $r]), $key) : '';
             }
 
@@ -336,7 +388,7 @@ class CustomerImport
         $value = trim((string) $value);
 
         // A phone typed into a number cell loses its leading 0 (0501234567 → 501234567).
-        if (in_array($key, self::PHONE_COLUMNS, true) && is_numeric($cell->getValue()) && preg_match('/^[1-9]\d{7,8}$/', $value)) {
+        if (in_array($key, self::phoneColumns(), true) && is_numeric($cell->getValue()) && preg_match('/^[1-9]\d{7,8}$/', $value)) {
             $value = '0'.$value;
         }
 
@@ -353,6 +405,7 @@ class CustomerImport
         $existingNumbers = School::query()->whereNotNull('business_number')->pluck('business_number')
             ->mapWithKeys(fn ($number) => [self::digits($number) => true])->forget('');
 
+        $columns = self::columns();
         $seenNames = [];
         $seenNumbers = [];
 
@@ -361,7 +414,32 @@ class CustomerImport
             $v['gefen_budget'] = mb_strtolower($v['gefen_budget']);
             $errors = [];
 
-            $validator = Validator::make($v, [
+            // Contacts: which slots are filled, and which are primary (none marked → contact 1).
+            $filled = [];
+            $primary = [];
+
+            for ($n = 1; $n <= self::CONTACTS; $n++) {
+                foreach (self::CONTACT_FLAG_FIELDS as $field) {
+                    $v["contact{$n}_{$field}"] = mb_strtolower($v["contact{$n}_{$field}"]);
+                }
+
+                $details = collect(array_keys(self::CONTACT_FIELDS))->diff(self::CONTACT_FLAG_FIELDS)
+                    ->contains(fn ($field) => $v["contact{$n}_{$field}"] !== '');
+
+                if ($n === 1 || $details) {
+                    $filled[] = $n;
+
+                    if (in_array($v["contact{$n}_primary"], self::YES, true)) {
+                        $primary[] = $n;
+                    }
+                }
+            }
+
+            if ($primary === []) {
+                $primary = [1];
+            }
+
+            $rules = [
                 'school_name' => ['required', 'string', 'max:255'],
                 'city' => ['nullable', 'string', 'max:255'],
                 'address' => ['nullable', 'string', 'max:255'],
@@ -386,17 +464,34 @@ class CustomerImport
                 'gefen_budget' => ['nullable', Rule::in(array_merge(self::YES, self::NO))],
                 'content_format' => ['nullable', Rule::in(array_keys($formats))],
                 'notes' => ['nullable', 'string'],
-                'contact_name' => ['required', 'string', 'max:255'],
-                'contact_role' => ['nullable', 'string', 'max:255'],
-                'contact_phone' => ['required', 'string', 'max:50', new Phone],
-                'contact_phone_secondary' => ['nullable', 'string', 'max:50', new Phone],
-                'contact_email' => ['required', 'email', 'max:255'],
-                'contact_email_secondary' => ['nullable', 'email', 'max:255'],
-                'accounting_name' => [Rule::requiredIf(fn () => collect(self::ACCOUNTING_COLUMNS)->contains(fn ($k) => $v[$k] !== '')), 'nullable', 'string', 'max:255'],
-                'accounting_role' => ['nullable', 'string', 'max:255'],
-                'accounting_phone' => ['nullable', 'string', 'max:50', new Phone],
-                'accounting_email' => ['nullable', 'email', 'max:255'],
-            ], [
+            ];
+
+            for ($n = 1; $n <= self::CONTACTS; $n++) {
+                $isFilled = in_array($n, $filled, true);
+                $isPrimary = in_array($n, $primary, true);
+
+                $rules += [
+                    "contact{$n}_name" => [Rule::requiredIf($isFilled), 'nullable', 'string', 'max:255'],
+                    "contact{$n}_role" => ['nullable', 'string', 'max:255'],
+                    "contact{$n}_phone" => [Rule::requiredIf($isPrimary), 'nullable', 'string', 'max:50', new Phone],
+                    "contact{$n}_phone_secondary" => ['nullable', 'string', 'max:50', new Phone],
+                    "contact{$n}_email" => [Rule::requiredIf($isPrimary), 'nullable', 'email', 'max:255'],
+                    "contact{$n}_email_secondary" => ['nullable', 'email', 'max:255'],
+                    "contact{$n}_primary" => ['nullable', Rule::in(array_merge(self::YES, self::NO))],
+                    "contact{$n}_accounting" => ['nullable', Rule::in(array_merge(self::YES, self::NO))],
+                ];
+            }
+
+            $flagMessages = [];
+
+            for ($n = 1; $n <= self::CONTACTS; $n++) {
+                $flagMessages["contact{$n}_primary.in"] = 'יש לכתוב כן או לא.';
+                $flagMessages["contact{$n}_accounting.in"] = 'יש לכתוב כן או לא.';
+                $flagMessages["contact{$n}_phone.required"] = 'חובה לאיש קשר ראשי — חסר.';
+                $flagMessages["contact{$n}_email.required"] = 'חובה לאיש קשר ראשי — חסר.';
+            }
+
+            $validator = Validator::make($v, $rules, $flagMessages + [
                 'required' => 'שדה חובה — חסר.',
                 'email' => 'כתובת דוא"ל לא תקינה.',
                 'max' => 'ארוך מדי (עד :max תווים).',
@@ -409,7 +504,7 @@ class CustomerImport
             ]);
 
             foreach ($validator->errors()->messages() as $key => $messages) {
-                $errors[self::COLUMNS[$key][0]] = $messages[0];
+                $errors[$columns[$key][0]] = $messages[0];
             }
 
             $name = Lead::normalizeName($v['school_name']);
@@ -417,26 +512,27 @@ class CustomerImport
 
             if ($name !== '') {
                 if (isset($existingNames[$name])) {
-                    $errors[self::COLUMNS['school_name'][0]] = 'בית ספר בשם זה כבר קיים במערכת — לא ייובא.';
+                    $errors[$columns['school_name'][0]] = 'בית ספר בשם זה כבר קיים במערכת — לא ייובא.';
                 } elseif (isset($seenNames[$name])) {
-                    $errors[self::COLUMNS['school_name'][0]] = "מופיע כבר בשורה {$seenNames[$name]} בקובץ.";
+                    $errors[$columns['school_name'][0]] = "מופיע כבר בשורה {$seenNames[$name]} בקובץ.";
                 }
 
                 $seenNames[$name] ??= $row['row'];
             }
 
-            if ($number !== '' && ! isset($errors[self::COLUMNS['business_number'][0]])) {
+            if ($number !== '' && ! isset($errors[$columns['business_number'][0]])) {
                 if (isset($existingNumbers[$number])) {
-                    $errors[self::COLUMNS['business_number'][0]] = 'ח.פ. זה כבר קיים במערכת — לא ייובא.';
+                    $errors[$columns['business_number'][0]] = 'ח.פ. זה כבר קיים במערכת — לא ייובא.';
                 } elseif (isset($seenNumbers[$number])) {
-                    $errors[self::COLUMNS['business_number'][0]] = "ח.פ. זה מופיע כבר בשורה {$seenNumbers[$number]} בקובץ.";
+                    $errors[$columns['business_number'][0]] = "ח.פ. זה מופיע כבר בשורה {$seenNumbers[$number]} בקובץ.";
                 }
 
                 $seenNumbers[$number] ??= $row['row'];
             }
 
-            foreach (['contact_email', 'accounting_email'] as $key) {
-                $column = self::COLUMNS[$key][0];
+            foreach ($filled as $n) {
+                $key = "contact{$n}_email";
+                $column = $columns[$key][0];
                 $email = mb_strtolower(trim($v[$key]));
 
                 if ($email !== '' && ! isset($errors[$column]) && ! isset($smoveMembers[$email])) {
@@ -445,14 +541,14 @@ class CustomerImport
             }
 
             $row['errors'] = $errors;
-            $row['data'] = $errors === [] ? $this->normalize($v, $formats) : null;
+            $row['data'] = $errors === [] ? $this->normalize($v, $formats, $filled, $primary) : null;
             unset($row['raw']);
         }
 
         return $rows;
     }
 
-    private function normalize(array $v, array $formats): array
+    private function normalize(array $v, array $formats, array $filled, array $primary): array
     {
         $blank = fn (string $value) => $value === '' ? null : $value;
 
@@ -475,20 +571,16 @@ class CustomerImport
             'status' => $blank($v['status']),
             'lead_source' => $blank($v['lead_source']),
             'converted_at' => $v['converted_at'] === '' ? null : self::parseDate($v['converted_at'])->toDateString(),
-            'contact' => [
-                'name' => $v['contact_name'],
-                'role' => $blank($v['contact_role']),
-                'phone' => $v['contact_phone'],
-                'phone_secondary' => $blank($v['contact_phone_secondary']),
-                'email' => $v['contact_email'],
-                'email_secondary' => $blank($v['contact_email_secondary']),
-            ],
-            'accounting' => $v['accounting_name'] === '' ? null : [
-                'name' => $v['accounting_name'],
-                'role' => $blank($v['accounting_role']),
-                'phone' => $blank($v['accounting_phone']),
-                'email' => $blank($v['accounting_email']),
-            ],
+            'contacts' => array_map(fn (int $n) => [
+                'name' => trim($v["contact{$n}_name"]),
+                'role' => $blank($v["contact{$n}_role"]),
+                'phone' => $blank($v["contact{$n}_phone"]),
+                'phone_secondary' => $blank($v["contact{$n}_phone_secondary"]),
+                'email' => $blank($v["contact{$n}_email"]),
+                'email_secondary' => $blank($v["contact{$n}_email_secondary"]),
+                'is_primary' => in_array($n, $primary, true),
+                'is_accounting_contact' => in_array($v["contact{$n}_accounting"], self::YES, true),
+            ], $filled),
         ];
     }
 
@@ -577,17 +669,17 @@ class CustomerImport
         return $preview;
     }
 
-    /** The lower-cased emails of a row's contacts (primary + accounting), once each. */
+    /** The lower-cased emails of a row's contacts, once each. */
     private static function contactEmails(?array $data): array
     {
         if (! $data) {
             return [];
         }
 
-        return array_values(array_unique(array_filter([
-            mb_strtolower(trim((string) $data['contact']['email'])),
-            mb_strtolower(trim((string) ($data['accounting']['email'] ?? ''))),
-        ])));
+        return array_values(array_unique(array_filter(array_map(
+            fn (array $contact) => mb_strtolower(trim((string) $contact['email'])),
+            $data['contacts'],
+        ))));
     }
 
     private function importRow(array $data, User $user, ActivityLogger $activityLogger, array $smove): Customer
@@ -599,11 +691,12 @@ class CustomerImport
 
             $school = School::create($data['school']);
 
-            Contact::create($data['contact'] + ['school_id' => $school->id, 'is_primary' => true, 'is_accounting_contact' => false]);
-
-            if ($data['accounting']) {
-                Contact::create($data['accounting'] + ['school_id' => $school->id, 'is_primary' => false, 'is_accounting_contact' => true]);
+            foreach ($data['contacts'] as $contact) {
+                Contact::create($contact + ['school_id' => $school->id]);
             }
+
+            // The lead is opened from the first primary contact (checkRows() made its email and phone required).
+            $lead = collect($data['contacts'])->firstWhere('is_primary', true);
 
             $newStatus = StatusDefinition::firstOrCreate(
                 ['scope' => 'lead', 'name' => Lead::NEW_STATUS_NAME],
@@ -615,8 +708,8 @@ class CustomerImport
                 'assigned_user_id' => $user->id,
                 'lead_source_id' => $data['lead_source'] ? LeadSource::where('name', $data['lead_source'])->value('id') : null,
                 'status_id' => $newStatus->id,
-                'email' => $data['contact']['email'],
-                'phone' => $data['contact']['phone'],
+                'email' => $lead['email'],
+                'phone' => $lead['phone'],
             ]);
         });
 
@@ -659,7 +752,7 @@ class CustomerImport
 
     public static function columnLetter(string $key): string
     {
-        return Coordinate::stringFromColumnIndex(array_search($key, array_keys(self::COLUMNS), true) + 1);
+        return Coordinate::stringFromColumnIndex(array_search($key, array_keys(self::columns()), true) + 1);
     }
 
     private static function normalizeHeader(string $header): string
