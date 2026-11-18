@@ -85,6 +85,47 @@ class SmoveClient
     }
 
     /**
+     * The Smove contact with exactly this email, anywhere in the account, or
+     * null when there's none: ['id', 'name', 'can_receive']. Throws when
+     * Smove can't be read, so a caller never mistakes "couldn't check" for
+     * "not there".
+     *
+     * @return array{id: int, name: string, can_receive: bool}|null
+     */
+    public function findContact(string $email): ?array
+    {
+        $this->assertConfigured();
+
+        $response = $this->http()->get('/Contacts', [
+            'q.email.like' => $email,
+            'fields' => 'id,email,firstName,lastName,canReceiveEmails',
+        ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException('לא ניתן לבדוק את איש הקשר ב-Smove ('.$response->status().').');
+        }
+
+        $match = collect($response->json() ?? [])->first(
+            fn ($c) => is_array($c) && strcasecmp(trim($c['email'] ?? ''), trim($email)) === 0,
+        );
+
+        if (! $match || empty($match['id'])) {
+            return null;
+        }
+
+        // Some contacts carry the full name in firstName already ("חני מאיר" + "מאיר").
+        $first = trim((string) ($match['firstName'] ?? ''));
+        $last = trim((string) ($match['lastName'] ?? ''));
+        $name = $last !== '' && ! str_ends_with($first, $last) ? trim("{$first} {$last}") : $first;
+
+        return [
+            'id' => (int) $match['id'],
+            'name' => $name,
+            'can_receive' => (bool) ($match['canReceiveEmails'] ?? false),
+        ];
+    }
+
+    /**
      * Every contact on a Smove list, keyed by lower-cased email:
      * ['id' => Smove contact id, 'can_receive' => canReceiveEmails]. Read page
      * by page (GET /Lists/{id}/Contacts). Throws when Smove can't be read, so

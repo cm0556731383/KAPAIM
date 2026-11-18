@@ -725,9 +725,35 @@ class CustomerImport
 
     private function importRow(array $data, User $user, ActivityLogger $activityLogger, array $smove): Customer
     {
+        // Every contact here was found on the Smove list (checkRows()): all are
+        // linked, none is pushed to Smove.
+        $emails = self::contactEmails($data);
+        $linked = array_intersect_key($smove['members'], array_flip($emails));
+
+        $customer = $this->createCustomer($data, $user, $activityLogger, $linked, $emails);
+
+        foreach ($linked as $member) {
+            $this->smoveStats['linked']++;
+            $this->smoveStats['not_receiving'] += $member['can_receive'] ? 0 : 1;
+        }
+
+        return $customer;
+    }
+
+    /**
+     * Opens one customer from normalize()-shaped $data — the import's rows and
+     * the manual "לקוחה חדשה" form (⚡customers.blade.php) both come through
+     * here. A customer only ever exists as a converted lead, so this opens a
+     * lead from the first primary contact and converts it at once.
+     *
+     * @param  array<string, array{id: int}>  $smoveLinks  lower-cased email => Smove contact: those contacts are linked (smove_contact_id)
+     * @param  list<string>  $noPushEmails  lower-cased emails not pushed to Smove on conversion
+     */
+    public function createCustomer(array $data, User $user, ActivityLogger $activityLogger, array $smoveLinks = [], array $noPushEmails = []): Customer
+    {
         $customer = DB::transaction(function () use ($data, $user) {
             if (Lead::findExactDuplicateSchool($data['school']['name'])) {
-                throw new \RuntimeException('בית ספר בשם זה נוסף למערכת בינתיים — לא יובא.');
+                throw new \RuntimeException('בית ספר בשם זה כבר קיים במערכת — לא נוצרה לקוחה.');
             }
 
             $school = School::create($data['school']);
@@ -736,7 +762,7 @@ class CustomerImport
                 Contact::create($contact + ['school_id' => $school->id]);
             }
 
-            // The lead is opened from the first primary contact (checkRows() made its email and phone required).
+            // The lead is opened from the first primary contact (its email and phone are required).
             $lead = collect($data['contacts'])->firstWhere('is_primary', true);
 
             $newStatus = StatusDefinition::firstOrCreate(
@@ -755,19 +781,13 @@ class CustomerImport
         });
 
         // Converting also files the contacts under the customer and puts it on
-        // the system's mailing list — with no push to Smove at all: every
-        // contact here was found on the Smove list (checkRows()) and is linked.
+        // the system's mailing list (pushing to Smove all but $noPushEmails).
         $convertedAt = $data['converted_at'] ? Carbon::parse($data['converted_at']) : null;
-        $emails = self::contactEmails($data);
-        $onList = array_values(array_filter($emails, fn ($email) => isset($smove['members'][$email])));
 
-        $result = MailingMembership::withoutPushing($emails, fn () => $customer->convertToCustomer($activityLogger, $convertedAt));
+        $result = MailingMembership::withoutPushing($noPushEmails, fn () => $customer->convertToCustomer($activityLogger, $convertedAt));
 
-        foreach ($onList as $email) {
-            $member = $smove['members'][$email];
+        foreach ($smoveLinks as $email => $member) {
             $result->contacts()->whereRaw('LOWER(TRIM(email)) = ?', [$email])->update(['smove_contact_id' => $member['id']]);
-            $this->smoveStats['linked']++;
-            $this->smoveStats['not_receiving'] += $member['can_receive'] ? 0 : 1;
         }
 
         if ($data['status'] && $data['status'] !== Customer::DEFAULT_STATUS_NAME) {

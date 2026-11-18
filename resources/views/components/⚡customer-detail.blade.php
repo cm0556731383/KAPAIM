@@ -17,6 +17,7 @@ use App\Models\Program;
 use App\Models\Subscription;
 use App\Models\Task;
 use App\Services\ActivityLogger;
+use App\Services\SmoveContactMatch;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
 use App\Services\Integrations\SummitClient;
@@ -101,6 +102,12 @@ class extends Component
     public bool $contactIsPrimary = false;
     public bool $contactIsAccountingContact = false;
     public ?int $editingContactId = null;
+
+    /** The new contact's email found in Smove, awaiting approval to match (SmoveContactMatch::find()). */
+    public array $contactSmoveMatch = [];
+
+    /** Names of the other customers sharing the contact being edited, while its save awaits approval. */
+    public array $contactSharedWith = [];
 
     /** Business-rule error (FR-7.25) — FR-2.9 "לא ניתן להסיר את הראשי האחרון". */
     public ?string $contactError = null;
@@ -541,9 +548,61 @@ class extends Component
      * very first contact added to a customer is forced primary regardless of
      * the checkbox, since there is no other primary yet to rely on.
      */
+    /**
+     * 2026-11-18: the new contact's email is looked up in Smove first
+     * (SmoveContactMatch) — one contact is often shared by several customers.
+     * A match stops here and asks for approval (confirmContactSmoveMatch()).
+     */
     public function addContact(ActivityLogger $activityLogger): void
     {
+        $this->contactSmoveMatch = [];
         $data = $this->validateContact();
+
+        $result = app(SmoveContactMatch::class)->find([$data], $this->customer->id);
+
+        if ($result['error']) {
+            $this->contactError = $result['error'];
+
+            return;
+        }
+
+        if ($result['matches'] !== []) {
+            $this->contactSmoveMatch = $result['matches'];
+
+            return;
+        }
+
+        $this->saveNewContact($data, $activityLogger);
+    }
+
+    /** The user approved: add the contact, linked to its Smove contact. */
+    public function confirmContactSmoveMatch(ActivityLogger $activityLogger): void
+    {
+        if ($this->contactSmoveMatch === []) {
+            return;
+        }
+
+        $data = $this->validateContact();
+        $matches = $this->contactSmoveMatch;
+
+        // The email was changed after the check — check again.
+        if (collect($matches)->pluck('email')->first() !== mb_strtolower(trim((string) $data['email']))) {
+            $this->addContact($activityLogger);
+
+            return;
+        }
+
+        $this->saveNewContact($data, $activityLogger, $matches);
+    }
+
+    public function cancelContactSmoveMatch(): void
+    {
+        $this->contactSmoveMatch = [];
+    }
+
+    private function saveNewContact(array $data, ActivityLogger $activityLogger, array $matches = []): void
+    {
+        [$links, $noPush] = SmoveContactMatch::linksAndNoPush($matches);
 
         if ($this->customer->contacts()->count() === 0) {
             $data['is_primary'] = true;
@@ -554,10 +613,30 @@ class extends Component
             'customer_id' => $this->customer->id,
         ]));
 
+        if ($link = $links[mb_strtolower(trim((string) $contact->email))] ?? null) {
+            $contact->update(['smove_contact_id' => $link['id']]);
+        }
+
+        // Already on the system's Smove list: linked above, never re-joined
+        // (a join resets its consent) — same rule as the customer import.
+        MailingMembership::withoutPushing($noPush, fn () => $this->pushNewContact($contact));
+
+        $this->contactSmoveMatch = [];
+
         $activityLogger->log('contact.created', "נוסף איש קשר \"{$contact->name}\" ללקוחה \"{$this->customer->school->name}\"", [
             'customer_id' => $this->customer->id, 'lead_id' => $this->customer->lead_id, 'school_id' => $this->customer->school_id,
         ]);
 
+        $this->contactError = null;
+        $this->resetContactForm();
+        unset($this->contacts);
+
+        $this->dispatch('close-modals');
+        $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה".($links ? ' והותאם לאיש הקשר ב-Smove.' : '.'));
+    }
+
+    private function pushNewContact(Contact $contact): void
+    {
         // A customer with no contacts yet had no email to sync to Smove at
         // conversion time (see MailingMembership::pushToSmove()'s no-email
         // skip) — the first (forced-primary) contact is often the first
@@ -571,13 +650,6 @@ class extends Component
         // own docblock) still needs to reach Smove on its own, so a mailing
         // sent to this customer reaches every contact, not just the first.
         MailingMembership::syncContact($this->customer, $contact);
-
-        $this->contactError = null;
-        $this->resetContactForm();
-        unset($this->contacts);
-
-        $this->dispatch('close-modals');
-        $this->notifySuccess("איש קשר \"{$contact->name}\" נוסף בהצלחה.");
     }
 
     public function editContact(int $id): void
@@ -598,7 +670,20 @@ class extends Component
      * FR-2.9: cannot remove the "ראשי" mark from the last remaining primary
      * contact — a customer must always have at least one (FR-2.8).
      */
+    /**
+     * 2026-11-18: a contact whose email other customers' contacts share is
+     * one person (one contact in Smove). Changing its personal details
+     * (SHARED_CONTACT_FIELDS) first asks for approval — they change on every
+     * one of those customers' cards — and suggests adding a new contact
+     * instead when it's really someone else. Role and the primary /
+     * accounting marks stay per customer.
+     */
     public function updateContact(ActivityLogger $activityLogger): void
+    {
+        $this->saveContactEdit($activityLogger, sharedConfirmed: false);
+    }
+
+    private function saveContactEdit(ActivityLogger $activityLogger, bool $sharedConfirmed): void
     {
         $contact = Contact::where('school_id', $this->customer->school_id)->findOrFail($this->editingContactId);
         $data = $this->validateContact();
@@ -609,10 +694,29 @@ class extends Component
             return;
         }
 
+        $personal = array_filter(
+            array_intersect_key($data, array_flip(self::SHARED_CONTACT_FIELDS)),
+            fn ($value, $field) => trim((string) $value) !== trim((string) $contact->{$field}),
+            ARRAY_FILTER_USE_BOTH,
+        );
+        $shared = $personal ? $this->sharedCopiesOf($contact) : collect();
+
+        if ($shared->isNotEmpty() && ! $sharedConfirmed) {
+            $this->contactSharedWith = $shared->map(fn (Contact $c) => $c->customer?->school?->name)->filter()->unique()->sort()->values()->all();
+            $this->dispatch('open-modal', name: 'shared-contact');
+
+            return;
+        }
+
         $contact->update($data);
 
-        $activityLogger->log('contact.updated', "עודכן איש קשר \"{$contact->name}\"", [
+        foreach ($shared as $copy) {
+            $copy->update($personal);
+        }
+
+        $activityLogger->log('contact.updated', "עודכן איש קשר \"{$contact->name}\"".($shared->isNotEmpty() ? ' — גם אצל: '.implode(', ', $this->contactSharedWith) : ''), [
             'customer_id' => $this->customer->id, 'lead_id' => $this->customer->lead_id, 'school_id' => $contact->school_id,
+            'metadata' => $shared->isNotEmpty() ? ['shared_contact_ids' => $shared->pluck('id')->all()] : [],
         ]);
 
         // The synced Smove contact uses the PRIMARY contact's email/name
@@ -624,8 +728,60 @@ class extends Component
 
         $this->contactError = null;
         $this->contactNameWarning = null;
+        $this->contactSharedWith = [];
         $this->resetContactForm();
         unset($this->contacts);
+
+        if ($shared->isNotEmpty()) {
+            $this->dispatch('close-modals');
+            $this->notifySuccess('איש הקשר עודכן — גם אצל '.$shared->count().' לקוחות נוספות.');
+        }
+    }
+
+    /** Personal details of a contact shared by several customers — changing them changes them for all (updateContact()). */
+    private const SHARED_CONTACT_FIELDS = ['name', 'phone', 'phone_secondary', 'email', 'email_secondary'];
+
+    /** Other customers' contacts with this contact's (saved) email. */
+    private function sharedCopiesOf(Contact $contact)
+    {
+        $email = mb_strtolower(trim((string) $contact->email));
+
+        if ($email === '') {
+            return collect();
+        }
+
+        return Contact::with('customer.school')
+            ->whereKeyNot($contact->id)
+            ->whereNotNull('customer_id')
+            ->where('customer_id', '!=', $this->customer->id)
+            ->whereRaw('LOWER(TRIM(email)) = ?', [$email])
+            ->get();
+    }
+
+    public function confirmSharedContactUpdate(ActivityLogger $activityLogger): void
+    {
+        if ($this->contactSharedWith === [] || ! $this->editingContactId) {
+            return;
+        }
+
+        $this->saveContactEdit($activityLogger, sharedConfirmed: true);
+    }
+
+    /** "It's someone else": leave the shared contact as it was and open "+ איש קשר חדש" with what was typed. */
+    public function addSharedEditAsNewContact(): void
+    {
+        $this->contactSharedWith = [];
+        $this->editingContactId = null;
+        $this->contactIsPrimary = false;
+        $this->contactError = null;
+        $this->dispatch('close-modals');
+        $this->dispatch('open-modal', name: 'new-contact');
+    }
+
+    public function cancelSharedContactUpdate(): void
+    {
+        $this->contactSharedWith = [];
+        $this->dispatch('close-modals');
     }
 
     public function cancelContactEdit(): void
@@ -1571,7 +1727,14 @@ class extends Component
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
                         <h3 style="margin:0">אנשי קשר</h3>
                         @if (! $editingContactId)
-                            <x-modal trigger-label="+ איש קשר חדש" trigger-class="btn btn-secondary btn-sm" title="איש קשר חדש">
+                            <x-modal name="new-contact" trigger-label="+ איש קשר חדש" trigger-class="btn btn-secondary btn-sm" title="איש קשר חדש">
+                                @if ($contactSmoveMatch)
+                                    <x-smove-match-notice :matches="$contactSmoveMatch" />
+                                    <div style="display:flex; gap:8px">
+                                        <button type="button" class="btn btn-primary" wire:click="confirmContactSmoveMatch" wire:loading.attr="disabled">אישור התאמה והוספת איש הקשר</button>
+                                        <button type="button" class="btn btn-secondary" wire:click="cancelContactSmoveMatch">חזרה לעריכה</button>
+                                    </div>
+                                @else
                                 <form wire:submit="addContact" class="form-grid">
                                     <div><label>שם מלא</label><input type="text" wire:model="contactName">@error('contactName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>תפקיד</label><input type="text" wire:model="contactRole"></div>
@@ -1583,11 +1746,28 @@ class extends Component
                                         <span class="checkbox-row"><input type="checkbox" id="newContactIsPrimary" wire:model="contactIsPrimary"><label for="newContactIsPrimary" style="margin:0">איש קשר ראשי</label></span>
                                         <span class="checkbox-row"><input type="checkbox" id="newContactIsAccountingContact" wire:model="contactIsAccountingContact"><label for="newContactIsAccountingContact" style="margin:0">גורם חשבונאי</label></span>
                                     </div>
-                                    <div class="full"><button type="submit" class="btn btn-primary">+ הוספת איש קשר</button></div>
+                                    <div class="full"><button type="submit" class="btn btn-primary" wire:loading.attr="disabled" wire:target="addContact">+ הוספת איש קשר</button></div>
                                 </form>
+                                @endif
                             </x-modal>
                         @endif
                     </div>
+
+                    {{-- Editing a contact other customers share (updateContact()). --}}
+                    <x-modal name="shared-contact" title="איש קשר משותף לכמה לקוחות">
+                        @if ($contactSharedWith)
+                            <div style="background:var(--color-warning-bg); border:1px solid var(--color-warning); border-radius:var(--radius-control); padding:var(--sp-md); margin-bottom:var(--sp-md)">
+                                <div style="margin-bottom:8px">איש קשר זה משותף גם ל: <strong>{{ implode(', ', $contactSharedWith) }}</strong>.</div>
+                                <div style="margin-bottom:8px">שינוי השם, הטלפון או הדוא"ל ישתנה <strong>אצל כולן</strong> (וב-Smove). התפקיד והסימונים ראשי / גורם חשבונאי נשארים לכל לקוחה בנפרד.</div>
+                                <div>אם מדובר באדם אחר — כדאי להוסיף איש קשר חדש במקום לערוך את הקיים.</div>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap">
+                                <button type="button" class="btn btn-primary" wire:click="addSharedEditAsNewContact">הוספה כאיש קשר חדש</button>
+                                <button type="button" class="btn btn-secondary" wire:click="confirmSharedContactUpdate" wire:loading.attr="disabled">שמירה אצל כולן</button>
+                                <button type="button" class="btn btn-ghost" wire:click="cancelSharedContactUpdate">חזרה לעריכה</button>
+                            </div>
+                        @endif
+                    </x-modal>
 
                     @forelse ($this->contacts as $contact)
                         @if ($editingContactId === $contact->id)
