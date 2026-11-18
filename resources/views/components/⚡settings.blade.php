@@ -113,6 +113,9 @@ class extends Component
     #[\Livewire\Attributes\Locked]
     public ?string $importId = null;
 
+    /** The user approved opening the contacts the check didn't find on the Smove list. */
+    public bool $importApproveUnlisted = false;
+
     public function mount(): void
     {
         abort_unless(auth()->user()->can('settings.view'), 403);
@@ -186,14 +189,26 @@ class extends Component
             }
         }
 
+        // Contacts not on the Smove list — imported only once approved (importApproveUnlisted).
+        $unlisted = [];
+
+        foreach ($result['rows'] as $row) {
+            foreach ($row['unlisted'] ?? [] as $column => $contact) {
+                $unlisted[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column] + $contact;
+            }
+        }
+
+        $this->importApproveUnlisted = false;
+
         $this->importCheck = [
+            'unlisted' => $unlisted,
             'fileError' => $result['fileError'],
             'total' => count($result['rows']),
             'valid' => $valid,
             'invalidRows' => count($result['rows']) - $valid,
             'errors' => $errors,
             'warnings' => $warnings,
-            // How many contacts will be linked to the Smove list (every one was checked to be on it).
+            // How many contacts will be linked to the Smove list, and how many aren't on it.
             'smove' => $valid > 0 ? $import->smovePreview($result['rows'], $result['smove']) : null,
         ];
 
@@ -220,10 +235,16 @@ class extends Component
             return;
         }
 
+        if (($this->importCheck['unlisted'] ?? []) && ! $this->importApproveUnlisted) {
+            $this->notifyError('יש לאשר את פתיחת אנשי הקשר שלא נמצאו ברשימת התפוצה ב־Smove לפני היבוא.');
+
+            return;
+        }
+
         $this->importId = (string) \Illuminate\Support\Str::uuid();
         \Illuminate\Support\Facades\Cache::put(\App\Jobs\ImportCustomers::cacheKey($this->importId), ['state' => 'queued', 'total' => $this->importCheck['valid'] ?? 0, 'done' => 0], now()->addDay());
 
-        \App\Jobs\ImportCustomers::dispatch($this->importId, $this->importPath, auth()->id());
+        \App\Jobs\ImportCustomers::dispatch($this->importId, $this->importPath, auth()->id(), $this->importApproveUnlisted);
 
         // The job owns the file now and deletes it when done.
         $this->importPath = null;
@@ -232,7 +253,7 @@ class extends Component
     public function resetImport(): void
     {
         $this->discardImportFile();
-        $this->reset(['importFile', 'importCheck', 'importId']);
+        $this->reset(['importFile', 'importCheck', 'importId', 'importApproveUnlisted']);
     }
 
     private function discardImportFile(): void
@@ -1464,7 +1485,7 @@ class extends Component
             <div class="card">
                 <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
                 <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא, וגם שורה שאיש קשר בה לא נמצא ברשימת התפוצה ב־Smove (לפי כתובת הדוא"ל).
+                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא. כל איש קשר מחופש לפי כתובת הדוא"ל ברשימת התפוצה ב־Smove: מי שנמצא — יקושר; מי שלא נמצא — יוצג, ותתבקשי לאשר את פתיחתו.
                 </p>
                 <form wire:submit="checkImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
                     <input type="file" id="importFile" wire:model="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
@@ -1490,9 +1511,9 @@ class extends Component
                     <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">אפשר לעזוב את המסך — היבוא ממשיך ברקע.</p>
                 @elseif ($status['state'] === 'done')
                     <h3 style="margin:0 0 var(--sp-sm)">✓ היבוא הסתיים: נוספו {{ $status['created'] }} לקוחות</h3>
-                    <p style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">{{ $status['smove']['linked'] ?? 0 }} אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove.</p>
+                    <p style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">{{ $status['smove']['linked'] ?? 0 }} אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove.@if (! empty($status['smove']['joined'])) {{ $status['smove']['joined'] }} אנשי קשר שלא היו ברשימה נפתחו וצורפו אליה.@endif</p>
                     @if (! empty($status['skipped']))
-                        <p style="{{ $errStyle }}">{{ $status['skipped'] }} שורות לא יובאו כי לא עברו את הבדיקה החוזרת בזמן היבוא (למשל איש קשר שהוסר בינתיים מרשימת התפוצה ב־Smove). אפשר להעלות את הקובץ שוב כדי לראות את השגיאות.</p>
+                        <p style="{{ $errStyle }}">{{ $status['skipped'] }} שורות לא יובאו כי לא עברו את הבדיקה החוזרת בזמן היבוא (למשל בית ספר שנוסף למערכת בינתיים). אפשר להעלות את הקובץ שוב כדי לראות את השגיאות.</p>
                     @endif
                     @if (! empty($status['failed']))
                         <p style="{{ $errStyle }}">{{ count($status['failed']) }} שורות לא יובאו:</p>
@@ -1580,11 +1601,44 @@ class extends Component
                         <div class="card" style="margin-bottom:var(--sp-md)">
                             <h4 style="margin:0 0 6px">רשימת התפוצה ב־Smove</h4>
                             <ul style="font-size:var(--fs-caption); margin:0; padding-inline-start:18px">
-                                <li>כל אנשי הקשר בשורות התקינות נמצאו ברשימה. <strong>{{ $smove['linked'] }}</strong> אנשי קשר יקושרו אליה, בלי לשלוח להם אישור הרשמה מחדש.</li>
+                                <li><strong>{{ $smove['linked'] }}</strong> אנשי קשר נמצאו ברשימה ויקושרו אליה, בלי לשלוח להם אישור הרשמה מחדש.</li>
+                                @if ($smove['unlisted'] ?? 0)
+                                    <li style="color:var(--color-error)"><strong>{{ $smove['unlisted'] }}</strong> אנשי קשר לא נמצאו ברשימה — פירוט ואישור למטה.</li>
+                                @endif
                                 @if ($smove['not_receiving'])
                                     <li style="color:var(--color-warning)"><strong>{{ $smove['not_receiving'] }}</strong> מהם לא מאשרים כרגע קבלת מיילים ב־Smove (הוסרו או לא אישרו). הם יקושרו, אבל מיילים לא יגיעו אליהם עד שיאשרו.</li>
                                 @endif
                             </ul>
+                        </div>
+                    @endif
+
+                    @if ($importCheck['valid'] > 0 && ($importCheck['unlisted'] ?? []))
+                        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md); border-color:var(--color-error)">
+                            <div style="padding: var(--sp-sm) var(--sp-md)">
+                                <h4 style="margin:0 0 4px; color:var(--color-error)">{{ count($importCheck['unlisted']) }} אנשי קשר לא נמצאו ברשימת התפוצה ב־Smove</h4>
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">
+                                    החיפוש נעשה לפי כתובת הדוא"ל. אם הכתובת שגויה — אפשר לתקן בקובץ ולהעלות שוב.
+                                    אחרי אישור, אנשי הקשר האלה ייפתחו במערכת ויצורפו לרשימת התפוצה ב־Smove, כמו כל איש קשר חדש (ייתכן ש־Smove ישלח להם מייל לאישור ההרשמה). גורם חשבונאי שאינו איש קשר ראשי רק ייפתח — הוא מקבל דואר הנהלת חשבונות בלבד, ולא מצורף לדיוור.
+                                </p>
+                            </div>
+                            <div class="table-scroll" style="max-height:320px; overflow-y:auto">
+                            <table>
+                                <thead><tr><th>שורה</th><th>מוסד</th><th>איש קשר</th><th>דוא"ל</th></tr></thead>
+                                <tbody>
+                                    @foreach (array_slice($importCheck['unlisted'], 0, 500) as $contact)
+                                        <tr>
+                                            <td class="ltr-num">{{ $contact['row'] }}</td>
+                                            <td>{{ $contact['school'] ?: '—' }}</td>
+                                            <td>{{ $contact['name'] ?: '—' }}</td>
+                                            <td class="ltr-num" dir="ltr">{{ $contact['email'] }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                            </div>
+                            <div style="padding: var(--sp-sm) var(--sp-md)">
+                                <span class="checkbox-row"><input type="checkbox" id="importApproveUnlisted" wire:model.live="importApproveUnlisted"><label for="importApproveUnlisted" style="margin:0"><strong>אני מאשרת לפתוח את אנשי הקשר האלה ולצרף אותם לרשימת התפוצה ב־Smove</strong></label></span>
+                            </div>
                         </div>
                     @endif
 
@@ -1597,7 +1651,7 @@ class extends Component
                         @endif
                         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                             @can('settings.edit')
-                                <button type="button" wire:click="runImport" wire:loading.attr="disabled" class="btn btn-primary"
+                                <button type="button" wire:click="runImport" wire:loading.attr="disabled" class="btn btn-primary" @disabled(($importCheck['unlisted'] ?? []) && ! $importApproveUnlisted)
                                     wire:confirm="לייבא {{ $importCheck['valid'] }} לקוחות חדשות? לא ניתן למחוק לקוחות אחרי היבוא.">
                                     ייבוא {{ $importCheck['valid'] }} {{ $importCheck['invalidRows'] ? 'השורות התקינות' : 'לקוחות' }}
                                 </button>

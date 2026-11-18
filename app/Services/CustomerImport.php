@@ -42,12 +42,14 @@ use Throwable;
  * is reported and never imported: the import only adds, it never changes an
  * existing card.
  *
- * Smove (business owner's rule, 2026-11-15): every contact email in the file
- * must already be on the system's Smove list (smoveList()). One that isn't is
- * a row error — that row isn't imported — and when the list can't be read
- * (or Smove isn't connected) the whole file is refused. Imported contacts are
- * LINKED (contacts.smove_contact_id) and never pushed to Smove: a join would
- * reset a confirmed contact's consent or resubscribe one who unsubscribed.
+ * Smove: each contact email is first looked up on the system's Smove list
+ * (smoveList()). One found there is LINKED (contacts.smove_contact_id) and
+ * never pushed to Smove — a join would reset a confirmed contact's consent or
+ * resubscribe one who unsubscribed. One not found (2026-11-18, business
+ * owner's rule — it used to be a row error) is listed by the check and opened
+ * only once the user approves; it then joins the Smove list like any new
+ * contact. When the list can't be read (or Smove isn't connected) the whole
+ * file is refused, since nothing could be linked.
  */
 class CustomerImport
 {
@@ -89,7 +91,7 @@ class CustomerImport
         'role' => ['תפקיד', ''],
         'phone' => ['טלפון', 'לפחות 7 ספרות. חובה לאיש קשר ראשי.'],
         'phone_secondary' => ['טלפון נוסף', ''],
-        'email' => ['דוא"ל', 'כתובת דוא"ל תקינה, שנמצאת ברשימת התפוצה ב־Smove. חובה לאיש קשר ראשי.'],
+        'email' => ['דוא"ל', 'כתובת דוא"ל תקינה. חובה לאיש קשר ראשי. אם הכתובת ברשימת התפוצה ב־Smove — איש הקשר יקושר אליה; אם לא — המערכת תבקש אישור לפתוח אותו.'],
         'email_secondary' => ['דוא"ל נוסף', ''],
         'primary' => ['ראשי', 'כן / לא. אפשר יותר מאחד. אם אף איש קשר לא סומן — איש קשר 1 יהיה הראשי.'],
         'accounting' => ['גורם חשבונאי', 'כן / לא. גורם חשבונאי שאינו ראשי מקבל רק דואר הנהלת חשבונות (חשבוניות, קבלות, קישורי תשלום).'],
@@ -248,7 +250,7 @@ class CustomerImport
             ['• כל שורה בגיליון "לקוחות" היא לקוחה אחת. אין לשנות את שורת הכותרות.'],
             ['• עמודות המסומנות ב־* (ובצבע כתום) הן חובה.'],
             ['• בית ספר שכבר קיים במערכת (כליד או כלקוחה, לפי שם או ח.פ.) לא ייובא, וכך גם שורה כפולה בקובץ.'],
-            ['• כל כתובת דוא"ל של איש קשר חייבת להופיע ברשימת התפוצה ב־Smove. שורה עם כתובת שלא נמצאה שם לא תיובא.'],
+            ['• כל כתובת דוא"ל של איש קשר נבדקת מול רשימת התפוצה ב־Smove: איש קשר שנמצא שם יקושר אליה. איש קשר שלא נמצא — המערכת תציג אותו ותבקש אישור לפתוח אותו, ואז הוא יצורף לרשימה.'],
             ['• לפני היבוא המערכת בודקת את כל הקובץ ומציגה את השגיאות לפי מספר שורה. אפשר לתקן ולהעלות שוב.'],
             ['• אפשר למלא עד '.self::CONTACTS.' אנשי קשר לכל לקוחה (איש קשר 1 חובה). לכל אחד כותבים כן / לא ב"ראשי" וב"גורם חשבונאי".'],
             ['• אם אף איש קשר לא סומן "ראשי" — איש קשר 1 יהיה הראשי. לאיש קשר ראשי חובה טלפון ודוא"ל.'],
@@ -540,13 +542,18 @@ class CustomerImport
                 $seenNumbers[$number] ??= $row['row'];
             }
 
+            // A contact not on the Smove list is no longer a row error (2026-11-18):
+            // the check lists it, and the import opens it only once the user
+            // approves — then it joins the list like any new contact.
+            $unlisted = [];
+
             foreach ($filled as $n) {
                 $key = "contact{$n}_email";
                 $column = $columns[$key][0];
                 $email = mb_strtolower(trim($v[$key]));
 
                 if ($email !== '' && ! isset($errors[$column]) && ! isset($smoveMembers[$email])) {
-                    $errors[$column] = 'לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.';
+                    $unlisted[$column] = ['email' => trim($v[$key]), 'name' => trim($v["contact{$n}_name"])];
                 }
             }
 
@@ -582,6 +589,7 @@ class CustomerImport
 
             $row['errors'] = $errors;
             $row['warnings'] = $errors === [] ? $warnings : [];
+            $row['unlisted'] = $errors === [] ? $unlisted : [];
             $row['data'] = $errors === [] ? $this->normalize($v, $formats, $filled, $primary) : null;
             unset($row['raw']);
         }
@@ -635,15 +643,20 @@ class CustomerImport
      * @param  callable(int $done): void|null  $progress
      * @return array{created: list<int>, failed: list<array{row: int, school: string, error: string}>}
      */
-    public function import(array $rows, User $user, ActivityLogger $activityLogger, ?callable $progress = null, ?array $smove = null): array
+    public function import(array $rows, User $user, ActivityLogger $activityLogger, ?callable $progress = null, ?array $smove = null, bool $approveUnlisted = false): array
     {
         $smove ??= ['state' => 'off', 'members' => []];
         $created = [];
         $failed = [];
-        $this->smoveStats = ['linked' => 0, 'not_receiving' => 0];
+        $this->smoveStats = ['linked' => 0, 'not_receiving' => 0, 'joined' => 0];
 
         foreach (array_values(array_filter($rows, fn ($row) => $row['data'] !== null)) as $i => $row) {
             try {
+                // Contacts not on the Smove list are opened only with the user's approval.
+                if (! empty($row['unlisted']) && ! $approveUnlisted) {
+                    throw new \RuntimeException('יש בשורה אנשי קשר שלא נמצאו ברשימת התפוצה ב־Smove, ולא אושר לפתוח אותם.');
+                }
+
                 $created[] = $this->importRow($row['data'], $user, $activityLogger, $smove)->id;
             } catch (Throwable $e) {
                 report($e);
@@ -656,7 +669,8 @@ class CustomerImport
         }
 
         $activityLogger->log('customers.imported', 'יובאו '.count($created).' לקוחות מקובץ אקסל'.($failed ? ' ('.count($failed).' נכשלו)' : '')
-            .($smove['state'] === 'ok' ? " — {$this->smoveStats['linked']} אנשי קשר קושרו לרשימת Smove" : ''), [
+            .($smove['state'] === 'ok' ? " — {$this->smoveStats['linked']} אנשי קשר קושרו לרשימת Smove" : '')
+            .($this->smoveStats['joined'] ? ", {$this->smoveStats['joined']} שלא היו ברשימה צורפו אליה" : ''), [
             'user' => $user,
             'metadata' => ['created' => count($created), 'failed' => count($failed), 'smove' => $smove['state']] + $this->smoveStats,
         ]);
@@ -664,7 +678,7 @@ class CustomerImport
         return ['created' => $created, 'failed' => $failed, 'smove' => $this->smoveStats];
     }
 
-    private array $smoveStats = ['linked' => 0, 'not_receiving' => 0];
+    private array $smoveStats = ['linked' => 0, 'not_receiving' => 0, 'joined' => 0];
 
     /**
      * The system's Smove list, read once before a check or an import:
@@ -696,9 +710,11 @@ class CustomerImport
     /** For the check screen: how many of the valid rows' contacts will be linked, and how many of those don't receive emails. */
     public function smovePreview(array $rows, array $smove): array
     {
-        $preview = ['state' => $smove['state'], 'linked' => 0, 'not_receiving' => 0];
+        $preview = ['state' => $smove['state'], 'linked' => 0, 'not_receiving' => 0, 'unlisted' => 0];
 
         foreach ($rows as $row) {
+            $preview['unlisted'] += count($row['unlisted'] ?? []);
+
             foreach (self::contactEmails($row['data']) as $email) {
                 if ($member = $smove['members'][$email] ?? null) {
                     $preview['linked']++;
@@ -725,17 +741,25 @@ class CustomerImport
 
     private function importRow(array $data, User $user, ActivityLogger $activityLogger, array $smove): Customer
     {
-        // Every contact here was found on the Smove list (checkRows()): all are
-        // linked, none is pushed to Smove.
+        // Contacts found on the Smove list are linked and never pushed (a join
+        // would reset their consent). Approved ones not on it join it as usual.
         $emails = self::contactEmails($data);
         $linked = array_intersect_key($smove['members'], array_flip($emails));
 
-        $customer = $this->createCustomer($data, $user, $activityLogger, $linked, $emails);
+        $customer = $this->createCustomer($data, $user, $activityLogger, $linked, array_keys($linked));
 
         foreach ($linked as $member) {
             $this->smoveStats['linked']++;
             $this->smoveStats['not_receiving'] += $member['can_receive'] ? 0 : 1;
         }
+
+        // Accounting-only contacts get accounting mail only, so they never join the list.
+        $this->smoveStats['joined'] += collect($data['contacts'])
+            ->filter(fn (array $c) => filled($c['email']) && ! ($c['is_accounting_contact'] && ! $c['is_primary']))
+            ->map(fn (array $c) => mb_strtolower(trim($c['email'])))
+            ->unique()
+            ->reject(fn (string $email) => isset($linked[$email]))
+            ->count();
 
         return $customer;
     }

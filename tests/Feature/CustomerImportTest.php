@@ -346,7 +346,9 @@ class CustomerImportTest extends TestCase
             ->assertSet('importCheck.valid', 2)
             ->assertSet('importCheck.smove.linked', 3)
             ->assertSet('importCheck.smove.not_receiving', 1)
-            ->assertSee('כל אנשי הקשר בשורות התקינות נמצאו ברשימה')
+            ->assertSee('אנשי קשר נמצאו ברשימה ויקושרו אליה')
+            ->assertSet('importCheck.unlisted', [])
+            ->assertDontSee('לא נמצאו ברשימת התפוצה ב־Smove')
             ->call('runImport')
             ->assertSee('3 אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove');
 
@@ -364,7 +366,8 @@ class CustomerImportTest extends TestCase
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $primary->customer])->assertSee('title="נמצא ברשימת התפוצה ב־Smove (לפי כתובת הדוא״ל)"', false);
     }
 
-    public function test_a_row_whose_contact_is_not_on_the_smove_list_is_an_error_and_is_not_imported(): void
+    /** Business owner, 2026-11-18: a contact not on the list no longer blocks its row — it asks for approval. */
+    public function test_contacts_not_on_the_smove_list_are_listed_and_opened_after_approval(): void
     {
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
@@ -373,18 +376,36 @@ class CustomerImportTest extends TestCase
                 $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact1_email' => 'n@noam.test', 'contact2_email' => 'unknown@noam.test']),
             ]))
             ->call('checkImport')
-            ->assertSet('importCheck.valid', 1)
-            ->assertSet('importCheck.invalidRows', 2);
+            ->assertSet('importCheck.valid', 3)
+            ->assertSet('importCheck.invalidRows', 0)
+            ->assertSet('importCheck.errors', [])
+            ->assertSet('importCheck.smove.linked', 3)
+            ->assertSet('importCheck.smove.unlisted', 2)
+            ->assertSee('2 אנשי קשר לא נמצאו ברשימת התפוצה ב־Smove')
+            ->assertSee('stranger@new.test')
+            ->assertSee('אני מאשרת לפתוח את אנשי הקשר האלה');
 
-        $errors = collect($component->get('importCheck.errors'))->groupBy('row')->map(fn ($e) => $e->pluck('message', 'column')->all());
-        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[3]['איש קשר 1 — דוא"ל']);
-        $this->assertSame('לא נמצא ברשימת התפוצה ב־Smove — לא ייובא.', $errors[4]['איש קשר 2 — דוא"ל']);
+        $this->assertSame(
+            [[3, 'stranger@new.test', 'רחל כהן'], [4, 'unknown@noam.test', 'לאה לוי']],
+            collect($component->get('importCheck.unlisted'))->map(fn ($c) => [$c['row'], $c['email'], $c['name']])->all(),
+        );
 
-        $component->call('runImport');
+        // Not approved yet: nothing is imported.
+        $component->call('runImport')->assertSet('importId', null);
+        $this->assertSame(0, Customer::count());
 
-        $this->assertSame(['אורות'], School::pluck('name')->all());
-        $this->assertSame(0, Contact::where('email', 'stranger@new.test')->count());
-        $this->assertSame(0, $this->postsToSmoveContacts());
+        $component->set('importApproveUnlisted', true)->call('runImport')
+            ->assertSee('היבוא הסתיים: נוספו 3 לקוחות')
+            ->assertSee('1 אנשי קשר שלא היו ברשימה נפתחו וצורפו אליה');
+
+        $this->assertSame(3, Customer::count());
+        // The ones found are linked and never posted; the approved ones join the Smove list.
+        $this->assertSame(903, (int) Contact::where('email', 'n@noam.test')->value('smove_contact_id'));
+        $posted = \Illuminate\Support\Facades\Http::recorded(fn ($request) => $request->method() === 'POST' && str_contains($request->url(), '/Contacts'))
+            ->map(fn ($pair) => $pair[0]['email'])->sort()->values()->all();
+        // unknown@noam.test is contact 2 there, marked accounting-only in validRow() — accounting mail only, no list join.
+        $this->assertSame(['stranger@new.test'], $posted);
+        $this->assertTrue(Contact::where('email', 'unknown@noam.test')->exists());
     }
 
     public function test_nothing_is_imported_when_the_smove_list_cannot_be_read(): void
@@ -415,7 +436,7 @@ class CustomerImportTest extends TestCase
         $this->assertSame(0, Customer::count());
     }
 
-    public function test_a_contact_removed_from_smove_after_the_check_is_skipped_by_the_import(): void
+    public function test_a_contact_removed_from_smove_after_the_check_is_not_opened_without_approval(): void
     {
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
@@ -427,9 +448,10 @@ class CustomerImportTest extends TestCase
 
         $this->smoveList = array_values(array_filter($this->smoveList, fn ($c) => $c['email'] !== 'n@noam.test'));
 
+        // Now it isn't on the list, and nobody approved opening it: that row isn't imported.
         $component->call('runImport')
             ->assertSee('היבוא הסתיים: נוספו 1 לקוחות')
-            ->assertSee('1 שורות לא יובאו כי לא עברו את הבדיקה החוזרת');
+            ->assertSee('לא אושר לפתוח אותם');
 
         $this->assertSame(['אורות'], School::pluck('name')->all());
     }

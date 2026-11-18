@@ -28,7 +28,8 @@ class ImportCustomers implements ShouldQueue
 
     public int $timeout = 3600;
 
-    public function __construct(public string $importId, public string $path, public int $userId) {}
+    /** $approveUnlisted: the user approved opening contacts not found on the Smove list (they join it). */
+    public function __construct(public string $importId, public string $path, public int $userId, public bool $approveUnlisted = false) {}
 
     public static function cacheKey(string $importId): string
     {
@@ -68,7 +69,7 @@ class ImportCustomers implements ShouldQueue
 
             $this->put(['state' => 'running', 'total' => $valid, 'done' => 0]);
 
-            $result = $import->import($rows, $user, $activityLogger, fn (int $done) => $this->put(['state' => 'running', 'total' => $valid, 'done' => $done]), $smove);
+            $result = $import->import($rows, $user, $activityLogger, fn (int $done) => $this->put(['state' => 'running', 'total' => $valid, 'done' => $done]), $smove, $this->approveUnlisted);
 
             $this->put([
                 'state' => 'done',
