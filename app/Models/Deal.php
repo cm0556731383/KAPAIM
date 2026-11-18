@@ -140,6 +140,34 @@ class Deal extends Model
      * or one whose Summit issuance failed doesn't count as invoiced anywhere:
      * monthly payment, receipts, credit notes, the dashboard.
      */
+    /**
+     * Who SUMIT's documents (invoices, credit notes, receipts) go to — every
+     * accounting contact with an email (business owner, 2026-11-18: all of
+     * them, not only the first); with none, the first primary contact with
+     * an email. One entry per address, oldest contact first.
+     *
+     * @return \Illuminate\Support\Collection<int, Contact>
+     */
+    public function billingContacts(): \Illuminate\Support\Collection
+    {
+        $contacts = Contact::where('customer_id', $this->customer_id)->orderBy('id')->get()
+            ->filter(fn (Contact $c) => filled($c->email) && filter_var(trim($c->email), FILTER_VALIDATE_EMAIL))
+            ->unique(fn (Contact $c) => mb_strtolower(trim($c->email)));
+
+        $accounting = $contacts->where('is_accounting_contact', true);
+
+        return ($accounting->isNotEmpty() ? $accounting : $contacts->where('is_primary', true)->take(1))->values();
+    }
+
+    /** billingContacts()' addresses — or, with none, the school's own email. */
+    public function billingEmails(): array
+    {
+        $emails = $this->billingContacts()->map(fn (Contact $c) => trim($c->email))->all();
+        $school = trim((string) $this->customer?->school?->email);
+
+        return $emails ?: (filter_var($school, FILTER_VALIDATE_EMAIL) ? [$school] : []);
+    }
+
     public function issuedInvoice(): ?Document
     {
         return $this->documents()
@@ -870,6 +898,9 @@ class Deal extends Model
 
             if ($documentId) {
                 Receipt::linkIssuedBySumit($this, $payment, $documentId, $runner);
+                // SUMIT emailed it to the customer card's address (the first
+                // billing address) — the other accounting contacts get a copy.
+                app(SummitClient::class)->emailCopies($this, $documentId, array_slice($this->billingEmails(), 1), $runner);
             }
 
             return $payment;

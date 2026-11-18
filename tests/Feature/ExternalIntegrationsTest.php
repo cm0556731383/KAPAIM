@@ -1092,6 +1092,112 @@ class ExternalIntegrationsTest extends TestCase
             && ($request['Details']['SendByEmail']['EmailAddress'] ?? null) === 'accounts@example.com');
     }
 
+    // ----- SUMIT documents go to every accounting contact (Deal::billingContacts(), 2026-11-18) -----
+
+    private function sumitSends(): array
+    {
+        return Http::recorded(fn ($request) => str_ends_with($request->url(), '/accounting/documents/send/'))
+            ->map(fn ($pair) => [$pair[0]['EntityID'], $pair[0]['EmailAddress']])->values()->all();
+    }
+
+    private function addAccountingContacts(Deal $deal): void
+    {
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'רו"ח א', 'email' => 'acc1@example.com', 'is_accounting_contact' => true]);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'רו"ח ב', 'email' => 'acc2@example.com', 'is_accounting_contact' => true]);
+        Contact::create(['customer_id' => $deal->customer_id, 'name' => 'כפול', 'email' => 'ACC1@example.com', 'is_accounting_contact' => true]);
+    }
+
+    public function test_billing_contacts_are_every_accounting_contact_else_the_primary(): void
+    {
+        $deal = $this->dealWithInvoice();
+        $primary = $deal->customer->contacts()->where('is_primary', true)->value('email');
+
+        $this->assertSame([$primary], $deal->billingEmails());
+
+        $this->addAccountingContacts($deal);
+        $this->assertSame(['acc1@example.com', 'acc2@example.com'], $deal->fresh()->billingEmails());
+    }
+
+    public function test_a_receipt_goes_to_every_accounting_contact(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 557]], 200)]);
+
+        $deal = $this->dealWithInvoice(400);
+        $this->addAccountingContacts($deal);
+        $deal->update(['payment_method_id' => $this->createPaymentMethod('העברה', 'bank_transfer')->id]);
+        $payment = $deal->fresh()->recordPayment($deal->fresh()->version, 400.0);
+
+        \App\Models\Receipt::issueFor($deal->fresh(), $payment, app(ExternalOperationRunner::class), app(SummitClient::class));
+
+        Http::assertSent(fn ($request) => ($request['Details']['Type'] ?? null) === 2
+            && ($request['Details']['SendByEmail']['EmailAddress'] ?? null) === 'acc1@example.com');
+        $this->assertSame([[557, 'acc2@example.com']], $this->sumitSends());
+        $this->assertDatabaseHas('external_operations', ['operation_type' => 'email_document', 'status' => ExternalOperation::STATUS_SUCCESS, 'deal_id' => $deal->id]);
+    }
+
+    public function test_an_invoice_defaults_to_every_accounting_contact_and_sumit_emails_each(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $this->addAccountingContacts($deal);
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+
+        $component = Livewire::actingAs($this->owner)->test('document-view', ['document' => $invoice->fresh()])
+            ->assertSee('SUMIT ישלח את המסמך אל')
+            ->assertSee('acc1@example.com')
+            ->assertSee('acc2@example.com');
+        $this->assertSame(['acc1@example.com', 'acc2@example.com'], array_column($component->get('workingRecipients'), 'email'));
+
+        $component->call('send', 'digital');
+
+        $this->assertNotNull($invoice->fresh()->sent_at);
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/accounting/documents/create/')
+            && $request['Details']['SendByEmail']['EmailAddress'] === 'acc1@example.com');
+        $this->assertSame([[555, 'acc2@example.com']], $this->sumitSends());
+        $this->assertSame(2, $invoice->recipients()->count());
+    }
+
+    public function test_a_failed_copy_never_undoes_the_issued_invoice(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake([
+            'api.sumit.co.il/accounting/documents/send/' => Http::response(['Status' => 1, 'UserErrorMessage' => 'down'], 200),
+            'api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 555]], 200),
+        ]);
+
+        $deal = $this->dealWithInvoice();
+        $this->addAccountingContacts($deal);
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+
+        $invoice->fresh()->sendTo($invoice->fresh()->defaultRecipients()->map(fn ($c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])->all(),
+            'digital', app(ActivityLogger::class), app(ExternalOperationRunner::class), app(SummitClient::class), app(SmoveClient::class));
+
+        $this->assertNotNull($invoice->fresh()?->sent_at);
+        $this->assertDatabaseHas('external_operations', ['operation_type' => 'issue_invoice', 'status' => ExternalOperation::STATUS_SUCCESS]);
+        $this->assertDatabaseHas('external_operations', ['operation_type' => 'email_document', 'status' => ExternalOperation::STATUS_FAILED]);
+    }
+
+    public function test_a_receipt_sumit_issued_itself_is_copied_to_the_other_accounting_contacts(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => false]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => []], 200)]);
+
+        $deal = $this->dealWithInvoice(400);
+        $this->addAccountingContacts($deal);
+        $sumitPayment = ['ID' => 9001, 'ValidPayment' => true, 'Amount' => 400, 'DocumentID' => 777];
+
+        $deal->fresh()->recordSumitPayment($sumitPayment, app(ExternalOperationRunner::class));
+        $deal->fresh()->recordSumitPayment($sumitPayment, app(ExternalOperationRunner::class)); // seen again by the sync
+
+        // SUMIT emailed acc1 itself (the customer card's address); acc2 gets one copy.
+        $this->assertSame([[777, 'acc2@example.com']], $this->sumitSends());
+    }
+
     public function test_a_credit_note_is_issued_from_the_deals_business_entity(): void
     {
         $this->createTemplate('credit_note');

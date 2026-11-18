@@ -175,7 +175,7 @@ class SummitClient
 
         // SUMIT emails the receipt to the customer's billing address — the same
         // one on the SUMIT customer card (accounting contact, else primary, else school).
-        $email = $this->customer($invoice->deal)['EmailAddress'] ?? null;
+        $email = $invoice->deal->billingEmails()[0] ?? null;
 
         $data = $this->dataOrFail($this->post($entity, '/accounting/documents/create/', array_filter([
             'Details' => $this->documentDetails(self::DOCUMENT_RECEIPT, $invoice->deal, $email),
@@ -402,21 +402,48 @@ class SummitClient
         ])->values()->all();
     }
 
+    /**
+     * SUMIT emails a document to one address — this sends it again to each
+     * of $emails (POST /accounting/documents/send/, one email per call): the
+     * other accounting contacts (Deal::billingContacts()). Each copy is its
+     * own external operation, so a failed copy shows in the log and never
+     * undoes the document itself, which SUMIT already issued.
+     */
+    public function emailCopies(Deal $deal, string $documentId, array $emails, ExternalOperationRunner $runner): void
+    {
+        foreach (array_unique(array_map(fn ($e) => mb_strtolower(trim($e)), $emails)) as $email) {
+            if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                continue;
+            }
+
+            $runner->run('summit', 'email_document', 'app_action', function () use ($deal, $documentId, $email) {
+                $this->dataOrFail($this->post($this->entityForDeal($deal), '/accounting/documents/send/', [
+                    'EntityID' => (int) $documentId,
+                    'EmailAddress' => $email,
+                    'Original' => true,
+                ]));
+
+                return $documentId;
+            }, [
+                'deal_id' => $deal->id,
+                'description' => "שליחת מסמך SUMIT #{$documentId} גם אל {$email} (גורם חשבונאי)",
+            ]);
+        }
+    }
+
     /** The SUMIT customer for $deal — the customer card's billing details, matched by this app's own id. */
     private function customer(Deal $deal): array
     {
         $customer = $deal->customer;
         $school = $customer?->school;
-        $contacts = $customer?->contacts ?? collect();
-        $contact = $contacts->first(fn (Contact $c) => $c->is_accounting_contact && filled($c->email))
-            ?? $contacts->first(fn (Contact $c) => $c->is_primary && filled($c->email));
+        $contact = $deal->billingContacts()->first();
 
         return array_filter([
             'ExternalIdentifier' => 'kapaim-customer-'.$customer?->id,
             'SearchMode' => self::SEARCH_BY_EXTERNAL_IDENTIFIER,
             'Name' => $school?->invoice_name ?: ($school?->name ?? 'לקוחה #'.$customer?->id),
             'CompanyNumber' => $school?->business_number,
-            'EmailAddress' => $contact?->email ?? $school?->email,
+            'EmailAddress' => $deal->billingEmails()[0] ?? null,
             'Phone' => $school?->phone ?? $contact?->phone,
             'City' => $school?->city,
             'Address' => $school?->address,

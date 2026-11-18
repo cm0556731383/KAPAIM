@@ -711,13 +711,13 @@ class Document extends Model
      */
     public static function issueCreditNoteFor(Deal $deal, float $creditAmount, string $description, ActivityLogger $logger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): array
     {
-        $recipients = Contact::where('customer_id', $deal->customer_id)->where('is_primary', true)->get()
-            ->filter(fn (Contact $c) => filled($c->email) && filter_var($c->email, FILTER_VALIDATE_EMAIL))
+        // SUMIT documents go to every accounting contact (Deal::billingContacts()).
+        $recipients = $deal->billingContacts()
             ->map(fn (Contact $c) => ['contact_id' => $c->id, 'name' => $c->name, 'email' => $c->email])
             ->values()->all();
 
         if (empty($recipients)) {
-            throw new RuntimeException('ללקוחה אין איש קשר ראשי עם כתובת דוא"ל — יש להוסיף אחד בכרטיס הלקוח, ואז להפיק את הזיכוי.');
+            throw new RuntimeException('ללקוחה אין גורם חשבונאי או איש קשר ראשי עם כתובת דוא"ל — יש להוסיף אחד בכרטיס הלקוח, ואז להפיק את הזיכוי.');
         }
 
         $document = self::generateCreditNoteFor($deal, $creditAmount, $description);
@@ -1271,6 +1271,11 @@ class Document extends Model
             return new Collection;
         }
 
+        // An invoice / credit note is emailed by SUMIT to every accounting contact.
+        if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
+            return new Collection($this->deal->billingContacts()->all());
+        }
+
         return Contact::where('customer_id', $this->deal->customer_id)->where('is_primary', true)->get();
     }
 
@@ -1364,8 +1369,11 @@ class Document extends Model
         // one — $operations['deleted'] tells the caller the document is gone.
         if (in_array($this->document_type, ['invoice', 'credit_note'], true)) {
             $typeLabel = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
-            // SUMIT emails the issued document itself, to the first recipient with a valid address.
-            $summitEmail = collect($recipients)->pluck('email')->first(fn ($email) => filled($email) && filter_var($email, FILTER_VALIDATE_EMAIL));
+            // SUMIT emails the issued document itself to the first recipient
+            // with a valid address; every other recipient gets it right after
+            // (SummitClient::emailCopies()).
+            $summitEmails = collect($recipients)->pluck('email')->filter(fn ($email) => filled($email) && filter_var(trim($email), FILTER_VALIDATE_EMAIL))->map(fn ($e) => trim($e))->values();
+            $summitEmail = $summitEmails->first();
 
             $operations['summit'] = $runner->run(
                 'summit',
@@ -1390,6 +1398,10 @@ class Document extends Model
                 }
 
                 return $operations;
+            }
+
+            if ($summit->isActive() && filled($operations['summit']->external_reference)) {
+                $summit->emailCopies($this->deal, (string) $operations['summit']->external_reference, $summitEmails->slice(1)->all(), $runner);
             }
         }
 

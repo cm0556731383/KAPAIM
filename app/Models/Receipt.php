@@ -126,6 +126,12 @@ class Receipt extends Model
             throw new RuntimeException('ההפקה מול SUMIT נכשלה, ולכן הקבלה לא נרשמה: '.$operation->error_message);
         }
 
+        // SUMIT emailed the receipt to the first billing address; the other
+        // accounting contacts get it too (Deal::billingContacts()).
+        if ($operation->status === ExternalOperation::STATUS_SUCCESS && $summit->isActive() && filled($operation->external_reference)) {
+            $summit->emailCopies($deal, (string) $operation->external_reference, array_slice($deal->billingEmails(), 1), $runner);
+        }
+
         // A cleared check counts as paid only once it has its receipt (Payment::isSettled()).
         $deal->refreshPaidStatus();
 

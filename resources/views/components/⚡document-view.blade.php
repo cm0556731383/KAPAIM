@@ -367,6 +367,15 @@ class extends Component
                             הופק מול Summit בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span>.
                         </p>
                     @else
+                        <p style="font-size:var(--fs-small); margin:0">
+                            SUMIT ישלח את המסמך אל:
+                            @forelse ($workingRecipients as $recipient)
+                                <span class="ltr-num" dir="ltr">{{ $recipient['email'] }}</span>@if ($recipient['name']) ({{ $recipient['name'] }})@endif{{ $loop->last ? '' : ',' }}
+                            @empty
+                                <span style="color:var(--color-warning)">אין ללקוחה גורם חשבונאי או איש קשר ראשי עם דוא"ל — SUMIT ישלח לכתובת שבכרטיס הלקוח אצלו, אם יש.</span>
+                            @endforelse
+                        </p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:4px 0 0">כל הגורמים החשבונאיים של הלקוחה (ובלעדיהם — איש הקשר הראשי).</p>
                         <div style="margin-top:var(--sp-lg)">
                             <button type="button" wire:click="send('digital')" class="btn btn-primary" @if ($document->document_type === 'invoice' && ($invoiceMismatch ?? false)) wire:confirm="סה&quot;כ החשבונית שונה מסכום העסקה, ואחרי ההפקה לא ניתן לשנות את סכום העסקה. להפיק בכל זאת?" @endif>הפקה מול Summit</button>
                         </div>
