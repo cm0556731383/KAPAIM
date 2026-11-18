@@ -197,12 +197,29 @@ class CustomerImportTest extends TestCase
         $this->assertSame(904, (int) $contacts[2]->smove_contact_id);
     }
 
-    public function test_contact_flags_must_be_yes_or_no_and_a_primary_contact_needs_phone_and_email(): void
+    /** 2026-11-19: a primary contact may have an email only, with no phone. */
+    public function test_a_primary_contact_with_an_email_and_no_phone_is_imported(): void
+    {
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([$this->validRow(['contact1_phone' => '', 'contact2_name' => '', 'contact2_email' => ''])]))
+            ->call('checkImport')
+            ->assertSet('importCheck.errors', [])
+            ->assertSet('importCheck.valid', 1)
+            ->call('runImport');
+
+        $customer = School::where('name', 'אורות')->first()->customer;
+        $primary = $customer->contacts()->where('is_primary', true)->sole();
+        $this->assertNull($primary->phone);
+        $this->assertNotNull($primary->email);
+        $this->assertNull($customer->lead->phone);
+    }
+
+    public function test_contact_flags_must_be_yes_or_no_and_a_primary_contact_needs_an_email(): void
     {
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
             ->set('importFile', $this->filledFile([
                 $this->validRow(['contact1_primary' => 'אולי', 'contact2_accounting' => 'בטח']),
-                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact2_primary' => 'כן']),
+                $this->validRow(['school_name' => 'נועם', 'business_number' => '', 'contact2_primary' => 'כן', 'contact2_email' => '']),
                 $this->validRow(['school_name' => 'שלישי', 'business_number' => '', 'contact1_name' => '', 'contact1_phone' => '', 'contact1_email' => '', 'contact1_role' => '']),
             ]))
             ->call('checkImport')
@@ -212,7 +229,9 @@ class CustomerImportTest extends TestCase
 
         $this->assertSame('יש לכתוב כן או לא.', $errors[2]['איש קשר 1 — ראשי']);
         $this->assertSame('יש לכתוב כן או לא.', $errors[2]['איש קשר 2 — גורם חשבונאי']);
-        $this->assertSame('חובה לאיש קשר ראשי — חסר.', $errors[3]['איש קשר 2 — טלפון']);
+        // 2026-11-19: a primary contact's phone is optional — only its email is required.
+        $this->assertArrayNotHasKey('איש קשר 2 — טלפון', $errors[3]);
+        $this->assertSame('חובה לאיש קשר ראשי — חסר.', $errors[3]['איש קשר 2 — דוא"ל']);
         // At least one contact: contact 1's name is required.
         $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
     }

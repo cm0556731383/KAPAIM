@@ -35,8 +35,8 @@ use Throwable;
  * contact (contact 1) is required; when no contact is marked ראשי, contact 1
  * is. A customer only ever exists as a converted lead
  * (Lead::convertToCustomer()), so each row opens a lead from the first
- * primary contact's email and phone — which, like a lead's, are required for
- * every primary contact — and converts it at once.
+ * primary contact's email — required for every primary contact; its phone
+ * is optional (2026-11-19: email-only contacts) — and converts it at once.
  *
  * A school already in the system (by name or ח.פ.), as a lead or a customer,
  * is reported and never imported: the import only adds, it never changes an
@@ -89,7 +89,7 @@ class CustomerImport
     private const CONTACT_FIELDS = [
         'name' => ['שם', 'שם מלא. חובה אם מולא פרט כלשהו של איש הקשר.'],
         'role' => ['תפקיד', ''],
-        'phone' => ['טלפון', 'לפחות 7 ספרות. חובה לאיש קשר ראשי.'],
+        'phone' => ['טלפון', 'לפחות 7 ספרות. לא חובה — אפשר איש קשר עם דוא"ל בלבד.'],
         'phone_secondary' => ['טלפון נוסף', ''],
         'email' => ['דוא"ל', 'כתובת דוא"ל תקינה. חובה לאיש קשר ראשי. אם הכתובת ברשימת התפוצה ב־Smove — איש הקשר יקושר אליה; אם לא — המערכת תבקש אישור לפתוח אותו.'],
         'email_secondary' => ['דוא"ל נוסף', ''],
@@ -485,7 +485,7 @@ class CustomerImport
                 $rules += [
                     "contact{$n}_name" => [Rule::requiredIf($isFilled), 'nullable', 'string', 'max:255'],
                     "contact{$n}_role" => ['nullable', 'string', 'max:255'],
-                    "contact{$n}_phone" => [Rule::requiredIf($isPrimary), 'nullable', 'string', 'max:50', new Phone],
+                    "contact{$n}_phone" => ['nullable', 'string', 'max:50', new Phone],
                     "contact{$n}_phone_secondary" => ['nullable', 'string', 'max:50', new Phone],
                     "contact{$n}_email" => [Rule::requiredIf($isPrimary), 'nullable', 'email', 'max:255'],
                     "contact{$n}_email_secondary" => ['nullable', 'email', 'max:255'],
@@ -499,7 +499,6 @@ class CustomerImport
             for ($n = 1; $n <= self::CONTACTS; $n++) {
                 $flagMessages["contact{$n}_primary.in"] = 'יש לכתוב כן או לא.';
                 $flagMessages["contact{$n}_accounting.in"] = 'יש לכתוב כן או לא.';
-                $flagMessages["contact{$n}_phone.required"] = 'חובה לאיש קשר ראשי — חסר.';
                 $flagMessages["contact{$n}_email.required"] = 'חובה לאיש קשר ראשי — חסר.';
             }
 
@@ -786,7 +785,7 @@ class CustomerImport
                 Contact::create($contact + ['school_id' => $school->id]);
             }
 
-            // The lead is opened from the first primary contact (its email and phone are required).
+            // The lead is opened from the first primary contact (its email is required; its phone may be empty).
             $lead = collect($data['contacts'])->firstWhere('is_primary', true);
 
             $newStatus = StatusDefinition::firstOrCreate(
