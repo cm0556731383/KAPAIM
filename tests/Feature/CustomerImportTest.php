@@ -300,6 +300,23 @@ class CustomerImportTest extends TestCase
         $this->assertNotNull($component->get('importPath'));
     }
 
+    public function test_invisible_characters_copied_from_hebrew_text_are_dropped(): void
+    {
+        // An address copied from Hebrew text ends with a right-to-left mark (U+200F), invisible on screen.
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([
+                $this->validRow(['contact1_email' => "rachel@orot.test\u{200F}", 'contact1_name' => "\u{200E}רחל\u{00A0}כהן ", 'contact2_email' => "\u{FEFF}books@orot.test "]),
+            ]))
+            ->call('checkImport')
+            ->assertSet('importCheck.errors', [])
+            ->assertSet('importCheck.valid', 1)
+            ->assertSet('importCheck.unlisted', [])
+            ->call('runImport');
+
+        $this->assertSame('רחל כהן', Contact::where('email', 'rachel@orot.test')->value('name'));
+        $this->assertTrue(Contact::where('email', 'books@orot.test')->exists());
+    }
+
     public function test_the_check_splits_rows_into_three_groups_and_wrong_details_are_fixed_on_screen(): void
     {
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')

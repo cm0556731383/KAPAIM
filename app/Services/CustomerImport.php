@@ -388,7 +388,7 @@ class CustomerImport
             $value = number_format($value, 0, '', '');
         }
 
-        $value = trim((string) $value);
+        $value = self::clean((string) $value, $key);
 
         // A phone typed into a number cell loses its leading 0 (0501234567 → 501234567).
         if (in_array($key, self::phoneColumns(), true) && is_numeric($cell->getValue()) && preg_match('/^[1-9]\d{7,8}$/', $value)) {
@@ -682,7 +682,7 @@ class CustomerImport
                     }
 
                     // Always text, so a phone keeps its leading 0 and a date stays as typed.
-                    $sheet->setCellValueExplicit([$columnOf[$key], $row], trim((string) $value), DataType::TYPE_STRING);
+                    $sheet->setCellValueExplicit([$columnOf[$key], $row], self::clean((string) $value, $key), DataType::TYPE_STRING);
                 }
             }
 
@@ -897,6 +897,26 @@ class CustomerImport
     public static function columnLetter(string $key): string
     {
         return Coordinate::stringFromColumnIndex(array_search($key, array_keys(self::columns()), true) + 1);
+    }
+
+    /**
+     * A cell's text without what can't be seen: text copied from Hebrew
+     * (WhatsApp, Gmail, Word) often carries invisible direction marks — an
+     * address ending in U+200F looked fine but failed the email check
+     * (2026-11-21). Format characters (\p{Cf}: LRM/RLM, zero-width, BOM) are
+     * dropped, non-breaking and other odd spaces become plain ones, and an
+     * email loses every space (none is ever valid there).
+     */
+    public static function clean(string $value, string $key = ''): string
+    {
+        $value = preg_replace('/\p{Cf}+/u', '', $value) ?? $value;
+        $value = preg_replace('/\p{Zs}/u', ' ', $value) ?? $value;
+
+        if (str_contains($key, 'email')) {
+            $value = preg_replace('/\s+/u', '', $value) ?? $value;
+        }
+
+        return trim($value);
     }
 
     private static function normalizeHeader(string $header): string
