@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
@@ -590,6 +591,9 @@ class CustomerImport
             $row['warnings'] = $errors === [] ? $warnings : [];
             $row['unlisted'] = $errors === [] ? $unlisted : [];
             $row['data'] = $errors === [] ? $this->normalize($v, $formats, $filled, $primary) : null;
+            // A row with errors keeps the values it was read with, so the
+            // check screen can show them for fixing (applyFixes()).
+            $row['values'] = $errors === [] ? null : $row['raw'];
             unset($row['raw']);
         }
 
@@ -630,6 +634,62 @@ class CustomerImport
                 'is_accounting_contact' => in_array($v["contact{$n}_accounting"], self::YES, true),
             ], $filled),
         ];
+    }
+
+    // ===== Fixing rows from the check screen =====
+
+    /**
+     * Writes values fixed on the check screen back into the uploaded file, so
+     * the file stays the one source the import reads (ImportCustomers checks
+     * it again from scratch). $fixes = [sheet row => [column key => value]].
+     * A column the file doesn't have (an optional one removed) is added.
+     */
+    public function applyFixes(string $path, array $fixes): void
+    {
+        $columns = self::columns();
+        $book = IOFactory::load($path);
+
+        try {
+            $sheet = $book->getSheet(0);
+            $columnOf = [];
+            $highestColumn = Coordinate::columnIndexFromString($sheet->getHighestDataColumn());
+
+            for ($i = 1; $i <= $highestColumn; $i++) {
+                $header = self::normalizeHeader((string) $sheet->getCell([$i, 1])->getValue());
+
+                foreach ($columns as $key => [$label]) {
+                    if ($header === self::normalizeHeader($label)) {
+                        $columnOf[$key] = $i;
+                    }
+                }
+            }
+
+            foreach ($fixes as $row => $values) {
+                $row = (int) $row;
+
+                if ($row < 2 || ! is_array($values)) {
+                    continue;
+                }
+
+                foreach ($values as $key => $value) {
+                    if (! isset($columns[$key])) {
+                        continue;
+                    }
+
+                    if (! isset($columnOf[$key])) {
+                        $columnOf[$key] = ++$highestColumn;
+                        $sheet->setCellValue([$highestColumn, 1], $columns[$key][0]);
+                    }
+
+                    // Always text, so a phone keeps its leading 0 and a date stays as typed.
+                    $sheet->setCellValueExplicit([$columnOf[$key], $row], trim((string) $value), DataType::TYPE_STRING);
+                }
+            }
+
+            IOFactory::createWriter($book, 'Xlsx')->save($path);
+        } finally {
+            $book->disconnectWorksheets();
+        }
     }
 
     // ===== The import =====

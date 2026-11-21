@@ -296,7 +296,50 @@ class CustomerImportTest extends TestCase
 
         $this->assertSame(0, Customer::count());
         $this->assertSame(1, School::count());
-        $component->assertSet('importPath', null);
+        // Kept so the rows can be fixed on screen (fixImport()).
+        $this->assertNotNull($component->get('importPath'));
+    }
+
+    public function test_the_check_splits_rows_into_three_groups_and_wrong_details_are_fixed_on_screen(): void
+    {
+        $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([
+                $this->validRow(),
+                $this->validRow(['school_name' => 'חדש', 'business_number' => '', 'contact1_email' => 'stranger@new.test', 'contact2_name' => '', 'contact2_email' => '']),
+                $this->validRow(['school_name' => 'שגוי', 'business_number' => '', 'contact1_email' => 'n@@noam', 'contact1_phone' => '12', 'contact2_name' => '', 'contact2_email' => '']),
+            ]))
+            ->call('checkImport')
+            ->assertSet('importCheck.valid', 2)
+            ->assertSee('לקוחות שאנשי הקשר שלהן נמצאו ברשימת Smove')
+            ->assertSee('לקוחות עם אנשי קשר שלא נמצאו ב־Smove')
+            ->assertSee('לקוחות עם פרטים שגויים')
+            
+            ->assertSee('wire:model="importFixes.4.contact1_email"', false);
+
+        $groups = $component->get('importCheck.groups');
+        $this->assertSame([2], array_column($groups['linked'], 'row'));
+        $this->assertSame([3], array_column($groups['unlisted'], 'row'));
+        $this->assertSame([4], array_column($groups['invalid'], 'row'));
+        $this->assertSame(['contact1_phone', 'contact1_email'], array_keys($groups['invalid'][0]['fields']));
+        // The wrong values are prefilled for fixing.
+        $this->assertSame(['contact1_phone' => '12', 'contact1_email' => 'n@@noam'], $component->get('importFixes')[4]);
+
+        // A half fix: still wrong, still listed.
+        $component->set('importFixes.4.contact1_email', 'n@noam.test')->call('fixImport');
+        $this->assertSame([4], array_column($component->get('importCheck.groups')['invalid'], 'row'));
+        $this->assertSame(['contact1_phone'], array_keys($component->get('importCheck.groups')['invalid'][0]['fields']));
+
+        // Fields the check didn't flag can't be changed from here.
+        $component->set('importFixes.4.contact1_phone', '0521234567')->set('importFixes.4.school_name', 'אחר')->call('fixImport')
+            ->assertSet('importCheck.valid', 3)
+            ->assertSet('importCheck.invalidRows', 0);
+        $this->assertSame([2, 4], array_column($component->get('importCheck.groups')['linked'], 'row'));
+
+        $component->set('importApproveUnlisted', true)->call('runImport')->assertSee('היבוא הסתיים: נוספו 3 לקוחות');
+
+        $this->assertTrue(School::where('name', 'שגוי')->exists());
+        $this->assertSame('0521234567', Contact::where('email', 'n@noam.test')->value('phone'));
+        $this->assertSame(903, (int) Contact::where('email', 'n@noam.test')->value('smove_contact_id'));
     }
 
     public function test_only_valid_rows_are_imported_and_duplicates_in_the_file_are_caught(): void
@@ -365,9 +408,9 @@ class CustomerImportTest extends TestCase
             ->assertSet('importCheck.valid', 2)
             ->assertSet('importCheck.smove.linked', 3)
             ->assertSet('importCheck.smove.not_receiving', 1)
-            ->assertSee('אנשי קשר נמצאו ברשימה ויקושרו אליה')
+            ->assertSee('לקוחות שאנשי הקשר שלהן נמצאו ברשימת Smove')
             ->assertSet('importCheck.unlisted', [])
-            ->assertDontSee('לא נמצאו ברשימת התפוצה ב־Smove')
+            ->assertDontSee('ייפתח ב־Smove')
             ->call('runImport')
             ->assertSee('3 אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove');
 
@@ -400,7 +443,7 @@ class CustomerImportTest extends TestCase
             ->assertSet('importCheck.errors', [])
             ->assertSet('importCheck.smove.linked', 3)
             ->assertSet('importCheck.smove.unlisted', 2)
-            ->assertSee('2 אנשי קשר לא נמצאו ברשימת התפוצה ב־Smove')
+            ->assertSee('לקוחות עם אנשי קשר שלא נמצאו ב־Smove')
             ->assertSee('stranger@new.test')
             ->assertSee('אני מאשרת לפתוח את אנשי הקשר האלה');
 

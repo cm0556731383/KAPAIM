@@ -168,37 +168,116 @@ class extends Component
         $path = $this->importFile->store('imports', 'local');
         $this->importFile = null;
 
+        $this->analyzeImport($import, $path);
+    }
+
+    /**
+     * Fixed values typed into the "פרטים שגויים" table, by sheet row and
+     * column key — prefilled with what the file had (analyzeImport()).
+     */
+    public array $importFixes = [];
+
+    /** Writes the fixes typed on the check screen into the stored file and checks it again. */
+    public function fixImport(\App\Services\CustomerImport $import): void
+    {
+        if (! $this->importPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->importPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetImport();
+
+            return;
+        }
+
+        // Only the rows and fields the check flagged can be changed here.
+        $allowed = collect($this->importCheck['groups']['invalid'] ?? [])
+            ->mapWithKeys(fn ($row) => [$row['row'] => array_keys($row['fields'])]);
+        $fixes = [];
+
+        foreach ($this->importFixes as $row => $values) {
+            foreach ((array) $values as $key => $value) {
+                if (in_array($key, $allowed[$row] ?? [], true) && is_scalar($value ?? '')) {
+                    $fixes[$row][$key] = (string) $value;
+                }
+            }
+        }
+
+        $path = \Illuminate\Support\Facades\Storage::disk('local')->path($this->importPath);
+
+        try {
+            $import->applyFixes($path, $fixes);
+        } catch (\Throwable $e) {
+            report($e);
+            $this->notifyError('לא ניתן לשמור את התיקונים בקובץ. יש לתקן בקובץ עצמו ולהעלות אותו שוב.');
+
+            return;
+        }
+
+        $this->analyzeImport($import, $this->importPath);
+
+        $left = count($this->importCheck['groups']['invalid'] ?? []);
+        $this->notifySuccess($left ? "התיקונים נשמרו. נשארו {$left} שורות עם שגיאות." : 'התיקונים נשמרו — כל השורות תקינות.');
+    }
+
+    /** Checks the stored file and lays out the results for the screen (the three groups). */
+    private function analyzeImport(\App\Services\CustomerImport $import, string $path): void
+    {
         $result = $import->analyze(\Illuminate\Support\Facades\Storage::disk('local')->path($path));
+        $columns = \App\Services\CustomerImport::columns();
+        $keyOf = collect($columns)->mapWithKeys(fn ($column, $key) => [$column[0] => $key])->all();
 
         $errors = [];
+        $warnings = [];
+        $unlisted = [];
+        $groups = ['linked' => [], 'unlisted' => [], 'invalid' => []];
+        $fixes = [];
 
         foreach ($result['rows'] as $row) {
             foreach ($row['errors'] as $column => $message) {
                 $errors[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column, 'message' => $message];
             }
+
+            // Contacts whose email another customer (or another row) already uses — imported, but shown.
+            foreach ($row['warnings'] ?? [] as $column => $message) {
+                $warnings[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column, 'message' => $message];
+            }
+
+            // Contacts not on the Smove list — imported only once approved (importApproveUnlisted).
+            foreach ($row['unlisted'] ?? [] as $column => $contact) {
+                $unlisted[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column] + $contact;
+            }
+
+            if ($row['data'] === null) {
+                $fields = [];
+
+                foreach ($row['errors'] as $column => $message) {
+                    $key = $keyOf[$column] ?? null;
+
+                    if ($key) {
+                        $fields[$key] = ['label' => $column, 'message' => $message, 'value' => $row['values'][$key] ?? ''];
+                        $fixes[$row['row']][$key] = $row['values'][$key] ?? '';
+                    }
+                }
+
+                $groups['invalid'][] = ['row' => $row['row'], 'school' => $row['school'], 'fields' => $fields];
+
+                continue;
+            }
+
+            $unlistedEmails = collect($row['unlisted'] ?? [])->pluck('email')->map(fn ($e) => mb_strtolower($e))->all();
+            $contacts = array_map(fn ($c) => [
+                'name' => $c['name'],
+                'email' => $c['email'],
+                'primary' => $c['is_primary'],
+                'accounting' => $c['is_accounting_contact'],
+                'unlisted' => $c['email'] !== null && in_array(mb_strtolower(trim($c['email'])), $unlistedEmails, true),
+            ], $row['data']['contacts']);
+
+            $groups[$unlistedEmails ? 'unlisted' : 'linked'][] = ['row' => $row['row'], 'school' => $row['school'], 'contacts' => $contacts];
         }
 
         $valid = count(array_filter($result['rows'], fn ($row) => $row['data'] !== null));
 
-        // Contacts whose email another customer (or another row) already uses — imported, but shown.
-        $warnings = [];
-
-        foreach ($result['rows'] as $row) {
-            foreach ($row['warnings'] ?? [] as $column => $message) {
-                $warnings[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column, 'message' => $message];
-            }
-        }
-
-        // Contacts not on the Smove list — imported only once approved (importApproveUnlisted).
-        $unlisted = [];
-
-        foreach ($result['rows'] as $row) {
-            foreach ($row['unlisted'] ?? [] as $column => $contact) {
-                $unlisted[] = ['row' => $row['row'], 'school' => $row['school'], 'column' => $column] + $contact;
-            }
-        }
-
         $this->importApproveUnlisted = false;
+        $this->importFixes = $fixes;
 
         $this->importCheck = [
             'unlisted' => $unlisted,
@@ -208,12 +287,15 @@ class extends Component
             'invalidRows' => count($result['rows']) - $valid,
             'errors' => $errors,
             'warnings' => $warnings,
+            'groups' => $groups,
             // How many contacts will be linked to the Smove list, and how many aren't on it.
             'smove' => $valid > 0 ? $import->smovePreview($result['rows'], $result['smove']) : null,
         ];
 
-        if ($result['fileError'] || $valid === 0) {
+        // The file is kept while there's anything to import or to fix on screen.
+        if ($result['fileError']) {
             \Illuminate\Support\Facades\Storage::disk('local')->delete($path);
+            $this->importPath = null;
         } else {
             $this->importPath = $path;
         }
@@ -253,7 +335,7 @@ class extends Component
     public function resetImport(): void
     {
         $this->discardImportFile();
-        $this->reset(['importFile', 'importCheck', 'importId', 'importApproveUnlisted']);
+        $this->reset(['importFile', 'importCheck', 'importId', 'importApproveUnlisted', 'importFixes']);
     }
 
     private function discardImportFile(): void
@@ -1547,28 +1629,145 @@ class extends Component
                         @endif
                     </div>
 
-                    @if ($importCheck['errors'])
-                        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
-                            <div class="table-scroll" style="max-height:420px; overflow-y:auto">
-                            <table>
-                                <thead><tr><th>שורה</th><th>מוסד</th><th>עמודה</th><th>שגיאה</th></tr></thead>
-                                <tbody>
-                                    @foreach (array_slice($importCheck['errors'], 0, 500) as $error)
-                                        <tr>
-                                            <td class="ltr-num">{{ $error['row'] }}</td>
-                                            <td>{{ $error['school'] ?: '—' }}</td>
-                                            <td>{{ $error['column'] }}</td>
-                                            <td style="color: var(--color-error)">{{ $error['message'] }}</td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                            </div>
+                    @php($groups = $importCheck['groups'] ?? ['linked' => [], 'unlisted' => [], 'invalid' => []])
+                    @php($smove = $importCheck['smove'] ?? null)
+
+                    {{-- 1. Customers whose contacts are all on the Smove list --}}
+                    <div class="import-group" x-data="{ open: false }">
+                        <button type="button" class="import-group-head" @click="open = !open" :aria-expanded="open">
+                            <span class="import-group-arrow" :class="open && 'open'">◀</span>
+                            <span class="badge badge-success">{{ count($groups['linked']) }}</span>
+                            <strong>לקוחות שאנשי הקשר שלהן נמצאו ברשימת Smove</strong>
+                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— ייובאו ויקושרו לאנשי הקשר הקיימים, בלי מייל אישור הרשמה מחדש</span>
+                        </button>
+                        <div x-show="open" x-cloak class="import-group-body">
+                            @if ($smove && $smove['not_receiving'])
+                                <p style="color:var(--color-warning); font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">{{ $smove['not_receiving'] }} אנשי קשר לא מאשרים כרגע קבלת מיילים ב־Smove (הוסרו או לא אישרו). הם יקושרו, אבל מיילים לא יגיעו אליהם עד שיאשרו.</p>
+                            @endif
+                            @if ($groups['linked'])
+                                <div class="table-scroll" style="max-height:360px; overflow-y:auto">
+                                <table>
+                                    <thead><tr><th>שורה</th><th>מוסד</th><th>אנשי קשר</th></tr></thead>
+                                    <tbody>
+                                        @foreach (array_slice($groups['linked'], 0, 500) as $row)
+                                            <tr>
+                                                <td class="ltr-num">{{ $row['row'] }}</td>
+                                                <td>{{ $row['school'] }}</td>
+                                                <td style="font-size:var(--fs-caption)">
+                                                    @foreach ($row['contacts'] as $contact)
+                                                        <div>{{ $contact['name'] }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif @if ($contact['primary'])<span class="badge badge-neutral">ראשי</span>@endif @if ($contact['accounting'])<span class="badge badge-neutral">חשבונאי</span>@endif</div>
+                                                    @endforeach
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                                </div>
+                            @else
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">אין שורות בקבוצה הזו.</p>
+                            @endif
                         </div>
-                        @if (count($importCheck['errors']) > 500)
-                            <p class="text-text-secondary" style="font-size:var(--fs-caption)">מוצגות 500 השגיאות הראשונות מתוך {{ count($importCheck['errors']) }}.</p>
+                    </div>
+
+                    {{-- 2. Customers with contacts not on the Smove list — opened there once approved --}}
+                    <div class="import-group" x-data="{ open: false }">
+                        <button type="button" class="import-group-head" @click="open = !open" :aria-expanded="open">
+                            <span class="import-group-arrow" :class="open && 'open'">◀</span>
+                            <span class="badge badge-warning">{{ count($groups['unlisted']) }}</span>
+                            <strong>לקוחות עם אנשי קשר שלא נמצאו ב־Smove</strong>
+                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— המערכת תפתח אותם ב־Smove</span>
+                        </button>
+                        <div x-show="open" x-cloak class="import-group-body">
+                            @if ($groups['unlisted'])
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
+                                    החיפוש נעשה לפי כתובת הדוא"ל. אנשי הקשר המסומנים ייפתחו במערכת ויצורפו לרשימת התפוצה ב־Smove, כמו כל איש קשר חדש (ייתכן ש־Smove ישלח להם מייל לאישור ההרשמה). גורם חשבונאי שאינו ראשי רק ייפתח — הוא מקבל דואר הנהלת חשבונות בלבד.
+                                </p>
+                                <div class="table-scroll" style="max-height:360px; overflow-y:auto">
+                                <table>
+                                    <thead><tr><th>שורה</th><th>מוסד</th><th>אנשי קשר</th></tr></thead>
+                                    <tbody>
+                                        @foreach (array_slice($groups['unlisted'], 0, 500) as $row)
+                                            <tr>
+                                                <td class="ltr-num">{{ $row['row'] }}</td>
+                                                <td>{{ $row['school'] }}</td>
+                                                <td style="font-size:var(--fs-caption)">
+                                                    @foreach ($row['contacts'] as $contact)
+                                                        <div>
+                                                            {{ $contact['name'] }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif
+                                                            @if ($contact['unlisted'])<span class="badge badge-warning">ייפתח ב־Smove</span>@elseif ($contact['email'])<span class="badge badge-success">נמצא ב־Smove</span>@endif
+                                                        </div>
+                                                    @endforeach
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                                </div>
+                                <div style="padding-top: var(--sp-sm)">
+                                    <span class="checkbox-row"><input type="checkbox" id="importApproveUnlisted" wire:model.live="importApproveUnlisted"><label for="importApproveUnlisted" style="margin:0"><strong>אני מאשרת לפתוח את אנשי הקשר האלה ולצרף אותם לרשימת התפוצה ב־Smove</strong></label></span>
+                                </div>
+                            @else
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">אין שורות בקבוצה הזו.</p>
+                            @endif
+                        </div>
+                        @if ($groups['unlisted'] && ! $importApproveUnlisted)
+                            <p style="color:var(--color-warning); font-size:var(--fs-caption); margin:4px var(--sp-md) 0">כדי לייבא, יש לפתוח את השורה ולאשר את פתיחת אנשי הקשר ב־Smove.</p>
                         @endif
-                    @endif
+                    </div>
+
+                    {{-- 3. Rows with errors — fixed here, written back into the file and checked again --}}
+                    <div class="import-group" x-data="{ open: {{ $groups['invalid'] ? 'true' : 'false' }} }" style="{{ $groups['invalid'] ? 'border-color:var(--color-error)' : '' }}">
+                        <button type="button" class="import-group-head" @click="open = !open" :aria-expanded="open">
+                            <span class="import-group-arrow" :class="open && 'open'">◀</span>
+                            <span class="badge badge-error">{{ count($groups['invalid']) }}</span>
+                            <strong>לקוחות עם פרטים שגויים</strong>
+                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— אפשר לתקן כאן ולבדוק שוב</span>
+                        </button>
+                        <div x-show="open" x-cloak class="import-group-body">
+                            @if ($groups['invalid'])
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
+                                    הפרטים השגויים מסומנים באדום. מתקנים בשדה, ולוחצים "שמירת התיקונים ובדיקה מחדש" — שורה שתוקנה עוברת לקבוצה המתאימה ותיובא עם השאר.
+                                </p>
+                                <div class="table-scroll" style="max-height:520px; overflow-y:auto">
+                                <table>
+                                    <thead><tr><th>שורה</th><th>מוסד</th><th>שדה</th><th>ערך (לתיקון)</th><th>מה שגוי</th></tr></thead>
+                                    <tbody>
+                                        @foreach (array_slice($groups['invalid'], 0, 500) as $row)
+                                            @foreach ($row['fields'] as $key => $field)
+                                                <tr wire:key="fix-{{ $row['row'] }}-{{ $key }}">
+                                                    @if ($loop->first)
+                                                        <td class="ltr-num" rowspan="{{ count($row['fields']) }}">{{ $row['row'] }}</td>
+                                                        <td rowspan="{{ count($row['fields']) }}">{{ $row['school'] ?: '—' }}</td>
+                                                    @endif
+                                                    <td>{{ $field['label'] }}</td>
+                                                    <td>
+                                                        <input type="text" class="import-fix-input" wire:model="importFixes.{{ $row['row'] }}.{{ $key }}"
+                                                            @if (str_contains($key, 'email') || str_contains($key, 'phone') || $key === 'business_number') dir="ltr" @endif
+                                                            @if (! auth()->user()->hasPermission('settings', 'edit')) disabled @endif>
+                                                    </td>
+                                                    <td style="color: var(--color-error); font-size:var(--fs-caption)">{{ $field['message'] }}</td>
+                                                </tr>
+                                            @endforeach
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                                </div>
+                                @if (count($groups['invalid']) > 500)
+                                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">מוצגות 500 השורות הראשונות מתוך {{ count($groups['invalid']) }}.</p>
+                                @endif
+                                @can('settings.edit')
+                                    <div style="padding-top: var(--sp-sm)">
+                                        <button type="button" wire:click="fixImport" wire:loading.attr="disabled" wire:target="fixImport" class="btn btn-secondary">
+                                            <span wire:loading.remove wire:target="fixImport">שמירת התיקונים ובדיקה מחדש</span>
+                                            <span wire:loading wire:target="fixImport">בודקת…</span>
+                                        </button>
+                                    </div>
+                                @endcan
+                            @else
+                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">אין שורות עם שגיאות.</p>
+                            @endif
+                        </div>
+                    </div>
 
                     @if ($importCheck['warnings'] ?? [])
                         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
@@ -1597,56 +1796,10 @@ class extends Component
                         </div>
                     @endif
 
-                    @if ($importCheck['valid'] > 0 && ($smove = $importCheck['smove'] ?? null))
-                        <div class="card" style="margin-bottom:var(--sp-md)">
-                            <h4 style="margin:0 0 6px">רשימת התפוצה ב־Smove</h4>
-                            <ul style="font-size:var(--fs-caption); margin:0; padding-inline-start:18px">
-                                <li><strong>{{ $smove['linked'] }}</strong> אנשי קשר נמצאו ברשימה ויקושרו אליה, בלי לשלוח להם אישור הרשמה מחדש.</li>
-                                @if ($smove['unlisted'] ?? 0)
-                                    <li style="color:var(--color-error)"><strong>{{ $smove['unlisted'] }}</strong> אנשי קשר לא נמצאו ברשימה — פירוט ואישור למטה.</li>
-                                @endif
-                                @if ($smove['not_receiving'])
-                                    <li style="color:var(--color-warning)"><strong>{{ $smove['not_receiving'] }}</strong> מהם לא מאשרים כרגע קבלת מיילים ב־Smove (הוסרו או לא אישרו). הם יקושרו, אבל מיילים לא יגיעו אליהם עד שיאשרו.</li>
-                                @endif
-                            </ul>
-                        </div>
-                    @endif
-
-                    @if ($importCheck['valid'] > 0 && ($importCheck['unlisted'] ?? []))
-                        <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md); border-color:var(--color-error)">
-                            <div style="padding: var(--sp-sm) var(--sp-md)">
-                                <h4 style="margin:0 0 4px; color:var(--color-error)">{{ count($importCheck['unlisted']) }} אנשי קשר לא נמצאו ברשימת התפוצה ב־Smove</h4>
-                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">
-                                    החיפוש נעשה לפי כתובת הדוא"ל. אם הכתובת שגויה — אפשר לתקן בקובץ ולהעלות שוב.
-                                    אחרי אישור, אנשי הקשר האלה ייפתחו במערכת ויצורפו לרשימת התפוצה ב־Smove, כמו כל איש קשר חדש (ייתכן ש־Smove ישלח להם מייל לאישור ההרשמה). גורם חשבונאי שאינו איש קשר ראשי רק ייפתח — הוא מקבל דואר הנהלת חשבונות בלבד, ולא מצורף לדיוור.
-                                </p>
-                            </div>
-                            <div class="table-scroll" style="max-height:320px; overflow-y:auto">
-                            <table>
-                                <thead><tr><th>שורה</th><th>מוסד</th><th>איש קשר</th><th>דוא"ל</th></tr></thead>
-                                <tbody>
-                                    @foreach (array_slice($importCheck['unlisted'], 0, 500) as $contact)
-                                        <tr>
-                                            <td class="ltr-num">{{ $contact['row'] }}</td>
-                                            <td>{{ $contact['school'] ?: '—' }}</td>
-                                            <td>{{ $contact['name'] ?: '—' }}</td>
-                                            <td class="ltr-num" dir="ltr">{{ $contact['email'] }}</td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                            </div>
-                            <div style="padding: var(--sp-sm) var(--sp-md)">
-                                <span class="checkbox-row"><input type="checkbox" id="importApproveUnlisted" wire:model.live="importApproveUnlisted"><label for="importApproveUnlisted" style="margin:0"><strong>אני מאשרת לפתוח את אנשי הקשר האלה ולצרף אותם לרשימת התפוצה ב־Smove</strong></label></span>
-                            </div>
-                        </div>
-                    @endif
-
                     @if ($importCheck['valid'] > 0)
                         @if ($importCheck['invalidRows'])
                             <p class="text-text-secondary" style="font-size:var(--fs-caption)">
-                                אפשר לתקן את השגיאות בקובץ ולהעלות אותו שוב, או לייבא עכשיו רק את השורות התקינות.
-                                השורות עם השגיאות לא ייובאו. אם אחר כך מעלים את אותו קובץ אחרי תיקון, השורות שכבר יובאו יסומנו כקיימות וידולגו.
+                                אפשר לתקן את הפרטים השגויים למעלה ולבדוק שוב, או לייבא עכשיו רק את השורות התקינות — השורות עם השגיאות לא ייובאו.
                             </p>
                         @endif
                         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
@@ -1661,7 +1814,7 @@ class extends Component
                             <button type="button" wire:click="resetImport" class="btn btn-ghost">ביטול</button>
                         </div>
                     @else
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין שורות תקינות ליבוא. יש לתקן את השגיאות בקובץ ולהעלות אותו שוב.</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין שורות תקינות ליבוא. יש לתקן את הפרטים השגויים למעלה (או בקובץ ולהעלות אותו שוב).</p>
                         <button type="button" wire:click="resetImport" class="btn btn-ghost">העלאת קובץ אחר</button>
                     @endif
                 @endif

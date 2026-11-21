@@ -560,3 +560,12 @@ td.mono { display: table-cell; }
 .template-choice-name { font-weight: 600; }
 .template-choice-excerpt { font-size: var(--fs-small); color: var(--color-text-secondary); line-height: 1.6; }
 .template-choice-meta { font-size: var(--fs-caption); color: var(--color-text-secondary); }
+
+/* Settings → יבוא נתונים: the check's three collapsible result groups */
+.import-group { border: 1px solid var(--color-border); border-radius: var(--radius-control); margin-bottom: var(--sp-sm); background: var(--color-surface); }
+.import-group-head { display: flex; align-items: center; gap: var(--sp-sm); flex-wrap: wrap; width: 100%; padding: var(--sp-sm) var(--sp-md); background: none; border: 0; cursor: pointer; text-align: start; font: inherit; color: inherit; }
+.import-group-head:hover { background: var(--color-primary-lighter); }
+.import-group-arrow { display: inline-block; font-size: 10px; color: var(--color-text-secondary); transition: transform .15s; }
+.import-group-arrow.open { transform: rotate(-90deg); }
+.import-group-body { padding: 0 var(--sp-md) var(--sp-md); }
+.import-fix-input { color: var(--color-error); border-color: var(--color-error); background: var(--color-error-bg); padding: 6px 8px; min-width: 160px; }
