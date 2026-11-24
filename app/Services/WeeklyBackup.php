@@ -11,10 +11,10 @@ use ZipArchive;
 
 /**
  * The weekly backup that downloads by itself to the owner's computer
- * (2026-11-24). backup-database.sh builds, every Sunday, the same bundle
- * move-export.sh makes (database + uploaded files + APP_KEY, restorable with
- * move-import.sh) and hands it to `backup:weekly-package`, which wraps it in
- * an AES-256 zip locked with the password set in settings → "גיבוי" and keeps
+ * (2026-11-24). Every Sunday backup-database.sh dumps the database and
+ * hands it to `backup:weekly-package`, which puts it, the uploaded files and
+ * APP_KEY in a regular zip locked with the password set in settings →
+ * "גיבוי" (opens in Windows as is; restorable with move-import.sh) and keeps
  * it in backups/weekly/. The first time the chosen user opens the system
  * after that, the layout starts the download in her browser — into whatever
  * folder her browser downloads to. Nothing is sent anywhere else.
@@ -32,11 +32,8 @@ class WeeklyBackup
 
     public const MIN_PASSWORD_LENGTH = 8;
 
-    /** The file name inside the zip — a move-export.sh bundle. */
-    public const INNER_NAME = 'kapaim-backup.tar.gz';
-
-    /** $directory only for tests — the real one is backups/weekly. */
-    public function __construct(private ?string $directory = null) {}
+    /** Both only for tests — the real ones are backups/weekly and storage/app. */
+    public function __construct(private ?string $directory = null, private ?string $filesRoot = null) {}
 
     public function directory(): string
     {
@@ -78,17 +75,25 @@ class WeeklyBackup
         return $this->hasPassword() && $this->recipient() !== null;
     }
 
+    /** What goes inside the zip besides the files — README name. */
+    public const README_NAME = 'קרא-אותי.txt';
+
+    /** The uploaded files' folder inside the zip (storage/app). */
+    public const FILES_DIR = 'files';
+
     /**
-     * Wraps a move-export-style bundle into this week's locked zip and
-     * prunes old ones.
+     * This week's zip — a regular zip with a password (classic zip
+     * encryption, so Windows opens it without extra software): the database
+     * dump, the encryption key, the code version and every uploaded file
+     * under files/. move-import.sh restores from it. Prunes old ones.
      *
      * @return string the zip's path
      */
-    public function package(string $bundlePath): string
+    public function package(string $dumpPath, string $version = 'unknown'): string
     {
         $password = $this->password() ?? throw new RuntimeException('לא הוגדרה סיסמה לגיבוי השבועי (הגדרות → גיבוי).');
-        if (! is_file($bundlePath)) {
-            throw new RuntimeException("Bundle not found: {$bundlePath}");
+        if (! is_file($dumpPath)) {
+            throw new RuntimeException("Database dump not found: {$dumpPath}");
         }
 
         if (! is_dir($this->directory())) {
@@ -104,10 +109,25 @@ class WeeklyBackup
             throw new RuntimeException("Cannot create {$partial}");
         }
         $zip->setPassword($password);
-        $zip->addFile($bundlePath, self::INNER_NAME);
-        // Already gzip'd — storing beats compressing it twice.
-        $zip->setCompressionName(self::INNER_NAME, ZipArchive::CM_STORE);
-        $zip->setEncryptionName(self::INNER_NAME, ZipArchive::EM_AES_256);
+        $add = function (string $name) use ($zip) {
+            $zip->setEncryptionName($name, ZipArchive::EM_TRAD_PKWARE);
+        };
+
+        $zip->addFile($dumpPath, 'database.dump');
+        $add('database.dump');
+        $zip->addFromString('app-key.env', 'APP_KEY='.config('app.key')."\n");
+        $add('app-key.env');
+        $zip->addFromString('version.txt', $version."\n");
+        $add('version.txt');
+        $zip->addFromString(self::README_NAME, $this->readme());
+        $add(self::README_NAME);
+
+        foreach ($this->uploadedFiles() as $relative => $absolute) {
+            $name = self::FILES_DIR.'/'.$relative;
+            $zip->addFile($absolute, $name);
+            $add($name);
+        }
+
         if (! $zip->close()) {
             @unlink($partial);
             throw new RuntimeException('Writing the backup zip failed.');
@@ -123,42 +143,61 @@ class WeeklyBackup
         return $path;
     }
 
-    /** Extracts the bundle from a weekly zip (restore) — false on a wrong password. */
-    public static function open(string $zipPath, string $password, string $bundlePath): bool
+    /** @return array<string, string> path relative to storage/app => absolute path */
+    private function uploadedFiles(): array
+    {
+        $root = $this->filesRoot ?? storage_path('app');
+        $files = [];
+        if (! is_dir($root)) {
+            return $files;
+        }
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            if (! $file->isFile()) {
+                continue;
+            }
+            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1));
+            // Half-finished uploads and scratch files — not data.
+            if (str_starts_with($relative, 'private/livewire-tmp/') || str_starts_with($relative, 'private/tmp/')) {
+                continue;
+            }
+            $files[$relative] = $file->getPathname();
+        }
+        ksort($files);
+
+        return $files;
+    }
+
+    private function readme(): string
+    {
+        return implode("\r\n", [
+            'גיבוי מלא של מערכת כפיים — '.now()->format('d/m/Y H:i'),
+            '',
+            'files\\           כל הקבצים שהועלו למערכת (תיקיות עסקה, חשבוניות ספקים, חומרים...)',
+            'database.dump    מסד הנתונים (נפתח רק בשחזור המערכת)',
+            'app-key.env      מפתח ההצפנה של המערכת — לשמור בסוד',
+            '',
+            'שחזור המערכת מהגיבוי, על שרת: ./move-import.sh kapaim-backup_….zip',
+            '(הסקריפט שואל את הסיסמה של הקובץ). פירוט: DEPLOY.md, סעיף 9.',
+            '',
+        ]);
+    }
+
+    /**
+     * Extracts a weekly zip into $dir (restore) — false on a wrong password
+     * or a zip that isn't a weekly backup.
+     */
+    public static function open(string $zipPath, string $password, string $dir): bool
     {
         $zip = new ZipArchive;
         if ($zip->open($zipPath) !== true) {
             throw new RuntimeException("Not a backup zip: {$zipPath}");
         }
         $zip->setPassword($password);
-        $in = $zip->getStream(self::INNER_NAME);
-        if ($in === false) {
-            $zip->close();
-
-            return false;
-        }
-
-        $out = fopen($bundlePath, 'wb');
-        $copied = stream_copy_to_stream($in, $out);
-        fclose($in);
-        fclose($out);
-        $ok = $copied > 0 && $zip->getStatusString() !== false && self::isGzip($bundlePath);
+        $ok = $zip->locateName('database.dump') !== false && @$zip->extractTo($dir);
         $zip->close();
 
-        if (! $ok) {
-            @unlink($bundlePath);
-        }
-
-        return $ok;
-    }
-
-    private static function isGzip(string $path): bool
-    {
-        $h = fopen($path, 'rb');
-        $magic = fread($h, 2);
-        fclose($h);
-
-        return $magic === "\x1f\x8b";
+        return $ok && is_file($dir.'/database.dump') && is_file($dir.'/app-key.env');
     }
 
     /** @return list<string> newest first */

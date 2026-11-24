@@ -43,20 +43,26 @@ WORK="$(mktemp -d)"
 OPENED=""
 trap 'rm -rf "${WORK}" ${OPENED:+"${OPENED}"}' EXIT
 
-# A weekly backup (kapaim-backup_….zip, settings → גיבוי) is the same bundle locked with a password.
+# A weekly backup (kapaim-backup_….zip, settings → גיבוי): a password zip with
+# database.dump, app-key.env, version.txt and the uploaded files under files/.
 if [[ "${BUNDLE}" == *.zip ]]; then
     mkdir -p backups
     OPENED="backups/.restore-$(date '+%Y%m%d%H%M%S')"
-    mkdir -p "${OPENED}"
+    mkdir -p "${OPENED}/x"
     cp "${BUNDLE}" "${OPENED}/backup.zip"
     if [[ "$(id -u)" == 0 ]]; then
-        chown "${APP_UID:-1001}:${APP_GID:-1001}" "${OPENED}" "${OPENED}/backup.zip"
+        chown "${APP_UID:-1001}:${APP_GID:-1001}" "${OPENED}" "${OPENED}/x" "${OPENED}/backup.zip"
     fi
     read -r -s -p "סיסמת קובץ הגיבוי: " ZIP_PASSWORD; echo
-    printf '%s' "${ZIP_PASSWORD}" | compose exec -T app php artisan backup:open-weekly "${OPENED}/backup.zip" "${OPENED}/bundle.tar.gz"
-    BUNDLE="${OPENED}/bundle.tar.gz"
+    printf '%s' "${ZIP_PASSWORD}" | compose exec -T app php artisan backup:open-weekly "${OPENED}/backup.zip" "${OPENED}/x"
+    for part in database.dump app-key.env version.txt; do
+        if [[ -f "${OPENED}/x/${part}" ]]; then mv "${OPENED}/x/${part}" "${WORK}/"; fi
+    done
+    if [[ -d "${OPENED}/x/files" ]]; then mv "${OPENED}/x/files" "${OPENED}/x/app"; else mkdir -p "${OPENED}/x/app"; fi
+    tar -C "${OPENED}/x" -cf "${WORK}/storage-app.tar" app
+else
+    tar -C "${WORK}" -xzf "${BUNDLE}"
 fi
-tar -C "${WORK}" -xzf "${BUNDLE}"
 
 for part in database.dump storage-app.tar app-key.env; do
     [[ -f "${WORK}/${part}" ]] || { echo "הקובץ לא נוצר ב-move-export.sh (חסר ${part})." >&2; exit 1; }

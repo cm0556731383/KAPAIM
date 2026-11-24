@@ -1923,7 +1923,7 @@ class extends Component
             @else
                 <p class="text-text-secondary" style="margin:0">עוד לא נוצר גיבוי שבועי. הראשון ייווצר בלילה שאחרי שמירת ההגדרות.</p>
             @endif
-            <p style="margin:var(--sp-md) 0 0; font-size:var(--fs-caption); color:var(--color-text-secondary)">פתיחת הקובץ במחשב: עם התוכנה החינמית 7-Zip והסיסמה (בתוכו קובץ השחזור). שחזור המערכת מהגיבוי — על השרת, עם <span dir="ltr">./move-import.sh</span> (מדריך ההתקנה, סעיף 9).</p>
+            <p style="margin:var(--sp-md) 0 0; font-size:var(--fs-caption); color:var(--color-text-secondary)">פתיחת הקובץ במחשב: לחיצה כפולה, כמו כל קובץ zip — המחשב יבקש את הסיסמה. בתיקייה files נמצאים כל הקבצים שהועלו. שחזור המערכת מהגיבוי — על השרת, עם <span dir="ltr">./move-import.sh</span> (מדריך ההתקנה, סעיף 9).</p>
         </div>
     </section>
     @endif

@@ -33,7 +33,7 @@ class WeeklyBackupTest extends TestCase
         ]);
 
         $this->dir = sys_get_temp_dir().'/weekly-backup-test-'.uniqid();
-        $this->backup = new WeeklyBackup($this->dir);
+        $this->backup = new WeeklyBackup($this->dir, $this->dir.'/app');
         $this->app->instance(WeeklyBackup::class, $this->backup);
     }
 
@@ -43,21 +43,41 @@ class WeeklyBackupTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_the_package_is_locked_with_the_password_and_opens_only_with_it(): void
+    public function test_the_package_is_a_regular_password_zip_with_the_database_and_the_files(): void
     {
+        File::ensureDirectoryExists($this->dir.'/app/private/deal-files/1');
+        File::ensureDirectoryExists($this->dir.'/app/private/livewire-tmp');
+        file_put_contents($this->dir.'/app/private/deal-files/1/הזמנה.pdf', 'pdf bytes');
+        file_put_contents($this->dir.'/app/private/livewire-tmp/half-uploaded', 'skip me');
         $this->backup->setPassword('סוד-גדול-123');
-        $bundle = $this->fakeBundle('database contents');
 
-        $zip = $this->backup->package($bundle);
+        $zip = $this->backup->package($this->fakeDump('database contents'), 'abc123');
         $this->assertFileExists($zip);
         $this->assertStringNotContainsString('database contents', file_get_contents($zip));
 
-        $out = $this->dir.'/out.tar.gz';
+        // Classic zip encryption — what Windows opens with its own zip folder.
+        $archive = new \ZipArchive;
+        $archive->open($zip);
+        $names = [];
+        for ($i = 0; $i < $archive->numFiles; $i++) {
+            $stat = $archive->statIndex($i);
+            $names[] = $stat['name'];
+            $this->assertSame(\ZipArchive::EM_TRAD_PKWARE, $stat['encryption_method'], $stat['name']);
+        }
+        $archive->close();
+        $this->assertContains('database.dump', $names);
+        $this->assertContains('app-key.env', $names);
+        $this->assertContains('files/private/deal-files/1/הזמנה.pdf', $names);
+        $this->assertNotContains('files/private/livewire-tmp/half-uploaded', $names);
+
+        $out = $this->dir.'/out';
         $this->assertFalse(WeeklyBackup::open($zip, 'wrong-password', $out));
-        $this->assertFileDoesNotExist($out);
 
         $this->assertTrue(WeeklyBackup::open($zip, 'סוד-גדול-123', $out));
-        $this->assertSame(file_get_contents($bundle), file_get_contents($out));
+        $this->assertSame('database contents', file_get_contents($out.'/database.dump'));
+        $this->assertSame('pdf bytes', file_get_contents($out.'/files/private/deal-files/1/הזמנה.pdf'));
+        $this->assertSame('APP_KEY='.config('app.key')."\n", file_get_contents($out.'/app-key.env'));
+        $this->assertSame("abc123\n", file_get_contents($out.'/version.txt'));
     }
 
     public function test_only_the_two_newest_packages_are_kept(): void
@@ -67,7 +87,7 @@ class WeeklyBackupTest extends TestCase
         touch($this->dir.'/kapaim-backup_2026-01-01_03-00.zip');
         touch($this->dir.'/kapaim-backup_2026-01-08_03-00.zip');
 
-        $this->backup->package($this->fakeBundle());
+        $this->backup->package($this->fakeDump());
 
         $this->assertCount(2, glob($this->dir.'/kapaim-backup_*.zip'));
         $this->assertFileDoesNotExist($this->dir.'/kapaim-backup_2026-01-01_03-00.zip');
@@ -75,7 +95,7 @@ class WeeklyBackupTest extends TestCase
 
     public function test_the_package_needs_a_password(): void
     {
-        $this->artisan('backup:weekly-package', ['bundle' => $this->fakeBundle()])->assertSuccessful();
+        $this->artisan('backup:weekly-package', ['dump' => $this->fakeDump()])->assertSuccessful();
         $this->assertSame([], glob($this->dir.'/kapaim-backup_*.zip') ?: []);
     }
 
@@ -87,7 +107,7 @@ class WeeklyBackupTest extends TestCase
         ]);
         $this->backup->setPassword('password1');
         $this->backup->setRecipient($this->owner->id);
-        $this->backup->package($this->fakeBundle());
+        $this->backup->package($this->fakeDump());
         $download = route('backups.weekly.download');
 
         $notice = 'הגיבוי השבועי של המערכת יורד';
@@ -108,7 +128,7 @@ class WeeklyBackupTest extends TestCase
             'role_id' => Role::create(['name' => 'ריק', 'is_active' => true])->id, 'is_active' => true,
         ]);
         $this->backup->setPassword('password1');
-        $this->backup->package($this->fakeBundle());
+        $this->backup->package($this->fakeDump());
 
         $this->actingAs($viewer)->get(route('backups.weekly.download'))->assertForbidden();
     }
@@ -134,11 +154,11 @@ class WeeklyBackupTest extends TestCase
         $this->assertSame($this->owner->id, $this->backup->recipient()->id);
     }
 
-    private function fakeBundle(string $content = 'x'): string
+    private function fakeDump(string $content = 'x'): string
     {
         File::ensureDirectoryExists($this->dir);
-        $path = $this->dir.'/bundle-'.uniqid().'.tar.gz';
-        file_put_contents($path, gzencode($content));
+        $path = $this->dir.'/dump-'.uniqid().'.dump';
+        file_put_contents($path, $content);
 
         return $path;
     }
