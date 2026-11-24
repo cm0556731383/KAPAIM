@@ -629,7 +629,7 @@ class Deal extends Model
 
         MailingMembership::addCustomer(MailingList::subscribersList(), $this->customer);
 
-        $bundle->programs->each(
+        $bundle->allPrograms()->each(
             fn (Program $program) => MailingMembership::addCustomer(MailingList::forProgram($program), $this->customer)
         );
     }

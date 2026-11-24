@@ -48,6 +48,9 @@ class extends Component
     public ?int $membershipBundleId = null;
     public ?int $membershipProgramId = null;
 
+    /** What the window adds: "program:ID", or "bundle:ID" (only into a subscription bundle). */
+    public string $membershipItem = '';
+
     /**
      * Business-rule error (FR-7.25 "הודעת שגיאה עסקית") — blocks an action and
      * explains why, distinct from a plain validation error on a form field.
@@ -197,6 +200,18 @@ class extends Component
         } else {
             $item = Bundle::findOrFail((int) $id);
 
+            if (! $data['editFlag'] && $item->is_subscription_type && $item->includedBundles()->exists()) {
+                $this->catalogError = 'במארז זה כלולים מארזים אחרים — רק מארז שמקנה מנוי שנתי יכול לכלול מארזים. יש להסיר אותם קודם.';
+
+                return;
+            }
+
+            if ($data['editFlag'] && ! $item->is_subscription_type && $item->includedIn()->exists()) {
+                $this->catalogError = 'מארז זה כלול בתוך מארז מנוי, ולכן אינו יכול להיות בעצמו מארז מנוי. יש להסיר אותו משם קודם.';
+
+                return;
+            }
+
             if ($data['editFlag'] && ! $item->is_subscription_type && $item->is_active && $this->anotherActiveSubscriptionBundleExists($item->id)) {
                 $this->catalogError = 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני שמארז זה יוגדר כמארז מנוי.';
 
@@ -317,6 +332,18 @@ class extends Component
     {
         $this->catalogError = null;
 
+        [$itemType, $itemId] = explode(':', $this->membershipItem) + [null, null];
+
+        if ($itemType === 'bundle') {
+            $this->addIncludedBundle((int) $itemId, $activityLogger);
+
+            return;
+        }
+
+        if ($itemType === 'program') {
+            $this->membershipProgramId = (int) $itemId;
+        }
+
         $data = $this->validate([
             'membershipBundleId' => ['required', 'exists:bundles,id'],
             'membershipProgramId' => ['required', 'exists:programs,id'],
@@ -339,8 +366,63 @@ class extends Component
         ]);
 
         unset($this->bundles);
+        $this->reset(['membershipItem', 'membershipProgramId']);
 
         $this->dispatch('close-modals');
+    }
+
+    /** A bundle included in a subscription bundle: its programs become part of the subscription (Bundle::allPrograms()). */
+    private function addIncludedBundle(int $childId, ActivityLogger $activityLogger): void
+    {
+        $this->validate(['membershipBundleId' => ['required', 'exists:bundles,id']], [], ['membershipBundleId' => 'מארז']);
+
+        $parent = Bundle::findOrFail($this->membershipBundleId);
+        $child = Bundle::find($childId);
+
+        $error = match (true) {
+            ! $child => 'יש לבחור תוכנית או מארז.',
+            ! $parent->is_subscription_type => 'רק מארז שמקנה מנוי שנתי יכול לכלול מארזים אחרים.',
+            $child->id === $parent->id => 'מארז אינו יכול לכלול את עצמו.',
+            $child->is_subscription_type => 'אי אפשר לכלול מארז מנוי בתוך מארז מנוי.',
+            $parent->includedBundles()->whereKey($child->id)->exists() => 'המארז כבר כלול במארז זה.',
+            default => null,
+        };
+
+        if ($error) {
+            $this->catalogError = $error;
+
+            return;
+        }
+
+        $parent->includedBundles()->attach($child->id);
+        $parent->refresh();
+        $child->programs->each(fn (Program $program) => $parent->syncSubscriberProgramList($program, joined: true));
+
+        $activityLogger->log('bundle.bundle_added', "מארז \"{$child->name}\" נכלל במארז \"{$parent->name}\"", [
+            'metadata' => ['bundle_id' => $parent->id, 'included_bundle_id' => $child->id],
+        ]);
+
+        unset($this->bundles);
+        $this->reset(['membershipItem', 'membershipProgramId']);
+        $this->dispatch('close-modals');
+    }
+
+    public function removeIncludedBundle(int $bundleId, int $childId, ActivityLogger $activityLogger): void
+    {
+        $this->catalogError = null;
+        $parent = Bundle::findOrFail($bundleId);
+        $child = Bundle::findOrFail($childId);
+
+        $parent->includedBundles()->detach($child->id);
+        $parent->refresh();
+        // Leaves only programs no longer in the subscription another way (Bundle::syncSubscriberProgramList()).
+        $child->programs->each(fn (Program $program) => $parent->syncSubscriberProgramList($program, joined: false));
+
+        $activityLogger->log('bundle.bundle_removed', "מארז \"{$child->name}\" הוסר ממארז \"{$parent->name}\"", [
+            'metadata' => ['bundle_id' => $parent->id, 'included_bundle_id' => $child->id],
+        ]);
+
+        unset($this->bundles);
     }
 
     public function removeBundleProgram(int $bundleId, int $programId, ActivityLogger $activityLogger): void
@@ -364,7 +446,7 @@ class extends Component
     #[Computed]
     public function bundles()
     {
-        return Bundle::with(['programs', 'contractTemplate'])->orderBy('name')->get();
+        return Bundle::with(['programs', 'includedBundles', 'contractTemplate'])->orderBy('name')->get();
     }
 };
 ?>
@@ -513,11 +595,11 @@ class extends Component
                         <div class="full"><button type="submit" class="btn btn-primary">יצירת מארז</button></div>
                     </form>
                 </x-modal>
-                <x-modal trigger-label="+ שיוך תוכנית למארז" trigger-class="btn btn-secondary" title="שיוך תוכנית למארז">
+                <x-modal trigger-label="+ שיוך למארז" trigger-class="btn btn-secondary" title="שיוך תוכנית או מארז למארז">
                     <form wire:submit="addBundleProgram" class="form-grid">
                         <div class="full">
                             <label for="membershipBundleId">מארז</label>
-                            <select id="membershipBundleId" wire:model="membershipBundleId">
+                            <select id="membershipBundleId" wire:model.live="membershipBundleId">
                                 <option value="">בחרו מארז</option>
                                 @foreach ($this->bundles as $bundle)
                                     <option value="{{ $bundle->id }}">{{ $bundle->name }}</option>
@@ -525,17 +607,30 @@ class extends Component
                             </select>
                             @error('membershipBundleId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
+                        @php $membershipParent = $this->bundles->firstWhere('id', (int) $membershipBundleId); @endphp
                         <div class="full">
-                            <label for="membershipProgramId">תוכנית</label>
-                            <select id="membershipProgramId" wire:model="membershipProgramId">
-                                <option value="">בחרו תוכנית</option>
-                                @foreach ($this->programs as $program)
-                                    <option value="{{ $program->id }}">{{ $program->name }}</option>
-                                @endforeach
+                            <label for="membershipItem">{{ $membershipParent?->is_subscription_type ? 'תוכנית או מארז' : 'תוכנית' }}</label>
+                            <select id="membershipItem" wire:model="membershipItem">
+                                <option value="">{{ $membershipParent?->is_subscription_type ? 'בחרו תוכנית או מארז' : 'בחרו תוכנית' }}</option>
+                                <optgroup label="תוכניות">
+                                    @foreach ($this->programs as $program)
+                                        <option value="program:{{ $program->id }}">{{ $program->name }}</option>
+                                    @endforeach
+                                </optgroup>
+                                @if ($membershipParent?->is_subscription_type)
+                                    <optgroup label="מארזים">
+                                        @foreach ($this->bundles->where('is_subscription_type', false) as $childBundle)
+                                            <option value="bundle:{{ $childBundle->id }}">{{ $childBundle->name }}</option>
+                                        @endforeach
+                                    </optgroup>
+                                @endif
                             </select>
+                            @if ($membershipParent?->is_subscription_type)
+                                <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">מארז מנוי יכול לכלול גם מארזים — כל התוכניות שבהם נחשבות חלק מהמנוי.</div>
+                            @endif
                             @error('membershipProgramId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
-                        <div class="full"><button type="submit" class="btn btn-primary">הוספת תוכנית למארז</button></div>
+                        <div class="full"><button type="submit" class="btn btn-primary">הוספה למארז</button></div>
                     </form>
                 </x-modal>
             </div>
@@ -543,7 +638,7 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table class="catalog-table">
-                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות ומארזים כלולים</th><th>חוזה</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->bundles as $bundle)
                         @if ($editingItem === "bundle:{$bundle->id}")
@@ -580,11 +675,15 @@ class extends Component
                             <td>@if ($bundle->is_subscription_type)<span class="badge" style="background:#92600D22; color:#92600D">מנוי שנתי</span>@else —@endif</td>
                             <td>
                                 <div class="chip-list">
-                                    @forelse ($bundle->programs as $program)
+                                    @foreach ($bundle->includedBundles as $childBundle)
+                                        <span class="chip chip-bundle" title="מארז כלול — התוכניות שבו: {{ $childBundle->programs->pluck('name')->implode(', ') ?: 'אין עדיין' }}">מארז: {{ $childBundle->name }} <button type="button" wire:click="removeIncludedBundle({{ $bundle->id }}, {{ $childBundle->id }})" wire:confirm="להסיר את המארז &quot;{{ $childBundle->name }}&quot; מהמארז &quot;{{ $bundle->name }}&quot;?" style="background:none;border:0;cursor:pointer;color:inherit;font-weight:700;padding:0 0 0 4px" title="הסרה">×</button></span>
+                                    @endforeach
+                                    @foreach ($bundle->programs as $program)
                                         <span class="chip">{{ $program->name }} <button type="button" wire:click="removeBundleProgram({{ $bundle->id }}, {{ $program->id }})" style="background:none;border:0;cursor:pointer;color:inherit;font-weight:700;padding:0 0 0 4px" title="הסרה">×</button></span>
-                                    @empty
+                                    @endforeach
+                                    @if ($bundle->includedBundles->isEmpty() && $bundle->programs->isEmpty())
                                         <span class="text-text-secondary" style="font-size:var(--fs-caption)">—</span>
-                                    @endforelse
+                                    @endif
                                 </div>
                             </td>
                             <td>{{ $bundle->contractTemplate?->is_active ? $bundle->contractTemplate->name : 'החוזה הסטנדרטי' }}</td>

@@ -385,6 +385,22 @@ class SubscriptionsTest extends TestCase
             ->assertDontSeeHtml($row($other));
     }
 
+    public function test_the_customers_program_filter_finds_a_program_from_a_bundle_included_in_the_subscription(): void
+    {
+        $program = $this->createProgram('תוכנית ממארז כלול');
+        $inner = Bundle::create(['name' => 'מארז כלול לבדיקה', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
+        $inner->programs()->attach($program->id);
+        $subscriber = $this->openSubscription();
+        $subscriber->deal->bundle->includedBundles()->attach($inner->id);
+        $other = $this->openSubscription();
+
+        $row = fn (Subscription $s) => route('customer-detail', $s->customer_id);
+        Livewire::actingAs($this->owner)->test('customers')
+            ->set('filterProgramIds', [(string) $program->id])
+            ->assertSeeHtml($row($subscriber))
+            ->assertDontSeeHtml($row($other));
+    }
+
     public function test_the_customers_filters_take_several_values_at_once(): void
     {
         $first = $this->openSubscription();

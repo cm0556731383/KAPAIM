@@ -946,6 +946,80 @@ class MaterialsMailingTest extends TestCase
         $this->assertFalse($this->isActiveMember(MailingList::forProgram($added), $customer));
     }
 
+    /** 2026-11-24: a subscription bundle may include other bundles — their programs are part of the subscription. */
+    public function test_a_bundle_included_in_the_subscription_bundle_brings_its_programs_to_subscribers(): void
+    {
+        $customer = $this->createCustomer();
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        $own = $this->createProgram(name: 'תוכנית של המנוי');
+        $subscriptionBundle->programs()->attach($own->id);
+        $inner = Bundle::create(['name' => 'מארז פנימי', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
+        $innerProgram = $this->createProgram(name: 'תוכנית מהמארז הפנימי');
+        $inner->programs()->attach($innerProgram->id);
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
+
+        // Including the bundle: current subscribers join its programs' lists.
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('membershipBundleId', $subscriptionBundle->id)
+            ->assertSee('תוכנית או מארז')
+            ->set('membershipItem', 'bundle:'.$inner->id)
+            ->call('addBundleProgram')
+            ->assertSet('catalogError', null);
+
+        $this->assertSame([$inner->id], $subscriptionBundle->fresh()->includedBundles->pluck('id')->all());
+        $this->assertEqualsCanonicalizing([$own->id, $innerProgram->id], $subscriptionBundle->fresh()->allPrograms()->pluck('id')->all());
+        $this->assertTrue($this->isActiveMember(MailingList::forProgram($innerProgram), $customer));
+
+        // A program added later to the included bundle reaches them too.
+        $later = $this->createProgram(name: 'נוספה למארז הפנימי');
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('membershipBundleId', $inner->id)
+            ->set('membershipItem', 'program:'.$later->id)
+            ->call('addBundleProgram');
+        $this->assertTrue($this->isActiveMember(MailingList::forProgram($later), $customer));
+
+        // A new subscriber gets every program, own and included.
+        $newcomer = $this->createCustomer();
+        Deal::createForCustomer($newcomer, null, $subscriptionBundle->fresh());
+        foreach ([$own, $innerProgram, $later] as $program) {
+            $this->assertTrue($this->isActiveMember(MailingList::forProgram($program), $newcomer), $program->name);
+        }
+
+        // Removing the included bundle takes its programs' lists away again.
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('removeIncludedBundle', $subscriptionBundle->id, $inner->id);
+        $this->assertFalse($this->isActiveMember(MailingList::forProgram($innerProgram), $customer));
+        $this->assertTrue($this->isActiveMember(MailingList::forProgram($own), $customer));
+    }
+
+    public function test_only_a_subscription_bundle_can_include_bundles_and_never_another_subscription_bundle(): void
+    {
+        $plain = Bundle::create(['name' => 'מארז רגיל', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
+        $other = Bundle::create(['name' => 'מארז רגיל נוסף', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
+        $subscriptionBundle = $this->createSubscriptionBundle();
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('membershipBundleId', $plain->id)
+            ->set('membershipItem', 'bundle:'.$other->id)
+            ->call('addBundleProgram')
+            ->assertSet('catalogError', 'רק מארז שמקנה מנוי שנתי יכול לכלול מארזים אחרים.')
+            ->set('membershipBundleId', $subscriptionBundle->id)
+            ->set('membershipItem', 'bundle:'.$subscriptionBundle->id)
+            ->call('addBundleProgram')
+            ->assertSet('catalogError', 'מארז אינו יכול לכלול את עצמו.');
+
+        $this->assertSame(0, \Illuminate\Support\Facades\DB::table('bundle_bundle')->count());
+
+        // Unticking "מקנה מנוי שנתי" is blocked while it includes bundles.
+        $subscriptionBundle->includedBundles()->attach($plain->id);
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('editItem', 'bundle', $subscriptionBundle->id)
+            ->set('editFlag', false)
+            ->call('saveItem')
+            ->assertSet('catalogError', 'במארז זה כלולים מארזים אחרים — רק מארז שמקנה מנוי שנתי יכול לכלול מארזים. יש להסיר אותם קודם.');
+        $this->assertTrue($subscriptionBundle->fresh()->is_subscription_type);
+    }
+
     public function test_cancelling_a_subscription_removes_subscribers_and_undelivered_lists_but_keeps_primary_and_delivered(): void
     {
         $customer = $this->createCustomer();

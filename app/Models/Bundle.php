@@ -45,6 +45,53 @@ class Bundle extends Model
         return $this->belongsToMany(Program::class);
     }
 
+    /** Bundles included in this (subscription) bundle — one level, see allPrograms(). */
+    public function includedBundles(): BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'bundle_bundle', 'parent_bundle_id', 'child_bundle_id')->withTimestamps();
+    }
+
+    /** Subscription bundles this bundle is included in. */
+    public function includedIn(): BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'bundle_bundle', 'child_bundle_id', 'parent_bundle_id')->withTimestamps();
+    }
+
+    /**
+     * Every program the bundle gives: its own and those of the bundles
+     * included in it — what a subscription through it covers (mailing
+     * lists, materials, cancellation). One entry per program.
+     *
+     * @return \Illuminate\Support\Collection<int, Program>
+     */
+    public function allPrograms(): \Illuminate\Support\Collection
+    {
+        return $this->programs
+            ->merge($this->includedBundles->flatMap->programs)
+            ->unique('id')
+            ->values();
+    }
+
+    /**
+     * $bundleIds plus the ids of every bundle included in them — for "a
+     * program bought inside a bundle" lookups.
+     *
+     * @param  iterable<int>  $bundleIds
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public static function withIncludedIds(iterable $bundleIds): \Illuminate\Support\Collection
+    {
+        $ids = collect($bundleIds)->map(fn ($id) => (int) $id)->filter()->unique();
+
+        if ($ids->isEmpty()) {
+            return $ids->values();
+        }
+
+        return $ids->merge(
+            \Illuminate\Support\Facades\DB::table('bundle_bundle')->whereIn('parent_bundle_id', $ids)->pluck('child_bundle_id')->map(fn ($id) => (int) $id)
+        )->unique()->values();
+    }
+
     /**
      * A program added to / removed from the subscription bundle in the
      * catalog: every customer currently subscribed through this bundle joins
@@ -55,7 +102,11 @@ class Bundle extends Model
      */
     public function syncSubscriberProgramList(Program $program, bool $joined): void
     {
+        // A program added to / removed from a bundle included in subscription
+        // bundles reaches their subscribers too.
         if (! $this->is_subscription_type) {
+            $this->includedIn->each(fn (Bundle $parent) => $parent->syncSubscriberProgramList($program, $joined));
+
             return;
         }
 
@@ -69,6 +120,11 @@ class Bundle extends Model
                 if ($joined) {
                     MailingMembership::addCustomer($list, $subscription->customer);
 
+                    return;
+                }
+
+                // Still in the subscription another way (its own programs, or another included bundle).
+                if ($this->fresh()->allPrograms()->contains('id', $program->id)) {
                     return;
                 }
 

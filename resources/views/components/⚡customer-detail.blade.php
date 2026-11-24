@@ -1293,14 +1293,14 @@ class extends Component
         $beforeCancellation = $this->customer->subscriptions()
             ->whereNotNull('cancelled_from_month')
             ->when($signedContractOnly, fn ($q) => $q->whereHas('deal', fn ($d) => $d->withSignedContract()))
-            ->with(['deliveries', 'deal.items.bundle.programs', 'deal.bundle.programs'])
+            ->with(['deliveries', 'deal.items.bundle.programs', 'deal.items.bundle.includedBundles.programs', 'deal.bundle.programs', 'deal.bundle.includedBundles.programs'])
             ->get()
             ->flatMap->programIdsBeforeCancellation();
 
         return Program::where(fn ($q) => $q
             ->whereIn('id', $deals->flatMap->programIds())
             ->orWhereIn('id', $beforeCancellation)
-            ->orWhereHas('bundles', fn ($b) => $b->whereIn('bundles.id', $deals->flatMap->bundleIds())))
+            ->orWhereHas('bundles', fn ($b) => $b->whereIn('bundles.id', \App\Models\Bundle::withIncludedIds($deals->flatMap->bundleIds()))))
             ->orderBy('name')
             ->get();
     }
