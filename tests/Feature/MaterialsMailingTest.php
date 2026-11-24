@@ -992,6 +992,35 @@ class MaterialsMailingTest extends TestCase
         $this->assertTrue($this->isActiveMember(MailingList::forProgram($own), $customer));
     }
 
+    /** 2026-11-24: whatever is added to the subscription after the purchase reaches the customer — lists and the materials picker. */
+    public function test_a_subscriber_gets_programs_and_bundles_added_to_the_subscription_after_buying_it(): void
+    {
+        $customer = $this->createCustomer();
+        $subscriptionBundle = $this->createSubscriptionBundle();
+        Deal::createForCustomer($customer, null, $subscriptionBundle);
+
+        $addedProgram = $this->createProgram(name: 'נוספה אחרי הרכישה');
+        $inner = Bundle::create(['name' => 'מארז שנוסף אחרי הרכישה', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
+        $innerProgram = $this->createProgram(name: 'מתוך מארז שנוסף אחרי הרכישה');
+        $inner->programs()->attach($innerProgram->id);
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('membershipBundleId', $subscriptionBundle->id)
+            ->set('membershipItem', 'program:'.$addedProgram->id)
+            ->call('addBundleProgram')
+            ->set('membershipBundleId', $subscriptionBundle->id)
+            ->set('membershipItem', 'bundle:'.$inner->id)
+            ->call('addBundleProgram');
+
+        $card = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer]);
+        $bought = $card->instance()->materialsPrograms->merge($card->instance()->materialsProgramsAwaitingContract)->pluck('id');
+
+        foreach ([$addedProgram, $innerProgram] as $program) {
+            $this->assertTrue($this->isActiveMember(MailingList::forProgram($program), $customer), $program->name);
+            $this->assertContains($program->id, $bought, $program->name);
+        }
+    }
+
     public function test_only_a_subscription_bundle_can_include_bundles_and_never_another_subscription_bundle(): void
     {
         $plain = Bundle::create(['name' => 'מארז רגיל', 'price' => 500, 'is_subscription_type' => false, 'is_active' => true]);
