@@ -483,6 +483,12 @@ class Deal extends Model
         $this->unsetRelation('items');
     }
 
+    /** The deal's file folder — uploaded PDFs/images, newest first (2026-11-24). */
+    public function files(): HasMany
+    {
+        return $this->hasMany(DealFile::class)->latest()->orderByDesc('id');
+    }
+
     /** The programs/bundles sold in this deal, in order (2026-11-24). */
     public function items(): HasMany
     {

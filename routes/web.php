@@ -327,6 +327,23 @@ Route::middleware('auth')->group(function () {
 
         return \Illuminate\Support\Facades\Storage::disk('local')->response($path, null, ['Content-Disposition' => $disposition]);
     })->name('expenses.invoice');
+    // A file from a deal's folder — opens in the browser (PDF/image), or downloads with ?download=1.
+    Route::get('/deals/{deal}/files/{file}', function (\App\Models\Deal $deal, \App\Models\DealFile $file) {
+        abort_unless(auth()->user()->can('deals.view'), 403);
+        abort_unless($file->deal_id === $deal->id, 404);
+        abort_unless(\Illuminate\Support\Facades\Storage::disk('local')->exists($file->path), 404);
+
+        $disposition = \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+            request()->boolean('download') ? 'attachment' : 'inline',
+            $file->original_name,
+            "deal-{$deal->id}-file-{$file->id}.".pathinfo($file->path, PATHINFO_EXTENSION),
+        );
+
+        return \Illuminate\Support\Facades\Storage::disk('local')->response($file->path, null, [
+            'Content-Disposition' => $disposition,
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    })->name('deals.files.show');
     Route::livewire('/cashflow-report', 'cashflow-report')->name('cashflow-report');
     // The income statement as a PDF, with the same filters as the page (years[], months[], sources[]) — detail=summary|full.
     Route::get('/cashflow-report/pdf', function (\Illuminate\Http\Request $request, \App\Services\RevenueReport $report) {

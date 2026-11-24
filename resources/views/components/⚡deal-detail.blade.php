@@ -4,6 +4,7 @@ use App\Concerns\Notifies;
 use App\Concerns\PreviewsEmails;
 use App\Models\BusinessEntity;
 use App\Models\Deal;
+use App\Models\DealFile;
 use App\Models\Document;
 use App\Models\DocumentTemplate;
 use App\Models\Payment;
@@ -22,6 +23,7 @@ use App\Services\Integrations\SummitClient;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use Livewire\WithFileUploads;
 
 /**
  * Build-plan 06 — מסך עסקה. A Deal only ever exists via
@@ -45,8 +47,12 @@ class extends Component
 {
     use Notifies;
     use PreviewsEmails;
+    use WithFileUploads;
 
     public Deal $deal;
+
+    /** Files chosen in the deal's "תיקיית קבצים" box — stored as soon as their upload finishes. */
+    public array $dealUploads = [];
 
     /** The `version` this component loaded the deal with — see Deal::updateStatusWithLock(). */
     public int $loadedVersion;
@@ -176,6 +182,51 @@ class extends Component
     public function catalogPrograms()
     {
         return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    /** The deal's file folder (2026-11-24). */
+    #[Computed]
+    public function dealFiles()
+    {
+        return $this->deal->files()->with('uploader')->get();
+    }
+
+    /** Files chosen in the folder box are stored right away — DealFile::attachTo(). */
+    public function updatedDealUploads(): void
+    {
+        $this->validate(
+            ['dealUploads' => ['array', 'max:20'], 'dealUploads.*' => ['file', 'mimes:'.DealFile::MIMES, 'max:'.DealFile::MAX_KB]],
+            [
+                'dealUploads.*.mimes' => 'ניתן להעלות קובצי PDF או תמונות (JPG, PNG, WEBP, GIF, HEIC) בלבד.',
+                'dealUploads.*.max' => 'קובץ גדול מדי — עד 10MB לקובץ.',
+                'dealUploads.max' => 'עד 20 קבצים בכל העלאה.',
+            ],
+        );
+
+        $logger = app(ActivityLogger::class);
+        foreach ($this->dealUploads as $upload) {
+            $file = DealFile::attachTo($this->deal, $upload, auth()->user());
+            $logger->log('deal.file_uploaded', "הועלה הקובץ \"{$file->original_name}\" לעסקה #{$this->deal->id}", [
+                'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+            ]);
+        }
+
+        $count = count($this->dealUploads);
+        $this->dealUploads = [];
+        unset($this->dealFiles);
+        $this->notifySuccess($count === 1 ? 'הקובץ נשמר בתיקיית העסקה.' : "{$count} קבצים נשמרו בתיקיית העסקה.");
+    }
+
+    public function deleteDealFile(int $fileId, ActivityLogger $logger): void
+    {
+        $file = $this->deal->files()->findOrFail($fileId);
+        $name = $file->original_name;
+        $file->remove();
+        $logger->log('deal.file_removed', "נמחק הקובץ \"{$name}\" מעסקה #{$this->deal->id}", [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+        ]);
+        unset($this->dealFiles);
+        $this->notifySuccess('הקובץ נמחק.');
     }
 
     #[Computed]
@@ -1531,6 +1582,57 @@ class extends Component
                                 @if ($document->canBeMarkedSignedByHand())
                                     <button type="button" wire:click="markDocumentSigned({{ $document->id }})" wire:confirm="לסמן את המסמך כנחתם? פעולה זו מדמה חתימה מקוונת של הלקוחה." class="btn btn-secondary btn-sm">סמן כנחתם</button>
                                 @endif
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+            </div>
+        @endif
+    </div>
+
+    {{-- ===== תיקיית קבצים — PDFs/images uploaded to the deal (2026-11-24) ===== --}}
+    <div class="card" style="margin-top:var(--sp-lg)">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--sp-md); flex-wrap:wrap">
+            <h3 style="margin:0">תיקיית קבצים <span class="text-text-secondary" style="font-size:var(--fs-caption); font-weight:normal">({{ $this->dealFiles->count() }})</span></h3>
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer">
+                + העלאת קבצים
+                <input type="file" wire:model="dealUploads" multiple accept="application/pdf,image/*" style="display:none">
+            </label>
+        </div>
+        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF או תמונות, עד 10MB לקובץ. אפשר לבחור כמה קבצים יחד.</div>
+        <div wire:loading wire:target="dealUploads" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">מעלה...</div>
+        @error('dealUploads') <div style="color:var(--color-error); font-size:var(--fs-caption); margin-top:4px">{{ $message }}</div> @enderror
+        @foreach ($errors->get('dealUploads.*') as $messages)
+            <div style="color:var(--color-error); font-size:var(--fs-caption); margin-top:4px">{{ $messages[0] }}</div>
+        @endforeach
+
+        @if ($this->dealFiles->isEmpty())
+            <p class="text-text-secondary" style="margin:var(--sp-md) 0 0">אין עדיין קבצים בתיקייה.</p>
+        @else
+            <div class="table-scroll" style="margin-top:var(--sp-md)">
+            <table>
+                <thead>
+                    <tr><th>קובץ</th><th>גודל</th><th>הועלה</th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach ($this->dealFiles as $file)
+                        <tr wire:key="deal-file-{{ $file->id }}">
+                            <td>
+                                <a href="{{ route('deals.files.show', [$deal, $file]) }}" target="_blank" style="display:inline-flex; align-items:center; gap:6px">
+                                    <span aria-hidden="true">{{ $file->isImage() ? '🖼️' : '📄' }}</span>
+                                    <span style="word-break:break-all">{{ $file->original_name }}</span>
+                                </a>
+                            </td>
+                            <td class="ltr-num" style="white-space:nowrap">{{ $file->sizeLabel() }}</td>
+                            <td style="white-space:nowrap; font-size:var(--fs-caption)">
+                                <span class="ltr-num">{{ $file->created_at->format('d/m/Y H:i') }}</span>
+                                @if ($file->uploader) · {{ $file->uploader->name }} @endif
+                            </td>
+                            <td style="white-space:nowrap">
+                                <a href="{{ route('deals.files.show', [$deal, $file]) }}" target="_blank" class="btn btn-ghost btn-sm">צפייה</a>
+                                <a href="{{ route('deals.files.show', [$deal, $file, 'download' => 1]) }}" class="btn btn-ghost btn-sm">הורדה</a>
+                                <button type="button" wire:click="deleteDealFile({{ $file->id }})" wire:confirm="למחוק את הקובץ &quot;{{ $file->original_name }}&quot;?" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                             </td>
                         </tr>
                     @endforeach
