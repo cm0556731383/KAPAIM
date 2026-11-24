@@ -1416,7 +1416,6 @@ class extends Component
                         <div class="full" style="display:flex; gap:var(--sp-sm); align-items:center">
                             <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                             <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemsEdit">ביטול</button>
-                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">סכום העסקה יתעדכן לסכום השורות.</span>
                         </div>
                     </form>
                 @else
@@ -1438,7 +1437,6 @@ class extends Component
                         </table>
                     </div>
                     @if ($deal->class_tier)
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">המחירים לפי {{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }}.</p>
                     @endif
                 @endif
             </div>
@@ -1615,7 +1613,6 @@ class extends Component
         <div style="margin:-8px 0 var(--sp-lg)">
             <x-modal trigger-label="+ רישום מסמך שנעשה מחוץ למערכת" trigger-class="btn btn-ghost btn-sm" title="מסמך שנעשה מחוץ למערכת">
                 <form wire:submit="recordExternalDocument" class="form-grid">
-                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">למסמך שכבר נשלח או נחתם לפני המערכת או מחוצה לה — על נייר, במייל, או חשבונית שהופקה ישירות ב־SUMIT. המסמך רק נרשם בעסקה: שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT. את הקובץ עצמו אפשר להעלות לתיקיית הקבצים למטה.</p>
                     <div>
                         <label for="externalType">סוג המסמך</label>
                         <select id="externalType" wire:model.live="externalType">
@@ -1643,9 +1640,6 @@ class extends Component
                         <input type="text" id="externalNumber" wire:model="externalNumber" dir="ltr" class="ltr-num">
                         @error('externalNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
-                    @if ($externalType === 'invoice')
-                        <p class="full" style="font-size:var(--fs-caption); margin:0; color:var(--color-warning)">חשבונית שנרשמת כאן נחשבת לחשבונית של העסקה: הסטטוס יעבור ל"נשלחה חשבונית", הסכום המוסכם יינעל, ולא ניתן יהיה להפיק חשבונית נוספת דרך המערכת.</p>
-                    @endif
                     <div class="full"><button type="submit" class="btn btn-primary">רישום המסמך</button></div>
                 </form>
             </x-modal>
@@ -1708,7 +1702,6 @@ class extends Component
                 <input type="file" wire:model="dealUploads" multiple accept="application/pdf,image/*" style="display:none">
             </label>
         </div>
-        <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:4px">PDF או תמונות, עד 10MB לקובץ. אפשר לבחור כמה קבצים יחד.</div>
         <div wire:loading wire:target="dealUploads" style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:var(--sp-sm)">מעלה...</div>
         @error('dealUploads') <div style="color:var(--color-error); font-size:var(--fs-caption); margin-top:4px">{{ $message }}</div> @enderror
         @foreach ($errors->get('dealUploads.*') as $messages)

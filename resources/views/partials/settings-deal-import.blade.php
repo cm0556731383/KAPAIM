@@ -4,24 +4,16 @@
 <section class="settings-section">
     <div class="section-head">
         <h2>יבוא עסקאות מאקסל</h2>
-        <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מורידים את הקובץ, ממלאים שורה לכל עסקה ומעלים. המערכת בודקת את כל הקובץ ומציגה את השגיאות לפני שמשהו נשמר.</p>
     </div>
 
     <div class="cols2">
         <div class="card">
             <h3 style="margin:0 0 4px">1. הורדת הקובץ למילוי</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                קובץ אקסל עם כל השדות של כרטיס העסקה: לקוחה (מרשימה של הלקוחות שבמערכת), תאריך רכישה, מספר כיתות לתמחור, עד {{ \App\Services\DealImport::ITEMS }} פריטים (מרשימה של התוכניות והמארזים הפעילים) עם סכום לכל אחד, מספר תלמידות, אמצעי תשלום ובקשה מיוחדת — וגם מסמכים שכבר נשלחו או נחתמו לפני המערכת: הצעת מחיר, טופס הזמנה, חוזה וחשבונית, עם מצב ותאריך לכל אחד.
-                הרשימות בקובץ נלקחות מהמערכת ברגע ההורדה — אחרי הוספת לקוחות או תוכניות כדאי להוריד אותו מחדש.
-            </p>
             <a href="{{ route('settings.import-deals-template') }}" class="btn btn-secondary">הורדת קובץ האקסל</a>
         </div>
 
         <div class="card">
             <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                בדיקת הקובץ לא שומרת כלום. מסמכים שסומנו בקובץ רק נרשמים בעסקה — לא נשלחים ללקוחה ולא מופקים ב־SUMIT. תשלומים מוסיפים אחר כך בכרטיס העסקה. עסקה עם מארז מנוי פותחת את המנוי, וכל עסקה מצרפת את הלקוחה לרשימות התפוצה, כמו עסקה ידנית.
-            </p>
             <form wire:submit="checkDealImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
                 <input type="file" id="dealFile" wire:model="dealFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                 @error('dealFile') <div style="{{ $errStyle }}">{{ $message }}</div> @enderror
@@ -43,7 +35,6 @@
                 <div style="height:8px; background:var(--color-border); border-radius:4px; overflow:hidden">
                     <div style="height:100%; width:{{ ($status['total'] ?? 0) ? round(100 * ($status['done'] ?? 0) / $status['total']) : 0 }}%; background:var(--color-primary); transition:width .3s"></div>
                 </div>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">אפשר לעזוב את המסך — היבוא ממשיך ברקע.</p>
             @elseif ($status['state'] === 'done')
                 <h3 style="margin:0 0 var(--sp-sm)">✓ היבוא הסתיים: נוספו {{ $status['created'] }} עסקאות</h3>
                 @if (! empty($status['skipped']))
@@ -89,7 +80,6 @@
                         <span class="import-group-arrow" :class="open && 'open'">◀</span>
                         <span class="badge badge-success">{{ count($valid) }}</span>
                         <strong>עסקאות תקינות</strong>
-                        <span class="text-text-secondary" style="font-size:var(--fs-caption)">— ייווצרו בכרטיסי הלקוחות</span>
                     </button>
                     <div x-show="open" x-cloak class="import-group-body">
                         @if ($valid)
@@ -133,16 +123,12 @@
                         <span class="import-group-arrow" :class="open && 'open'">◀</span>
                         <span class="badge badge-error">{{ count($invalid) }}</span>
                         <strong>עסקאות עם פרטים שגויים</strong>
-                        <span class="text-text-secondary" style="font-size:var(--fs-caption)">— אפשר לתקן כאן ולבדוק שוב</span>
                     </button>
                     <div x-show="open" x-cloak class="import-group-body">
                         @if ($invalid)
                             @php($customerNames = \App\Services\DealImport::customerNames())
                             @php($itemLabels = \App\Services\DealImport::itemLabels())
                             @php($methodNames = \App\Services\DealImport::paymentMethodNames())
-                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
-                                מתקנים בשדה ולוחצים "שמירת התיקונים ובדיקה מחדש" — שורה שתוקנה עוברת לתקינות. התיקון נשמר גם בקובץ שהועלה.
-                            </p>
                             <div class="table-scroll" style="max-height:520px; overflow-y:auto">
                             <table>
                                 <thead><tr><th>שורה</th><th>לקוחה</th><th>שדה</th><th>ערך (לתיקון)</th><th>מה שגוי</th></tr></thead>
@@ -219,11 +205,6 @@
                 </div>
 
                 @if ($valid)
-                    @if ($invalid)
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">
-                            אפשר לתקן את הפרטים השגויים ולבדוק שוב, או לייבא עכשיו רק את השורות התקינות — השורות עם השגיאות לא ייובאו.
-                        </p>
-                    @endif
                     <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                         @if ($canImport)
                             <button type="button" wire:click="runDealImport" wire:loading.attr="disabled" wire:target="runDealImport" class="btn btn-primary"
@@ -236,7 +217,7 @@
                         <button type="button" wire:click="resetDealImport" class="btn btn-ghost">ביטול</button>
                     </div>
                 @else
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין שורות תקינות ליבוא. יש לתקן את הפרטים השגויים למעלה (או בקובץ ולהעלות אותו שוב).</p>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין שורות תקינות ליבוא.</p>
                     <button type="button" wire:click="resetDealImport" class="btn btn-ghost">העלאת קובץ אחר</button>
                 @endif
             @endif

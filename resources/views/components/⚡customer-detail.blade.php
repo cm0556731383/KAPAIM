@@ -2126,7 +2126,6 @@ class extends Component
                                     <div class="full">
                                         <label for="creditNoteAmount{{ $subscription->id }}">סכום חשבונית / קבלת הזיכוי (₪)</label>
                                         <input type="text" id="creditNoteAmount{{ $subscription->id }}" class="ltr-num" dir="ltr" wire:model="creditNoteAmounts.{{ $subscription->id }}">
-                                        <div style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">הוצע אוטומטית: מה ששולם פחות מה שמגיע על החודשים שנוצלו. ניתן לשנות. הסכום הזה לא משנה את יתרת החוב — הלקוחה לא תיוותר בחוב על ההפרש.</div>
                                     </div>
                                     <div class="full">
                                         <label for="creditNoteDescription{{ $subscription->id }}">פירוט</label>
@@ -2158,7 +2157,6 @@ class extends Component
                                 <select id="dealClassTier" disabled>
                                     <option>{{ \App\Models\Program::CLASS_TIERS[$this->schoolClassTier] }}</option>
                                 </select>
-                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">לפי כרטיס הלקוחה ({{ $this->customer->school->classes_per_grade }} כיתות) — המחיר מחושב בהתאם.</div>
                             @else
                                 <select id="dealClassTier" wire:model.live="dealClassTier">
                                     <option value="">בחרו מספר כיתות</option>
@@ -2166,7 +2164,6 @@ class extends Component
                                         <option value="{{ $tierKey }}">{{ $tierLabel }}</option>
                                     @endforeach
                                 </select>
-                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">בכרטיס הלקוחה אין מספר כיתות — יש לבחור כדי לקבוע את המחיר.</div>
                             @endif
                             @error('dealClassTier') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
@@ -2180,7 +2177,6 @@ class extends Component
                             'programs' => $this->availablePrograms, 'bundles' => $this->availableBundles,
                             'tier' => $this->schoolClassTier ?? ($dealClassTier ?: null),
                         ])
-                        @if ($dealDiscountNote) <div class="full" style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: -8px;">{{ $dealDiscountNote }}</div> @endif
                         <div>
                             <label for="dealPaymentMethodId">אמצעי תשלום</label>
                             <select id="dealPaymentMethodId" wire:model="dealPaymentMethodId">

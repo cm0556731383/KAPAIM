@@ -460,7 +460,6 @@ class extends Component
         <div class="section-head">
             <div>
                 <h2>תוכניות</h2>
-                <p class="hint">חודשיות ופרימיום. המחיר בטבלה הוא ל-1–2 כיתות; כל המחירים בעריכה.</p>
             </div>
             <x-modal trigger-label="+ תוכנית חדשה" title="תוכנית חדשה">
                 <form wire:submit="addProgram" class="form-grid">
@@ -523,7 +522,6 @@ class extends Component
                                     <div class="full catalog-edit-actions">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
-                                        <span class="text-text-secondary">מחיר ריק = כמו 1–2 כיתות. שינוי שם או מחיר חל רק על מכירות חדשות.</span>
                                     </div>
                                 </form>
                             </td>
@@ -586,7 +584,6 @@ class extends Component
                                         <option value="{{ $year }}">{{ $label }}</option>
                                     @endforeach
                                 </select>
-                                <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">המנוי של כל לקוחה שתקנה את המארז ירוץ בחודשי שנת הלימודים הזו ({{ \App\Services\HebrewCalendar::MONTHS[\App\Services\HebrewCalendar::startMonth()] }} עד 10 חודשים אחריו), גם אם נמכר מראש.</div>
                                 @error('bundleSchoolYear') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                             </div>
                         @endif
@@ -634,9 +631,6 @@ class extends Component
                                     </optgroup>
                                 @endif
                             </select>
-                            @if ($membershipParent?->is_subscription_type)
-                                <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">מארז מנוי יכול לכלול גם מארזים — כל התוכניות שבהם נחשבות חלק מהמנוי.</div>
-                            @endif
                             @error('membershipProgramId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div class="full"><button type="submit" class="btn btn-primary">הוספה למארז</button></div>
@@ -676,13 +670,11 @@ class extends Component
                                                     <option value="{{ $year }}">{{ $label }}</option>
                                                 @endforeach
                                             </select>
-                                            @error('editSchoolYear') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">שינוי השנה חל על מכירות חדשות בלבד — מנויים שכבר נמכרו שומרים על החודשים שלהם.</div></div>
+                                            @error('editSchoolYear') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     @endif
                                     <div class="full catalog-edit-actions">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
-                                        <span class="text-text-secondary">מחיר ריק = כמו 1–2 כיתות. שינוי שם או מחיר חל רק על מכירות חדשות.</span>
                                     </div>
                                 </form>
                             </td>

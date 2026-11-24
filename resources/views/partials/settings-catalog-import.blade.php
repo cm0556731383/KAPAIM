@@ -4,24 +4,16 @@
 <section class="settings-section">
     <div class="section-head">
         <h2>יבוא תוכניות ומארזים מאקסל</h2>
-        <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מורידים את הקובץ, ממלאים שורה לכל תוכנית ולכל מארז ומעלים. המערכת בודקת את כל הקובץ ומציגה את השגיאות לפני שמשהו נשמר.</p>
     </div>
 
     <div class="cols2">
         <div class="card">
             <h3 style="margin:0 0 4px">1. הורדת הקובץ למילוי</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                קובץ אקסל עם שני גיליונות — "תוכניות" ו"מארזים" — ובהם כל השדות של הקטלוג: שם, תיאור, מחיר לפי מספר הכיתות בשנתון, פרימיום / מארז מנוי, חוזה ברירת מחדל, פעיל, ולמארז — התוכניות שבו.
-                עמודות החובה מסומנות ב־* ובכתום. בגיליון "הוראות" יש הסבר על כל עמודה, ובגיליון "קיים בקטלוג" — מה שכבר נמצא במערכת.
-            </p>
             <a href="{{ route('settings.import-catalog-template') }}" class="btn btn-secondary">הורדת קובץ האקסל</a>
         </div>
 
         <div class="card">
             <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
-            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                בדיקת הקובץ לא שומרת כלום. תוכנית או מארז בשם שכבר קיים בקטלוג לא ייובאו — היבוא רק מוסיף, ושינוי של פריט קיים נעשה במסך הקטלוג.
-            </p>
             <form wire:submit="checkCatalogImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
                 <input type="file" id="catalogFile" wire:model="catalogFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                 @error('catalogFile') <div style="{{ $errStyle }}">{{ $message }}</div> @enderror
@@ -69,7 +61,6 @@
                         <span class="import-group-arrow" :class="open && 'open'">◀</span>
                         <span class="badge badge-success">{{ count($valid) }}</span>
                         <strong>תוכניות ומארזים תקינים</strong>
-                        <span class="text-text-secondary" style="font-size:var(--fs-caption)">— ייווספו לקטלוג</span>
                     </button>
                     <div x-show="open" x-cloak class="import-group-body">
                         @if ($valid)
@@ -107,13 +98,9 @@
                         <span class="import-group-arrow" :class="open && 'open'">◀</span>
                         <span class="badge badge-error">{{ count($invalid) }}</span>
                         <strong>שורות עם פרטים שגויים</strong>
-                        <span class="text-text-secondary" style="font-size:var(--fs-caption)">— אפשר לתקן כאן ולבדוק שוב</span>
                     </button>
                     <div x-show="open" x-cloak class="import-group-body">
                         @if ($invalid)
-                            <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
-                                מתקנים בשדה ולוחצים "שמירת התיקונים ובדיקה מחדש" — שורה שתוקנה עוברת לתקינות. התיקון נשמר גם בקובץ שהועלה.
-                            </p>
                             <div class="table-scroll" style="max-height:520px; overflow-y:auto">
                             <table>
                                 <thead><tr><th>גיליון</th><th>שורה</th><th>שם</th><th>שדה</th><th>ערך (לתיקון)</th><th>מה שגוי</th></tr></thead>
@@ -175,11 +162,6 @@
                 </div>
 
                 @if ($valid)
-                    @if ($invalid)
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">
-                            אפשר לתקן את הפרטים השגויים ולבדוק שוב, או לייבא עכשיו רק את השורות התקינות — השורות עם השגיאות לא ייובאו.
-                        </p>
-                    @endif
                     <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                         @if ($canImport)
                             <button type="button" wire:click="runCatalogImport" wire:loading.attr="disabled" wire:target="runCatalogImport" class="btn btn-primary"
@@ -192,7 +174,7 @@
                         <button type="button" wire:click="resetCatalogImport" class="btn btn-ghost">ביטול</button>
                     </div>
                 @else
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין שורות תקינות ליבוא. יש לתקן את הפרטים השגויים למעלה (או בקובץ ולהעלות אותו שוב).</p>
+                    <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין שורות תקינות ליבוא.</p>
                     <button type="button" wire:click="resetCatalogImport" class="btn btn-ghost">העלאת קובץ אחר</button>
                 @endif
             @endif

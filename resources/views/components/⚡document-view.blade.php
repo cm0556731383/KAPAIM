@@ -368,11 +368,7 @@ class extends Component
             @if ($document->is_external)
                 <div class="card">
                     <h3>מסמך שנעשה מחוץ למערכת</h3>
-                    <p class="text-text-secondary" style="font-size:var(--fs-small); margin:0">
-                        המסמך נרשם בעסקה כמסמך שנעשה לפני המערכת או מחוצה לה (על נייר, במייל, או ישירות ב־SUMIT) — הוא לא נשלח ולא הופק מכאן, ואין לו תוכן במערכת.
-                        @if ($document->external_number) מספר המסמך: <span class="ltr-num">{{ $document->external_number }}</span>.@endif
-                        את הקובץ עצמו אפשר להעלות לתיקיית הקבצים בכרטיס העסקה.
-                    </p>
+                    @if ($document->external_number)<p style="margin:0">מספר המסמך: <span class="ltr-num">{{ $document->external_number }}</span></p>@endif
                 </div>
             @elseif (in_array($document->document_type, ['invoice', 'credit_note'], true))
                 <div class="card">

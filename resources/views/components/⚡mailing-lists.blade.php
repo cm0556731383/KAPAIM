@@ -484,7 +484,6 @@ class extends Component
                     </div>
                 </div>
                 @if ($sendListIds)
-                    <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">כתובת שמופיעה בכמה רשימות תקבל את המייל פעם אחת.</div>
                 @endif
                 @error('sendListIds') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>

@@ -149,7 +149,8 @@ class SubscriptionsTest extends TestCase
             ->set('activeTab', 'deals')
             ->set('dealItem', "program:{$premiumProgram->id}")
             ->assertSet('dealLines.0.amount', '900')
-            ->assertSee('הנחת מנוי של 10%');
+            // The note itself is no longer shown on screen (2026-11-25: no small hint lines).
+            ->assertDontSee('הנחת מנוי של 10%');
 
         $component->call('removeDealLine', 0)
             ->set('dealItem', "program:{$regularProgram->id}")

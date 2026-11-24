@@ -1958,24 +1958,16 @@ class extends Component
     <section class="settings-section">
         <div class="section-head">
             <h2>יבוא לקוחות מאקסל</h2>
-            <p class="hint text-text-secondary" style="font-size:var(--fs-caption)">מורידים את הקובץ, ממלאים שורה לכל לקוחה ומעלים. המערכת בודקת את כל הקובץ ומציגה את השגיאות לפני שמשהו נשמר.</p>
         </div>
 
         <div class="cols2">
             <div class="card">
                 <h3 style="margin:0 0 4px">1. הורדת הקובץ למילוי</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                    קובץ אקסל עם כל השדות של כרטיס הלקוח: פרטי המוסד, פרטים נוספים ועד {{ \App\Services\CustomerImport::CONTACTS }} אנשי קשר — לכל אחד כן / לא ל"ראשי" ול"גורם חשבונאי".
-                    עמודות החובה מסומנות ב־* ובכתום. בגיליון "הוראות" יש הסבר על כל עמודה.
-                </p>
                 <a href="{{ route('settings.import-template') }}" class="btn btn-secondary">הורדת קובץ האקסל</a>
             </div>
 
             <div class="card">
                 <h3 style="margin:0 0 4px">2. העלאת הקובץ המלא לבדיקה</h3>
-                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-md)">
-                    בדיקת הקובץ לא שומרת כלום. בית ספר שכבר קיים במערכת (כליד או כלקוחה) לא ייובא. כל איש קשר מחופש לפי כתובת הדוא"ל ברשימת התפוצה ב־Smove: מי שנמצא — יקושר; מי שלא נמצא — יוצג, ותתבקשי לאשר את פתיחתו.
-                </p>
                 <form wire:submit="checkImport" style="display:flex; flex-direction:column; gap:var(--sp-sm)">
                     <input type="file" id="importFile" wire:model="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                     @error('importFile') <div style="{{ $errStyle }}">{{ $message }}</div> @enderror
@@ -1997,7 +1989,6 @@ class extends Component
                     <div style="height:8px; background:var(--color-border); border-radius:4px; overflow:hidden">
                         <div style="height:100%; width:{{ ($status['total'] ?? 0) ? round(100 * ($status['done'] ?? 0) / $status['total']) : 0 }}%; background:var(--color-primary); transition:width .3s"></div>
                     </div>
-                    <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">אפשר לעזוב את המסך — היבוא ממשיך ברקע.</p>
                 @elseif ($status['state'] === 'done')
                     <h3 style="margin:0 0 var(--sp-sm)">✓ היבוא הסתיים: נוספו {{ $status['created'] }} לקוחות</h3>
                     <p style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">{{ $status['smove']['linked'] ?? 0 }} אנשי קשר קושרו לאנשי הקשר ברשימת התפוצה ב־Smove.@if (! empty($status['smove']['joined'])) {{ $status['smove']['joined'] }} אנשי קשר שלא היו ברשימה נפתחו וצורפו אליה.@endif</p>
@@ -2045,7 +2036,6 @@ class extends Component
                             <span class="import-group-arrow" :class="open && 'open'">◀</span>
                             <span class="badge badge-success">{{ count($groups['linked']) }}</span>
                             <strong>לקוחות שאנשי הקשר שלהן נמצאו ברשימת Smove</strong>
-                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— ייובאו ויקושרו לאנשי הקשר הקיימים, בלי מייל אישור הרשמה מחדש</span>
                         </button>
                         <div x-show="open" x-cloak class="import-group-body">
                             @if ($smove && $smove['not_receiving'])
@@ -2082,13 +2072,9 @@ class extends Component
                             <span class="import-group-arrow" :class="open && 'open'">◀</span>
                             <span class="badge badge-warning">{{ count($groups['unlisted']) }}</span>
                             <strong>לקוחות עם אנשי קשר שלא נמצאו ב־Smove</strong>
-                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— המערכת תפתח אותם ב־Smove</span>
                         </button>
                         <div x-show="open" x-cloak class="import-group-body">
                             @if ($groups['unlisted'])
-                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
-                                    החיפוש נעשה לפי כתובת הדוא"ל. אנשי הקשר המסומנים ייפתחו במערכת ויצורפו לרשימת התפוצה ב־Smove, כמו כל איש קשר חדש (ייתכן ש־Smove ישלח להם מייל לאישור ההרשמה). גורם חשבונאי שאינו ראשי רק ייפתח — הוא מקבל דואר הנהלת חשבונות בלבד.
-                                </p>
                                 <div class="table-scroll" style="max-height:360px; overflow-y:auto">
                                 <table>
                                     <thead><tr><th>שורה</th><th>מוסד</th><th>אנשי קשר</th></tr></thead>
@@ -2128,13 +2114,9 @@ class extends Component
                             <span class="import-group-arrow" :class="open && 'open'">◀</span>
                             <span class="badge badge-error">{{ count($groups['invalid']) }}</span>
                             <strong>לקוחות עם פרטים שגויים</strong>
-                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">— אפשר לתקן כאן ולבדוק שוב</span>
                         </button>
                         <div x-show="open" x-cloak class="import-group-body">
                             @if ($groups['invalid'])
-                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0 0 var(--sp-sm)">
-                                    הפרטים השגויים מסומנים באדום. מתקנים בשדה, ולוחצים "שמירת התיקונים ובדיקה מחדש" — שורה שתוקנה עוברת לקבוצה המתאימה ותיובא עם השאר.
-                                </p>
                                 <div class="table-scroll" style="max-height:520px; overflow-y:auto">
                                 <table>
                                     <thead><tr><th>שורה</th><th>מוסד</th><th>שדה</th><th>ערך (לתיקון)</th><th>מה שגוי</th></tr></thead>
@@ -2180,10 +2162,6 @@ class extends Component
                         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
                             <div style="padding: var(--sp-sm) var(--sp-md)">
                                 <h4 style="margin:0 0 4px; color:var(--color-warning)">שימי לב: {{ count($importCheck['warnings']) }} אנשי קשר שהכתובת שלהם כבר שייכת ללקוחה אחרת</h4>
-                                <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:0">
-                                    השורות האלה תקינות וייובאו. ב־Smove יש איש קשר אחד לכל כתובת דוא"ל, ולכן הוא ישויך לכל הלקוחות האלה יחד.
-                                    אם זו טעות — יש לתקן את הכתובת בקובץ ולהעלות שוב.
-                                </p>
                             </div>
                             <div class="table-scroll" style="max-height:320px; overflow-y:auto">
                             <table>
@@ -2204,11 +2182,6 @@ class extends Component
                     @endif
 
                     @if ($importCheck['valid'] > 0)
-                        @if ($importCheck['invalidRows'])
-                            <p class="text-text-secondary" style="font-size:var(--fs-caption)">
-                                אפשר לתקן את הפרטים השגויים למעלה ולבדוק שוב, או לייבא עכשיו רק את השורות התקינות — השורות עם השגיאות לא ייובאו.
-                            </p>
-                        @endif
                         <div style="display:flex; gap:var(--sp-sm); flex-wrap:wrap">
                             @can('settings.edit')
                                 <button type="button" wire:click="runImport" wire:loading.attr="disabled" class="btn btn-primary" @disabled(($importCheck['unlisted'] ?? []) && ! $importApproveUnlisted)
@@ -2221,7 +2194,7 @@ class extends Component
                             <button type="button" wire:click="resetImport" class="btn btn-ghost">ביטול</button>
                         </div>
                     @else
-                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין עדיין שורות תקינות ליבוא. יש לתקן את הפרטים השגויים למעלה (או בקובץ ולהעלות אותו שוב).</p>
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption)">אין שורות תקינות ליבוא.</p>
                         <button type="button" wire:click="resetImport" class="btn btn-ghost">העלאת קובץ אחר</button>
                     @endif
                 @endif
@@ -2240,7 +2213,6 @@ class extends Component
             <h2>גיבוי שבועי למחשב</h2>
         </div>
         <div class="card" style="max-width:720px">
-            <p style="margin-top:0">כל לילה המערכת מגבה את עצמה על השרת (14 ימים אחרונים). בנוסף, פעם בשבוע (ביום ראשון) נוצר קובץ גיבוי מלא — כל הנתונים וכל הקבצים — נעול בסיסמה. <strong>בפעם הראשונה שהמשתמשת שנבחרה נכנסת למערכת אחרי שהגיבוי נוצר, הקובץ יורד מעצמו</strong> לתיקיית ההורדות של הדפדפן שלה.</p>
 
             <div style="margin-bottom:var(--sp-md)">
                 @if ($backup->isActive())
@@ -2270,7 +2242,7 @@ class extends Component
                     <label for="backupPassword_confirmation">הסיסמה שוב</label>
                     <input id="backupPassword_confirmation" type="password" wire:model="backupPassword_confirmation" autocomplete="new-password">
                 </div>
-                <p class="full" style="margin:0; font-size:var(--fs-caption); color:var(--color-warning)"><strong>חשוב:</strong> רשמי את הסיסמה במקום בטוח מחוץ למערכת. בלעדיה אי אפשר לפתוח את הגיבוי — וכשצריכים גיבוי, בדרך כלל המערכת עצמה לא זמינה. שינוי סיסמה חל על הגיבויים הבאים בלבד.</p>
+                <p class="full" style="margin:0; font-size:var(--fs-caption); color:var(--color-warning)"><strong>חשוב:</strong> רשמי את הסיסמה במקום בטוח — בלעדיה אי אפשר לפתוח את הגיבוי.</p>
                 @can('settings.edit')
                     <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
                 @endcan
@@ -2288,14 +2260,13 @@ class extends Component
                     @if ($lastDownload['name'] === $latestBackup['name'])
                         ירד למחשב של {{ $lastDownload['user'] }} ב-<span class="ltr-num">{{ $lastDownload['at']?->format('d/m/Y H:i') }}</span>
                     @else
-                        עוד לא ירד — ירד מעצמו בכניסה הבאה של {{ $backup->recipient()?->name ?? 'המשתמשת שתיבחר' }}.
+                        עוד לא ירד
                     @endif
                 </p>
                 <a href="{{ route('backups.weekly.download') }}" class="btn btn-secondary btn-sm">הורדה עכשיו</a>
             @else
-                <p class="text-text-secondary" style="margin:0">עוד לא נוצר גיבוי שבועי. הראשון ייווצר בלילה שאחרי שמירת ההגדרות.</p>
+                <p class="text-text-secondary" style="margin:0">עוד לא נוצר גיבוי שבועי.</p>
             @endif
-            <p style="margin:var(--sp-md) 0 0; font-size:var(--fs-caption); color:var(--color-text-secondary)">פתיחת הקובץ במחשב: לחיצה כפולה, כמו כל קובץ zip — המחשב יבקש את הסיסמה. בתיקייה files נמצאים כל הקבצים שהועלו. שחזור המערכת מהגיבוי — על השרת, עם <span dir="ltr">./move-import.sh</span> (מדריך ההתקנה, סעיף 9).</p>
         </div>
     </section>
     @endif

@@ -1241,9 +1241,6 @@ class extends Component
                                     <option value="{{ $tierKey }}">{{ $tierLabel }}</option>
                                 @endforeach
                             </select>
-                            @if ($this->lead->school?->classes_per_grade)
-                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">בכרטיס: {{ $this->lead->school->classes_per_grade }} כיתות — ניתן לשנות.</div>
-                            @endif
                             @error('quoteClassTier') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>
