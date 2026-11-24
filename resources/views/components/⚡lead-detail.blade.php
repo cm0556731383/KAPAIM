@@ -64,6 +64,9 @@ class extends Component
     /** "program:{id}" or "bundle:{id}", same encoding as itemToAttach. */
     public string $quoteItem = '';
     public string $quoteAmount = '';
+
+    /** Classes-per-grade price tier the quote is priced by ('1-2'/'3-4'/'5-6'). */
+    public string $quoteClassTier = '1-2';
     public string $quoteStudentsCount = '';
     public string $quoteTemplateId = '';
     public ?string $quoteError = null;
@@ -177,6 +180,7 @@ class extends Component
         $first = $this->lead->interestedPrograms->first();
         $this->quoteItem = $first ? "program:{$first->id}" : (($bundle = $this->lead->interestedBundles->first()) ? "bundle:{$bundle->id}" : '');
         $this->quoteStudentsCount = '';
+        $this->quoteClassTier = Program::classTierFor($this->lead->school?->classes_per_grade) ?? '1-2';
         $this->quoteTemplateId = (string) ($this->quoteTemplates->first()?->id ?? '');
         $this->updatedQuoteItem();
 
@@ -188,7 +192,12 @@ class extends Component
         [$type, $id] = array_pad(explode(':', $this->quoteItem, 2), 2, null);
         $item = $type === 'program' ? Program::find($id) : ($type === 'bundle' ? Bundle::find($id) : null);
 
-        $this->quoteAmount = $item ? rtrim(rtrim(number_format((float) $item->price, 2, '.', ''), '0'), '.') : '';
+        $this->quoteAmount = $item ? rtrim(rtrim(number_format($item->priceForClassTier($this->quoteClassTier), 2, '.', ''), '0'), '.') : '';
+    }
+
+    public function updatedQuoteClassTier(): void
+    {
+        $this->updatedQuoteItem();
     }
 
     /**
@@ -206,7 +215,8 @@ class extends Component
             'quoteAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'quoteStudentsCount' => ['nullable', 'integer', 'min:0'],
             'quoteTemplateId' => ['required'],
-        ], [], ['quoteItem' => 'תוכנית / מארז', 'quoteAmount' => 'סכום', 'quoteStudentsCount' => 'מספר תלמידות', 'quoteTemplateId' => 'תבנית']);
+            'quoteClassTier' => ['required', \Illuminate\Validation\Rule::in(array_keys(Program::CLASS_TIERS))],
+        ], [], ['quoteClassTier' => 'מספר כיתות', 'quoteItem' => 'תוכנית / מארז', 'quoteAmount' => 'סכום', 'quoteStudentsCount' => 'מספר תלמידות', 'quoteTemplateId' => 'תבנית']);
 
         [$type, $id] = array_pad(explode(':', $data['quoteItem'], 2), 2, null);
         $template = $this->quoteTemplates->firstWhere('id', (int) $data['quoteTemplateId']);
@@ -225,6 +235,7 @@ class extends Component
                 $type === 'bundle' ? Bundle::find($id) : null,
                 (float) $data['quoteAmount'],
                 $data['quoteStudentsCount'] !== null && $data['quoteStudentsCount'] !== '' ? (int) $data['quoteStudentsCount'] : null,
+                $data['quoteClassTier'],
             );
         } catch (\RuntimeException $e) {
             $this->quoteError = $e->getMessage();
@@ -259,10 +270,10 @@ class extends Component
         $bundles = Bundle::where('is_active', true)->orderBy('name')->get();
 
         return [
-            'מבוקשות בליד' => $programs->whereIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p->price])
-                ->concat($bundles->whereIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", "מארז: {$b->name}", $b->price]))->values()->all(),
-            'תוכניות' => $programs->whereNotIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p->price])->values()->all(),
-            'מארזים' => $bundles->whereNotIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", $b->name, $b->price])->values()->all(),
+            'מבוקשות בליד' => $programs->whereIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p])
+                ->concat($bundles->whereIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", "מארז: {$b->name}", $b]))->values()->all(),
+            'תוכניות' => $programs->whereNotIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p])->values()->all(),
+            'מארזים' => $bundles->whereNotIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", $b->name, $b])->values()->all(),
         ];
     }
 
@@ -1220,13 +1231,25 @@ class extends Component
                                     @if ($items)
                                         <optgroup label="{{ $group }}">
                                             @foreach ($items as [$value, $name, $price])
-                                                <option value="{{ $value }}">{{ $name }} (₪{{ number_format((float) $price, 0) }})</option>
+                                                <option value="{{ $value }}">{{ $name }} (₪{{ number_format($price->priceForClassTier($quoteClassTier), 0) }})</option>
                                             @endforeach
                                         </optgroup>
                                     @endif
                                 @endforeach
                             </select>
                             @error('quoteItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="quoteClassTier">מספר כיתות בשנתון</label>
+                            <select id="quoteClassTier" wire:model.live="quoteClassTier">
+                                @foreach (\App\Models\Program::CLASS_TIERS as $tierKey => $tierLabel)
+                                    <option value="{{ $tierKey }}">{{ $tierLabel }}</option>
+                                @endforeach
+                            </select>
+                            @if ($this->lead->school?->classes_per_grade)
+                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">בכרטיס: {{ $this->lead->school->classes_per_grade }} כיתות — ניתן לשנות.</div>
+                            @endif
+                            @error('quoteClassTier') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>
                             <label for="quoteAmount">סכום ההצעה (ניתן לשינוי)</label>

@@ -569,3 +569,22 @@ td.mono { display: table-cell; }
 .import-group-arrow.open { transform: rotate(-90deg); }
 .import-group-body { padding: 0 var(--sp-md) var(--sp-md); }
 .import-fix-input { color: var(--color-error); border-color: var(--color-error); background: var(--color-error-bg); padding: 6px 8px; min-width: 160px; }
+
+/* Catalog (programs/bundles) — a dense list: one line per item, only the 1–2 classes price shown. */
+.catalog-table th, .catalog-table td { padding: 6px 12px; vertical-align: middle; }
+.catalog-table td { line-height: 1.35; }
+.catalog-table td.actions { width: 1%; white-space: nowrap; text-align: end; }
+.catalog-table td.actions .btn { padding: 3px 8px; }
+.catalog-table .badge { padding-block: 2px; }
+.catalog-table .chip-list { gap: 4px; }
+.catalog-table .chip { padding: 1px 8px; }
+.catalog-table td.edit-cell { background: var(--color-primary-lighter); padding: var(--sp-md); }
+.catalog-table tr:hover td.edit-cell { background: var(--color-primary-lighter); }
+.form-grid.catalog-edit { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-sm) var(--sp-md); }
+.form-grid.catalog-edit .half { grid-column: span 2; }
+.catalog-edit-actions { display: flex; align-items: center; gap: var(--sp-sm); font-size: var(--fs-caption); }
+.tier-prices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-sm); }
+@media (max-width: 720px) {
+  .form-grid.catalog-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tier-prices { grid-template-columns: 1fr; }
+}

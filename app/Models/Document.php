@@ -336,6 +336,7 @@ class Document extends Model
         ?Bundle $bundle,
         ?float $agreedAmount = null,
         ?int $studentsCount = null,
+        ?string $classTier = null,
     ): self {
         if ($template->document_type !== 'quote' || ! $template->is_active) {
             throw new RuntimeException('יש לבחור תבנית פעילה של הצעת מחיר.');
@@ -357,7 +358,13 @@ class Document extends Model
             throw new RuntimeException('לא ניתן לשלוח הצעת מחיר עבור תוכנית או מארז שהושבתו.');
         }
 
-        $amount = $agreedAmount ?? (float) ($program->price ?? $bundle->price);
+        // Prices by classes per grade (2026-11-24): the tier chosen in the
+        // quote window, else the one from the lead's school.
+        $classTier = array_key_exists((string) $classTier, Program::CLASS_TIERS)
+            ? $classTier
+            : Program::classTierFor($lead->school?->classes_per_grade);
+
+        $amount = $agreedAmount ?? ($program ?? $bundle)->priceForClassTier($classTier);
 
         if ($amount <= 0) {
             throw new RuntimeException('יש להזין סכום להצעת המחיר.');
@@ -370,6 +377,7 @@ class Document extends Model
                 'bundle_id' => $bundle?->id,
                 'agreed_amount' => round($amount, 2),
                 'students_count' => $studentsCount,
+                'class_tier' => $classTier,
             ],
         ]);
         $document->setRelation('lead', $lead);
@@ -424,8 +432,9 @@ class Document extends Model
             'bundle_id' => $bundle?->id,
             'agreed_amount' => $offer['agreed_amount'] ?? 0,
             'students_count' => $offer['students_count'] ?? null,
-            'program_price_snapshot' => $program?->price,
-            'bundle_price_snapshot' => $bundle?->price,
+            'program_price_snapshot' => $program?->priceForClassTier($offer['class_tier'] ?? null),
+            'bundle_price_snapshot' => $bundle?->priceForClassTier($offer['class_tier'] ?? null),
+            'class_tier' => $offer['class_tier'] ?? null,
             'program_name_snapshot' => $program?->name,
             'bundle_name_snapshot' => $bundle?->name,
         ]);
@@ -475,6 +484,7 @@ class Document extends Model
                 isset($offer['program_id']) ? Program::find($offer['program_id']) : null,
                 isset($offer['bundle_id']) ? Bundle::find($offer['bundle_id']) : null,
                 (float) ($offer['agreed_amount'] ?? 0) ?: null,
+                classTier: $offer['class_tier'] ?? null,
             );
         } catch (RuntimeException $e) {
             throw new RuntimeException('לא ניתן להשלים את אישור הצעת המחיר כרגע — נא ליצור איתנו קשר. ('.$e->getMessage().')');

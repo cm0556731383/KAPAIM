@@ -382,7 +382,7 @@ class extends Component
         <div class="section-head">
             <div>
                 <h2>תוכניות</h2>
-                <p class="hint">חודשיות, פרימיום, ותוכנית המנוי השנתי</p>
+                <p class="hint">חודשיות ופרימיום. המחיר בטבלה הוא ל-1–2 כיתות; כל המחירים בעריכה.</p>
             </div>
             <x-modal trigger-label="+ תוכנית חדשה" title="תוכנית חדשה">
                 <form wire:submit="addProgram" class="form-grid">
@@ -395,26 +395,13 @@ class extends Component
                         <label for="programDescription">תיאור</label>
                         <textarea id="programDescription" wire:model="programDescription" rows="2" placeholder="תיאור קצר של התוכנית..."></textarea>
                     </div>
-                    <div>
-                        <label for="programPrice">מחיר 1–2 כיתות</label>
-                        <input type="text" id="programPrice" wire:model="programPrice" class="ltr-num" dir="ltr" placeholder="₪ 0">
-                        @error('programPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    <div class="full tier-prices">
+                        <div><label for="programPrice">מחיר 1–2 כיתות</label><input type="text" id="programPrice" wire:model="programPrice" class="ltr-num" dir="ltr" placeholder="₪ 0"> @error('programPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div><label for="programPrice34">מחיר 3–4 כיתות</label><input type="text" id="programPrice34" wire:model="programPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('programPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                        <div><label for="programPrice56">מחיר 5–6 כיתות</label><input type="text" id="programPrice56" wire:model="programPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('programPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                     </div>
-                    <div>
-                        <label for="programPrice34">מחיר 3–4 כיתות</label>
-                        <input type="text" id="programPrice34" wire:model="programPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
-                        @error('programPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label for="programPrice56">מחיר 5–6 כיתות</label>
-                        <input type="text" id="programPrice56" wire:model="programPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
-                        @error('programPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                    </div>
-                    <div>
-                        <label>&nbsp;</label>
-                        <div style="display:flex; flex-direction:column; gap:8px; padding-top:6px">
-                            <span class="checkbox-row"><input type="checkbox" id="programIsPremium" wire:model="programIsPremium"><label for="programIsPremium" style="margin:0">תוכנית פרימיום</label></span>
-                        </div>
+                    <div class="full">
+                        <span class="checkbox-row"><input type="checkbox" id="programIsPremium" wire:model="programIsPremium"><label for="programIsPremium" style="margin:0">תוכנית פרימיום</label></span>
                     </div>
                     <div class="full">
                         <label for="programContractTemplateId">חוזה ברירת מחדל</label>
@@ -433,34 +420,33 @@ class extends Component
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
-            <table>
-                <thead><tr><th>שם</th><th>מחיר לפי כיתות</th><th>פרימיום</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
+            <table class="catalog-table">
+                <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>חוזה</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->programs as $program)
                         @if ($editingItem === "program:{$program->id}")
                         <tr>
-                            <td colspan="6">
-                                <form wire:submit="saveItem" class="form-grid">
+                            <td colspan="6" class="edit-cell">
+                                <form wire:submit="saveItem" class="form-grid catalog-edit">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 1–2 כיתות</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 3–4 כיתות</label><input type="text" wire:model="editPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 5–6 כיתות</label><input type="text" wire:model="editPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
-                                    <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום</label></span></div>
-                                    <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
-                            <select id="editContractTemplateId" wire:model="editContractTemplateId">
-                                <option value="">— החוזה הסטנדרטי —</option>
-                                @foreach ($this->contractTemplates as $template)
-                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
-                                @endforeach
-                            </select>
-                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
-                            @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="1"></textarea></div>
+                                    <div class="half"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
+                                        <select id="editContractTemplateId" wire:model="editContractTemplateId">
+                                            <option value="">— החוזה הסטנדרטי —</option>
+                                            @foreach ($this->contractTemplates as $template)
+                                                <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div class="half" style="align-self:end; padding-bottom:10px"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום</label></span></div>
+                                    <div class="full catalog-edit-actions">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
+                                        <span class="text-text-secondary">מחיר ריק = כמו 1–2 כיתות. שינוי שם או מחיר חל רק על מכירות חדשות.</span>
                                     </div>
-                                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">שינוי שם או מחיר חל רק על מכירות חדשות — עסקאות קיימות שומרות את השם והמחיר שבהם נמכרו.</p>
                                 </form>
                             </td>
                         </tr>
@@ -468,7 +454,7 @@ class extends Component
                         @endif
                         <tr>
                             <td>{{ $program->name }}</td>
-                            <td>@include('components.catalog.tier-prices', ['item' => $program])</td>
+                            <td class="ltr-num" title="{{ collect(\App\Models\Program::CLASS_TIERS)->map(fn ($l, $t) => $l.': ₪'.number_format($program->priceForClassTier($t), 0))->implode(' · ') }}">₪{{ number_format((float) $program->price, 0) }}</td>
                             <td>@if ($program->is_premium)<span class="badge badge-primary">פרימיום</span>@else —@endif</td>
                             <td>{{ $program->contractTemplate?->is_active ? $program->contractTemplate->name : 'החוזה הסטנדרטי' }}</td>
                             <td>
@@ -478,7 +464,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="editItem('program', {{ $program->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleProgram({{ $program->id }})" class="btn btn-ghost">{{ $program->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td class="actions"><button type="button" wire:click="editItem('program', {{ $program->id }})" class="btn btn-ghost btn-sm">עריכה</button><button type="button" wire:click="toggleProgram({{ $program->id }})" class="btn btn-ghost btn-sm">{{ $program->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -505,20 +491,10 @@ class extends Component
                             <label for="bundleDescription">תיאור</label>
                             <textarea id="bundleDescription" wire:model="bundleDescription" rows="2"></textarea>
                         </div>
-                        <div>
-                            <label for="bundlePrice">מחיר 1–2 כיתות</label>
-                            <input type="text" id="bundlePrice" wire:model="bundlePrice" class="ltr-num" dir="ltr" placeholder="₪ 0">
-                            @error('bundlePrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                        <div>
-                            <label for="bundlePrice34">מחיר 3–4 כיתות</label>
-                            <input type="text" id="bundlePrice34" wire:model="bundlePrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
-                            @error('bundlePrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                        <div>
-                            <label for="bundlePrice56">מחיר 5–6 כיתות</label>
-                            <input type="text" id="bundlePrice56" wire:model="bundlePrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
-                            @error('bundlePrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        <div class="full tier-prices">
+                            <div><label for="bundlePrice">מחיר 1–2 כיתות</label><input type="text" id="bundlePrice" wire:model="bundlePrice" class="ltr-num" dir="ltr" placeholder="₪ 0"> @error('bundlePrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                            <div><label for="bundlePrice34">מחיר 3–4 כיתות</label><input type="text" id="bundlePrice34" wire:model="bundlePrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('bundlePrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                            <div><label for="bundlePrice56">מחיר 5–6 כיתות</label><input type="text" id="bundlePrice56" wire:model="bundlePrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('bundlePrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                         </div>
                         <div class="full">
                             <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי</label></span>
@@ -566,34 +542,33 @@ class extends Component
         </div>
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
-            <table>
-                <thead><tr><th>שם</th><th>מחיר לפי כיתות</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
+            <table class="catalog-table">
+                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->bundles as $bundle)
                         @if ($editingItem === "bundle:{$bundle->id}")
                         <tr>
-                            <td colspan="7">
-                                <form wire:submit="saveItem" class="form-grid">
+                            <td colspan="7" class="edit-cell">
+                                <form wire:submit="saveItem" class="form-grid catalog-edit">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 1–2 כיתות</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 3–4 כיתות</label><input type="text" wire:model="editPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div><label>מחיר 5–6 כיתות</label><input type="text" wire:model="editPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
-                                    <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
-                                    <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
-                            <select id="editContractTemplateId" wire:model="editContractTemplateId">
-                                <option value="">— החוזה הסטנדרטי —</option>
-                                @foreach ($this->contractTemplates as $template)
-                                    <option value="{{ $template->id }}">{{ $template->name }}</option>
-                                @endforeach
-                            </select>
-                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">החוזה שנשלח יחד עם טופס ההזמנה בעסקה על פריט זה.</div>
-                            @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div class="full" style="display:flex; gap:var(--sp-sm)">
+                                    <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="1"></textarea></div>
+                                    <div class="half"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
+                                        <select id="editContractTemplateId" wire:model="editContractTemplateId">
+                                            <option value="">— החוזה הסטנדרטי —</option>
+                                            @foreach ($this->contractTemplates as $template)
+                                                <option value="{{ $template->id }}">{{ $template->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div class="half" style="align-self:end; padding-bottom:10px"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
+                                    <div class="full catalog-edit-actions">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
+                                        <span class="text-text-secondary">מחיר ריק = כמו 1–2 כיתות. שינוי שם או מחיר חל רק על מכירות חדשות.</span>
                                     </div>
-                                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">שינוי שם או מחיר חל רק על מכירות חדשות — עסקאות קיימות שומרות את השם והמחיר שבהם נמכרו.</p>
                                 </form>
                             </td>
                         </tr>
@@ -601,7 +576,7 @@ class extends Component
                         @endif
                         <tr>
                             <td>{{ $bundle->name }}</td>
-                            <td>@include('components.catalog.tier-prices', ['item' => $bundle])</td>
+                            <td class="ltr-num" title="{{ collect(\App\Models\Program::CLASS_TIERS)->map(fn ($l, $t) => $l.': ₪'.number_format($bundle->priceForClassTier($t), 0))->implode(' · ') }}">₪{{ number_format((float) $bundle->price, 0) }}</td>
                             <td>@if ($bundle->is_subscription_type)<span class="badge" style="background:#92600D22; color:#92600D">מנוי שנתי</span>@else —@endif</td>
                             <td>
                                 <div class="chip-list">
@@ -620,7 +595,7 @@ class extends Component
                                     <span class="badge badge-neutral">מושבת</span>
                                 @endif
                             </td>
-                            <td><button type="button" wire:click="editItem('bundle', {{ $bundle->id }})" class="btn btn-ghost">עריכה</button><button type="button" wire:click="toggleBundle({{ $bundle->id }})" class="btn btn-ghost">{{ $bundle->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
+                            <td class="actions"><button type="button" wire:click="editItem('bundle', {{ $bundle->id }})" class="btn btn-ghost btn-sm">עריכה</button><button type="button" wire:click="toggleBundle({{ $bundle->id }})" class="btn btn-ghost btn-sm">{{ $bundle->is_active ? 'השבתה' : 'הפעלה' }}</button></td>
                         </tr>
                     @endforeach
                 </tbody>

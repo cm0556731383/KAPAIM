@@ -63,7 +63,7 @@ class LeadQuoteTest extends TestCase
 
         $this->assertNull($quote->deal_id);
         $this->assertSame($lead->id, $quote->lead_id);
-        $this->assertSame(['program_id' => $program->id, 'bundle_id' => null, 'agreed_amount' => 1000, 'students_count' => 30], $quote->lead_offer);
+        $this->assertSame(['program_id' => $program->id, 'bundle_id' => null, 'agreed_amount' => 1000, 'students_count' => 30, 'class_tier' => null], $quote->lead_offer);
         $values = array_values($quote->currentFieldValues());
         $this->assertSame([$lead->school->name, 'רחל המנהלת', $program->name, '1,000'], $values);
         $this->assertSame(['rachel@example.com'], $quote->defaultRecipients()->pluck('email')->all());
@@ -186,6 +186,52 @@ class LeadQuoteTest extends TestCase
         $this->assertSame(850.0, (float) $quote->lead_offer['agreed_amount']);
         $this->actingAs($this->owner)->get(route('document-view', $quote))->assertOk()->assertSee('href="'.route('lead-detail', $lead).'"', false);
         $this->actingAs($this->owner)->get(route('lead-detail', $lead))->assertOk()->assertSee($program->name);
+    }
+
+    /** 2026-11-24: the quote is priced by a chosen number of classes, preset from the lead's school. */
+    public function test_the_lead_quote_is_priced_by_the_chosen_number_of_classes(): void
+    {
+        $lead = $this->createLead();
+        $lead->school->update(['classes_per_grade' => 4]);
+        $program = $this->createProgram(900);
+        $program->update(['price_3_4' => 1300, 'price_5_6' => 1600]);
+        $lead->interestedPrograms()->attach($program->id);
+        $this->createQuoteTemplate();
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead->fresh()])
+            ->call('openQuoteForm')
+            ->assertSet('quoteClassTier', '3-4')
+            ->assertSet('quoteAmount', '1300')
+            ->set('quoteClassTier', '5-6')
+            ->assertSet('quoteAmount', '1600')
+            ->call('createQuote')
+            ->assertHasNoErrors();
+
+        $quote = Document::where('lead_id', $lead->id)->firstOrFail();
+        $this->assertSame('5-6', $quote->lead_offer['class_tier']);
+        $this->assertSame(1600.0, (float) $quote->lead_offer['agreed_amount']);
+        $this->assertSame('5–6 כיתות', \App\Services\DocumentLinkedFields::resolve('deal.class_tier', $quote->leadOfferDeal()));
+
+        $this->send($quote);
+        Livewire::test('document-sign', ['document' => $quote])->call('confirm')->assertHasNoErrors();
+
+        $deal = Deal::where('customer_id', Customer::where('lead_id', $lead->id)->value('id'))->firstOrFail();
+        $this->assertSame('5-6', $deal->class_tier);
+        $this->assertSame(1600.0, (float) $deal->program_price_snapshot);
+    }
+
+    public function test_without_classes_on_the_lead_the_quote_starts_at_one_to_two_classes(): void
+    {
+        $lead = $this->createLead();
+        $program = $this->createProgram(900);
+        $program->update(['price_3_4' => 1300]);
+        $lead->interestedPrograms()->attach($program->id);
+        $this->createQuoteTemplate();
+
+        Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
+            ->call('openQuoteForm')
+            ->assertSet('quoteClassTier', '1-2')
+            ->assertSet('quoteAmount', '900');
     }
 
     public function test_a_sales_rep_with_leads_access_only_can_open_and_send_the_lead_quote(): void

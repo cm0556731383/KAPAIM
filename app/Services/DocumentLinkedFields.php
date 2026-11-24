@@ -49,6 +49,7 @@ class DocumentLinkedFields
         'deal.program_name' => 'שם התוכנית/המארז שנרכש',
         'deal.agreed_amount' => 'סכום העסקה המוסכם',
         'deal.students_count' => 'מספר תלמידות',
+        'deal.class_tier' => 'מספר כיתות (לפיו המחיר)',
         'deal.list_price' => 'מחיר מחירון',
         'deal.discount' => 'הנחה (מחיר מחירון פחות הסכום המוסכם)',
         'deal.purchased_at' => 'תאריך פתיחת העסקה',
@@ -137,6 +138,7 @@ class DocumentLinkedFields
             'deal.program_name' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
             'deal.agreed_amount' => self::money($deal->agreed_amount),
             'deal.students_count' => $deal->students_count === null ? null : (string) $deal->students_count,
+            'deal.class_tier' => $deal->class_tier ? (\App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier) : null,
             'deal.list_price' => self::money($listPrice),
             'deal.discount' => $listPrice !== null && (float) $listPrice > (float) $deal->agreed_amount
                 ? self::money((float) $listPrice - (float) $deal->agreed_amount)
