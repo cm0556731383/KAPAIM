@@ -12,7 +12,7 @@ use Illuminate\Console\Command;
  */
 class PackageWeeklyBackup extends Command
 {
-    protected $signature = 'backup:weekly-package {dump : path to the pg_dump file} {--app-version=unknown : git commit of the code}';
+    protected $signature = 'backup:weekly-package {dump : path to the pg_dump file} {--app-version=unknown : git commit of the code} {--repo= : the git remote the code came from}';
 
     protected $description = 'Pack the database dump and uploaded files into the weekly password-protected zip';
 
@@ -24,7 +24,7 @@ class PackageWeeklyBackup extends Command
             return self::SUCCESS;
         }
 
-        $path = $backup->package($this->argument('dump'), (string) $this->option('app-version'));
+        $path = $backup->package($this->argument('dump'), (string) $this->option('app-version'), $this->option('repo'));
         $this->info('Weekly backup ready: '.$path.' ('.round(filesize($path) / 1048576, 1).'MB)');
         if (! $backup->recipient()) {
             $this->warn('No user chosen to receive it yet (settings → גיבוי).');

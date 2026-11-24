@@ -51,7 +51,7 @@ class WeeklyBackupTest extends TestCase
         file_put_contents($this->dir.'/app/private/livewire-tmp/half-uploaded', 'skip me');
         $this->backup->setPassword('סוד-גדול-123');
 
-        $zip = $this->backup->package($this->fakeDump('database contents'), 'abc123');
+        $zip = $this->backup->package($this->fakeDump('database contents'), 'abc123', 'git@github.com:owner/KAPAIM.git');
         $this->assertFileExists($zip);
         $this->assertStringNotContainsString('database contents', file_get_contents($zip));
 
@@ -78,6 +78,19 @@ class WeeklyBackupTest extends TestCase
         $this->assertSame('pdf bytes', file_get_contents($out.'/files/private/deal-files/1/הזמנה.pdf'));
         $this->assertSame('APP_KEY='.config('app.key')."\n", file_get_contents($out.'/app-key.env'));
         $this->assertSame("abc123\n", file_get_contents($out.'/version.txt'));
+
+        // Restore instructions for Claude Code, with the repository link and the code version.
+        $instructions = file_get_contents($out.'/'.WeeklyBackup::CLAUDE_NAME);
+        $this->assertStringContainsString('git clone https://github.com/owner/KAPAIM ~/kapaim', $instructions);
+        $this->assertStringContainsString('abc123', $instructions);
+        $this->assertStringContainsString('move-import.sh', $instructions);
+    }
+
+    public function test_the_repository_link_is_readable_and_never_carries_a_token(): void
+    {
+        $this->assertSame('https://github.com/owner/KAPAIM', WeeklyBackup::repositoryUrl('git@github.com:owner/KAPAIM.git'));
+        $this->assertSame('https://github.com/owner/KAPAIM', WeeklyBackup::repositoryUrl('https://user:ghp_secret@github.com/owner/KAPAIM.git'));
+        $this->assertNull(WeeklyBackup::repositoryUrl(''));
     }
 
     public function test_only_the_two_newest_packages_are_kept(): void

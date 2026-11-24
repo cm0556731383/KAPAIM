@@ -76,5 +76,6 @@ if [[ "$(date +%u)" == 7 ]] || ! find "${WEEKLY_DIR}" -maxdepth 1 -name 'kapaim-
         chown "${APP_UID:-1001}:${APP_GID:-1001}" "${WEEKLY_DIR}" "${BACKUP_FILE}"
     fi
     "${DOCKER[@]}" compose exec -T app php artisan backup:weekly-package \
-        "backups/$(basename "${BACKUP_FILE}")" --app-version="${VERSION}"
+        "backups/$(basename "${BACKUP_FILE}")" --app-version="${VERSION}" \
+        --repo="$(git -C "${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
 fi
