@@ -61,3 +61,29 @@ find "${FILES_DIR}" -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mmin +360
 
 echo "Files snapshot created:"
 echo "${SNAPSHOT} ($(du -sh "${SNAPSHOT}" | cut -f1))"
+
+# The weekly backup (App\Services\WeeklyBackup): every Sunday — or whenever
+# the last one is over a week old — the same bundle move-export.sh makes
+# (database + files + APP_KEY, restorable with move-import.sh), locked in a
+# password zip in backups/weekly/ that downloads by itself to the user
+# chosen in settings → גיבוי. Skipped (by the app) until a password is set.
+WEEKLY_DIR="${BACKUP_DIR}/weekly"
+mkdir -p "${WEEKLY_DIR}"
+if [[ "$(date +%u)" == 7 ]] || ! find "${WEEKLY_DIR}" -maxdepth 1 -name 'kapaim-backup_*.zip' -mtime -7 | grep -q .; then
+    WORK="${WEEKLY_DIR}/.work-${TIMESTAMP}"
+    BUNDLE="${WEEKLY_DIR}/.bundle-${TIMESTAMP}.tar.gz"
+    trap 'rm -rf "${WORK}" "${BUNDLE}"' EXIT
+    mkdir -p "${WORK}"
+    cp "${BACKUP_FILE}" "${WORK}/database.dump"
+    tar -C "${SCRIPT_DIR}/storage" --exclude='app/private/livewire-tmp' --exclude='app/private/tmp' -cf "${WORK}/storage-app.tar" app
+    grep '^APP_KEY=' "${SCRIPT_DIR}/.env" > "${WORK}/app-key.env"
+    git -C "${SCRIPT_DIR}" rev-parse HEAD > "${WORK}/version.txt" 2>/dev/null || echo unknown > "${WORK}/version.txt"
+    tar -C "${WORK}" -czf "${BUNDLE}" .
+    rm -rf "${WORK}"
+    # The app container runs as the folder's owner (APP_UID), not as root.
+    if [[ "$(id -u)" == 0 ]]; then
+        chown "${APP_UID:-1001}:${APP_GID:-1001}" "${WEEKLY_DIR}" "${BUNDLE}"
+    fi
+    "${DOCKER[@]}" compose exec -T app php artisan backup:weekly-package "backups/weekly/$(basename "${BUNDLE}")"
+    rm -f "${BUNDLE}"
+fi

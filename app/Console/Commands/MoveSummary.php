@@ -24,6 +24,7 @@ class MoveSummary extends Command
         'material_delivery_attachments' => ['file_reference', 'local'],
         'mailing_list_send_attachments' => ['file_reference', 'local'],
         'schools' => ['logo_path', 'public'],
+        'deal_files' => ['path', 'local'],
     ];
 
     public function handle(): int

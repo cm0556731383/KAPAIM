@@ -280,6 +280,22 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
 </button>
 
+{{-- The weekly backup downloads by itself the first time its recipient opens the system after it was made (App\Services\WeeklyBackup). --}}
+@auth
+    @if (app(\App\Services\WeeklyBackup::class)->pendingFor(auth()->user()))
+        <script>
+            window.addEventListener('load', () => {
+                const link = document.createElement('a');
+                link.href = @js(route('backups.weekly.download'));
+                link.download = '';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.dispatchEvent(new CustomEvent('notify', { detail: { type: 'info', message: 'הגיבוי השבועי של המערכת יורד עכשיו לתיקיית ההורדות שלך.', sticky: true } }));
+            });
+        </script>
+    @endif
+@endauth
 @livewireScripts
 </body>
 </html>

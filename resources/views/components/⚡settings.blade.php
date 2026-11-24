@@ -97,6 +97,13 @@ class extends Component
     // ===== מנויים =====
     public string $subscriptionStartMonth = '';
 
+    // ===== גיבוי שבועי (App\Services\WeeklyBackup) =====
+    public string $backupPassword = '';
+
+    public string $backupPassword_confirmation = '';
+
+    public string $backupUserId = '';
+
     // ===== יבוא נתונים (App\Services\CustomerImport) =====
     /** The filled customers file, just uploaded. */
     public $importFile = null;
@@ -121,6 +128,7 @@ class extends Component
         abort_unless(auth()->user()->can('settings.view'), 403);
 
         $this->subscriptionStartMonth = (string) HebrewCalendar::startMonth();
+        $this->backupUserId = (string) (app(\App\Services\WeeklyBackup::class)->recipient()?->id ?? '');
 
         $smove = ExternalIntegrationSetting::where('system', 'smove')->first()?->settings ?? [];
         $this->savedSecretHints['smove_api_key'] = self::secretHint($smove['api_key'] ?? null);
@@ -367,6 +375,33 @@ class extends Component
 
         $activityLogger->log('app_setting.updated', 'חודש תחילת מנוי עודכן ל'.HebrewCalendar::MONTHS[(int) $this->subscriptionStartMonth]);
         $this->notifySuccess('הגדרות המנוי נשמרו.');
+    }
+
+    /** Settings → גיבוי: the weekly backup's password and who it downloads to. */
+    public function saveWeeklyBackup(ActivityLogger $activityLogger): void
+    {
+        abort_unless(auth()->user()->can('settings.edit'), 403);
+        $backup = app(\App\Services\WeeklyBackup::class);
+
+        $this->validate([
+            'backupPassword' => [$backup->hasPassword() ? 'nullable' : 'required', 'string', 'min:'.\App\Services\WeeklyBackup::MIN_PASSWORD_LENGTH, 'max:100', 'confirmed'],
+            'backupUserId' => ['required', \Illuminate\Validation\Rule::exists('users', 'id')->where('is_active', true)],
+        ], [
+            'backupPassword.required' => 'יש לבחור סיסמה לקובץ הגיבוי.',
+            'backupPassword.min' => 'הסיסמה צריכה להיות באורך '.\App\Services\WeeklyBackup::MIN_PASSWORD_LENGTH.' תווים לפחות.',
+            'backupPassword.confirmed' => 'הסיסמאות אינן זהות.',
+            'backupUserId.required' => 'יש לבחור למי יורד הגיבוי.',
+        ]);
+
+        if ($this->backupPassword !== '') {
+            $backup->setPassword($this->backupPassword);
+            $activityLogger->log('app_setting.updated', 'עודכנה סיסמת הגיבוי השבועי');
+        }
+        $backup->setRecipient((int) $this->backupUserId);
+        $activityLogger->log('app_setting.updated', 'הגיבוי השבועי יורד אל '.$backup->recipient()?->name);
+
+        $this->reset('backupPassword', 'backupPassword_confirmation');
+        $this->notifySuccess('הגדרות הגיבוי נשמרו.');
     }
 
     public function saveSmoveSettings(ActivityLogger $activityLogger): void
@@ -1007,6 +1042,7 @@ class extends Component
         @endcan
         <span class="{{ $activeTab === 'integrations' ? 'active' : '' }}" wire:click="$set('activeTab', 'integrations')">אינטגרציות</span>
         <span class="{{ $activeTab === 'import' ? 'active' : '' }}" wire:click="$set('activeTab', 'import')">יבוא נתונים</span>
+        <span class="{{ $activeTab === 'backup' ? 'active' : '' }}" wire:click="$set('activeTab', 'backup')">גיבוי</span>
     </div>
 
     @if ($activeTab === 'subscriptions')
@@ -1820,6 +1856,75 @@ class extends Component
                 @endif
             </div>
         @endif
+    </section>
+    @endif
+    @if ($activeTab === 'backup')
+    {{-- ===== גיבוי שבועי — App\Services\WeeklyBackup ===== --}}
+    @php($backup = app(\App\Services\WeeklyBackup::class))
+    @php($latestBackup = $backup->latest())
+    @php($lastDownload = $backup->lastDownloaded())
+    <section class="settings-section">
+        <div class="section-head">
+            <h2>גיבוי שבועי למחשב</h2>
+        </div>
+        <div class="card" style="max-width:720px">
+            <p style="margin-top:0">כל לילה המערכת מגבה את עצמה על השרת (14 ימים אחרונים). בנוסף, פעם בשבוע (ביום ראשון) נוצר קובץ גיבוי מלא — כל הנתונים וכל הקבצים — נעול בסיסמה. <strong>בפעם הראשונה שהמשתמשת שנבחרה נכנסת למערכת אחרי שהגיבוי נוצר, הקובץ יורד מעצמו</strong> לתיקיית ההורדות של הדפדפן שלה.</p>
+
+            <div style="margin-bottom:var(--sp-md)">
+                @if ($backup->isActive())
+                    <span class="badge badge-success">פעיל</span>
+                @else
+                    <span class="badge badge-warning">לא פעיל — יש לבחור סיסמה ומשתמשת</span>
+                @endif
+            </div>
+
+            <form wire:submit="saveWeeklyBackup" class="form-grid">
+                <div class="full">
+                    <label for="backupUserId">למי יורד הגיבוי</label>
+                    <select id="backupUserId" wire:model="backupUserId">
+                        <option value="">— בחירה —</option>
+                        @foreach (\App\Models\User::where('is_active', true)->orderBy('name')->get() as $user)
+                            <option value="{{ $user->id }}">{{ $user->name }} ({{ $user->email }})</option>
+                        @endforeach
+                    </select>
+                    @error('backupUserId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="backupPassword">{{ $backup->hasPassword() ? 'סיסמה חדשה לקובץ (ריק = ללא שינוי)' : 'סיסמה לקובץ הגיבוי' }}</label>
+                    <input id="backupPassword" type="password" wire:model="backupPassword" autocomplete="new-password">
+                    @error('backupPassword') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                </div>
+                <div>
+                    <label for="backupPassword_confirmation">הסיסמה שוב</label>
+                    <input id="backupPassword_confirmation" type="password" wire:model="backupPassword_confirmation" autocomplete="new-password">
+                </div>
+                <p class="full" style="margin:0; font-size:var(--fs-caption); color:var(--color-warning)"><strong>חשוב:</strong> רשמי את הסיסמה במקום בטוח מחוץ למערכת. בלעדיה אי אפשר לפתוח את הגיבוי — וכשצריכים גיבוי, בדרך כלל המערכת עצמה לא זמינה. שינוי סיסמה חל על הגיבויים הבאים בלבד.</p>
+                @can('settings.edit')
+                    <div class="full"><button type="submit" class="btn btn-primary">שמירה</button></div>
+                @endcan
+            </form>
+        </div>
+
+        <div class="card" style="max-width:720px; margin-top:var(--sp-lg)">
+            <h3 style="margin-top:0">הגיבוי האחרון</h3>
+            @if ($latestBackup)
+                <p style="margin:0 0 var(--sp-sm)">
+                    נוצר ב-<span class="ltr-num">{{ $latestBackup['created_at']->format('d/m/Y H:i') }}</span>
+                    · <span class="ltr-num">{{ round($latestBackup['size'] / 1048576, 1) }}MB</span>
+                </p>
+                <p style="margin:0 0 var(--sp-md); font-size:var(--fs-caption); color:var(--color-text-secondary)">
+                    @if ($lastDownload['name'] === $latestBackup['name'])
+                        ירד למחשב של {{ $lastDownload['user'] }} ב-<span class="ltr-num">{{ $lastDownload['at']?->format('d/m/Y H:i') }}</span>
+                    @else
+                        עוד לא ירד — ירד מעצמו בכניסה הבאה של {{ $backup->recipient()?->name ?? 'המשתמשת שתיבחר' }}.
+                    @endif
+                </p>
+                <a href="{{ route('backups.weekly.download') }}" class="btn btn-secondary btn-sm">הורדה עכשיו</a>
+            @else
+                <p class="text-text-secondary" style="margin:0">עוד לא נוצר גיבוי שבועי. הראשון ייווצר בלילה שאחרי שמירת ההגדרות.</p>
+            @endif
+            <p style="margin:var(--sp-md) 0 0; font-size:var(--fs-caption); color:var(--color-text-secondary)">פתיחת הקובץ במחשב: עם התוכנה החינמית 7-Zip והסיסמה (בתוכו קובץ השחזור). שחזור המערכת מהגיבוי — על השרת, עם <span dir="ltr">./move-import.sh</span> (מדריך ההתקנה, סעיף 9).</p>
+        </div>
     </section>
     @endif
     <x-email-preview />

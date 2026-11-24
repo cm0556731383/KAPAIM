@@ -54,7 +54,8 @@ The user is the business owner, not a developer: talk to her in Hebrew, plainly.
 7. **Verify, then report:** `docker compose ps` shows app, nginx, postgres, queue and scheduler all up.
    The login page loads over HTTPS, and you can log in, or the user confirms she can.
    Tell her what's left for her to do in the app (DEPLOY.md §5): on a fresh install,
-   business entities, SUMIT and Smove keys, and the catalog. Those settings live in the database,
+   business entities, SUMIT and Smove keys, the catalog, and settings → גיבוי (weekly backup password +
+   who it downloads to — without it there is no off-server copy). Those settings live in the database,
    not in `.env`, and a move brings them over.
 
 Never on a real server:

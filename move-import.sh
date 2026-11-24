@@ -6,6 +6,7 @@
 # replaced — a backup of it is taken first. Full steps: DEPLOY.md, section 9.
 #
 #   ./move-import.sh <kapaim-move_….tar.gz>           the move itself
+#   ./move-import.sh <kapaim-backup_….zip>             from a weekly backup (asks for its password)
 #   ./move-import.sh <kapaim-move_….tar.gz> --trial   a trial while the old server still works:
 #                                                     emails and scheduled tasks stay off here,
 #                                                     so nothing goes out twice
@@ -39,7 +40,22 @@ compose() { "${DOCKER[@]}" compose "$@"; }
 set -a; source .env; set +a
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+OPENED=""
+trap 'rm -rf "${WORK}" ${OPENED:+"${OPENED}"}' EXIT
+
+# A weekly backup (kapaim-backup_….zip, settings → גיבוי) is the same bundle locked with a password.
+if [[ "${BUNDLE}" == *.zip ]]; then
+    mkdir -p backups
+    OPENED="backups/.restore-$(date '+%Y%m%d%H%M%S')"
+    mkdir -p "${OPENED}"
+    cp "${BUNDLE}" "${OPENED}/backup.zip"
+    if [[ "$(id -u)" == 0 ]]; then
+        chown "${APP_UID:-1001}:${APP_GID:-1001}" "${OPENED}" "${OPENED}/backup.zip"
+    fi
+    read -r -s -p "סיסמת קובץ הגיבוי: " ZIP_PASSWORD; echo
+    printf '%s' "${ZIP_PASSWORD}" | compose exec -T app php artisan backup:open-weekly "${OPENED}/backup.zip" "${OPENED}/bundle.tar.gz"
+    BUNDLE="${OPENED}/bundle.tar.gz"
+fi
 tar -C "${WORK}" -xzf "${BUNDLE}"
 
 for part in database.dump storage-app.tar app-key.env; do

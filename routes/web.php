@@ -327,6 +327,21 @@ Route::middleware('auth')->group(function () {
 
         return \Illuminate\Support\Facades\Storage::disk('local')->response($path, null, ['Content-Disposition' => $disposition]);
     })->name('expenses.invoice');
+    // The weekly backup zip (App\Services\WeeklyBackup) — started by the layout for its recipient, or from settings → גיבוי.
+    Route::get('/backups/weekly/download', function (\App\Services\WeeklyBackup $backup) {
+        $user = auth()->user();
+        $isRecipient = $backup->recipient()?->id === $user->id;
+        abort_unless($isRecipient || $user->can('settings.edit'), 403);
+        $latest = $backup->latest();
+        abort_unless($latest !== null, 404);
+
+        if ($isRecipient) {
+            $backup->markDownloaded($latest['name'], $user);
+        }
+        app(\App\Services\ActivityLogger::class)->log('backup.weekly_downloaded', "הורד הגיבוי השבועי {$latest['name']}");
+
+        return response()->download($latest['path'], $latest['name'], ['Content-Type' => 'application/zip']);
+    })->name('backups.weekly.download');
     // A file from a deal's folder — opens in the browser (PDF/image), or downloads with ?download=1.
     Route::get('/deals/{deal}/files/{file}', function (\App\Models\Deal $deal, \App\Models\DealFile $file) {
         abort_unless(auth()->user()->can('deals.view'), 403);
