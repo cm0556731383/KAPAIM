@@ -1100,14 +1100,14 @@ class MaterialsMailingTest extends TestCase
         $this->assertNotContains($never->contacts()->first()->email, $emails);
 
         Livewire::actingAs($this->owner)->test('mailing-lists')
-            ->assertSee('מנויות לשעבר')
+            ->assertSee('מנויים לשעבר')
             ->set('sendListIds', [(string) $list->id, (string) MailingList::subscribersList()->id])
             ->assertSet('selectedRecipientCount', 2)
             ->assertSee('רשימות שנבחרו')
             ->call('removeSendList', MailingList::subscribersList()->id)
             ->assertSet('sendListIds', [(string) $list->id])
             ->assertSet('selectedRecipientCount', 1)
-            ->set('sendSubject', 'למנויות לשעבר')
+            ->set('sendSubject', 'למנויים לשעבר')
             ->set('sendBody', 'שלום')
             ->call('send', true)
             ->assertSet('sendError', null);

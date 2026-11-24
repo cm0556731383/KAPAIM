@@ -38,7 +38,7 @@ class MailingList extends Model
 
     public const SUPPLIERS_LIST_NAME = 'ספקים';
 
-    public const FORMER_SUBSCRIBERS_LIST_NAME = 'מנויות לשעבר';
+    public const FORMER_SUBSCRIBERS_LIST_NAME = 'מנויים לשעבר';
 
     protected function casts(): array
     {
@@ -150,7 +150,7 @@ class MailingList extends Model
         );
     }
 
-    /** The singleton "מנויות לשעבר" list — its members are computed (recipients()). */
+    /** The singleton "מנויים לשעבר" list — its members are computed (recipients()). */
     public static function formerSubscribersList(): self
     {
         return self::firstOrCreate(

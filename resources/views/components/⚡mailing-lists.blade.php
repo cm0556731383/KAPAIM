@@ -366,7 +366,7 @@ class extends Component
         'primary' => 'כללית',
         'program' => 'תוכנית',
         'subscription' => 'מנויים',
-        'former_subscription' => 'מנויות לשעבר',
+        'former_subscription' => 'מנויים לשעבר',
         'supplier' => 'ספקים',
     ];
 
