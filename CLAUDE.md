@@ -25,6 +25,9 @@ The user is the business owner, not a developer: talk to her in Hebrew, plainly.
    - For an empty system: the email of the first (admin) user.
    - For a move: where the old server is. You need a bundle made there by
      `./move-export.sh` (step 5). If you can't reach the old server, ask her to run it and copy the file over.
+   - **The old server is dead (restore from backup):** the weekly backup zip
+     (`kapaim-backup_….zip`, downloaded to her computer — settings → גיבוי) replaces the bundle.
+     Ask her to copy it onto this server (WinSCP/scp, or any upload), and for its password.
 2. **Prerequisites:** `docker info` and `git --version` (install per DEPLOY.md §1 if missing).
    Check ports with `ss -ltnp`: `APP_PORT` (default 8090) must be free for the app. If it's taken,
    **before** `install.sh`: `cp .env.example .env` and set `APP_PORT` (and `CONTAINER_PREFIX` if
@@ -50,6 +53,10 @@ The user is the business owner, not a developer: talk to her in Hebrew, plainly.
    `./move-import.sh <file> --trial` here, which leaves sending off on the new server.
    If the domain is the same as before, switch DNS only after the import.
    Users log in with their old passwords.
+   **From a weekly backup zip** (old server gone): `./move-import.sh kapaim-backup_….zip` — it asks
+   for the zip's password. Have her run it herself as `! ./move-import.sh <zip>` and type the password
+   at the prompt, so it never appears in the conversation. Data is as of
+   that zip's date: tell her anything entered after it must be re-entered.
 6. **Backups:** add the daily cron line from DEPLOY.md §7.
 7. **Verify, then report:** `docker compose ps` shows app, nginx, postgres, queue and scheduler all up.
    The login page loads over HTTPS, and you can log in, or the user confirms she can.
