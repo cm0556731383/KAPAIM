@@ -317,6 +317,24 @@ Route::middleware('auth')->group(function () {
             ),
         ]);
     })->name('settings.import-catalog-template');
+    // Settings → יבוא נתונים → עסקאות: the blank deals file (App\Services\DealImport::template()).
+    Route::get('/settings/import/deals-template', function (\App\Services\DealImport $import) {
+        abort_unless(auth()->user()->can('settings.view'), 403);
+
+        $book = $import->template();
+        ob_start();
+        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($book))->save('php://output');
+        $xlsx = (string) ob_get_clean();
+        $book->disconnectWorksheets();
+
+        return response($xlsx, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Length' => strlen($xlsx),
+            'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+                'attachment', 'יבוא עסקאות.xlsx', 'deals-import.xlsx',
+            ),
+        ]);
+    })->name('settings.import-deals-template');
     Route::get('/expenses/export', function (\App\Services\ExpensesSpreadsheet $spreadsheet) {
         abort_unless(auth()->user()->can('expenses.view'), 403);
 

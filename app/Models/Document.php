@@ -34,7 +34,7 @@ use RuntimeException;
  */
 #[Fillable([
     'deal_id', 'expense_id', 'lead_id', 'lead_offer', 'document_template_id', 'business_entity_id', 'preceding_document_id',
-    'document_type', 'status_id', 'format', 'file_reference', 'rendered_content',
+    'document_type', 'status_id', 'format', 'is_external', 'external_number', 'file_reference', 'rendered_content',
     'field_values', 'sent_at', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at', 'confirmation_noticed_at',
 ])]
 class Document extends Model
@@ -81,6 +81,7 @@ class Document extends Model
     {
         return [
             'field_values' => 'array',
+            'is_external' => 'boolean',
             'lead_offer' => 'array',
             'sent_at' => 'datetime',
             'received_at' => 'datetime',
@@ -644,6 +645,133 @@ class Document extends Model
 
             return ['order_form' => $orderForm, 'contract' => $contract];
         });
+    }
+
+    /** The documents a deal's own record can hold from outside the system, and what each can be marked. */
+    public const EXTERNAL_TYPES = ['quote', 'order_form', 'contract', 'invoice'];
+
+    /** 'sent' / 'signed' => label, per type — an invoice is only ever issued (sent). */
+    public static function externalStates(string $type): array
+    {
+        return match ($type) {
+            'invoice' => ['sent' => 'הופקה ונשלחה'],
+            'quote' => ['sent' => 'נשלחה', 'signed' => 'אושרה'],
+            default => ['sent' => 'נשלח', 'signed' => 'נחתם'],
+        };
+    }
+
+    /**
+     * A document made outside the system (2026-11-25: customers who bought
+     * before it existed): recorded on $deal as already sent — and, for a
+     * quote / order form / contract, signed — on $date, with no template,
+     * content or recipients. It's never sent or issued from here, so nothing
+     * goes to the customer or to SUMIT; it only completes the deal's record:
+     * the document chain moves on from it (an invoice may follow a contract
+     * signed on paper), and an invoice issued elsewhere counts as the deal's
+     * invoice (status "נשלחה חשבונית", amount locked, receipts for payments).
+     * The chain order isn't enforced — history is what it was — but a deal
+     * still holds one contract and one invoice at most.
+     *
+     * @throws RuntimeException on a business-rule violation.
+     */
+    public static function recordExternal(Deal $deal, string $type, string $state, \DateTimeInterface $date, ?string $number, ActivityLogger $logger): self
+    {
+        if (! in_array($type, self::EXTERNAL_TYPES, true)) {
+            throw new RuntimeException('סוג מסמך זה אינו נרשם מחוץ למערכת.');
+        }
+
+        if (! array_key_exists($state, self::externalStates($type))) {
+            throw new RuntimeException('חשבונית נרשמת כ"הופקה ונשלחה" בלבד.');
+        }
+
+        if (\Carbon\Carbon::parse($date)->isAfter(now()->endOfDay())) {
+            throw new RuntimeException('תאריך המסמך לא יכול להיות עתידי.');
+        }
+
+        if (in_array($type, ['contract', 'invoice'], true) && self::where('deal_id', $deal->id)->where('document_type', $type)->exists()) {
+            throw new RuntimeException($type === 'contract' ? 'לעסקה זו כבר יש חוזה.' : 'לעסקה זו כבר יש חשבונית — ניתן לרשום חשבונית אחת בלבד לכל עסקה.');
+        }
+
+        $at = \Carbon\Carbon::parse($date)->setTime(12, 0);
+        $signed = $state === 'signed';
+
+        $document = DB::transaction(function () use ($deal, $type, $at, $signed, $number) {
+            $document = self::createDocumentRow([
+                'deal_id' => $deal->id,
+                'document_type' => $type,
+                'preceding_document_id' => self::precedingFor($deal, $type)?->id,
+                'status_id' => self::defaultDraftStatus()->id,
+                'format' => 'external',
+                'is_external' => true,
+                'external_number' => filled($number) ? trim($number) : null,
+                'field_values' => [],
+                'rendered_content' => '',
+            ]);
+
+            // The invoice's lines — what it was for, so it counts as issued
+            // (Deal::issuedInvoice()). Added before the dates: a sent invoice's lines are locked.
+            if ($type === 'invoice' && (float) $deal->agreed_amount > 0) {
+                $items = $deal->items->filter(fn ($item) => (float) $item->amount > 0);
+
+                if ($items->isNotEmpty() && abs((float) $items->sum('amount') - (float) $deal->agreed_amount) < 0.005) {
+                    $items->each(fn ($item) => $document->addLine($item->name_snapshot, (float) $item->amount));
+                } else {
+                    $document->addLine($deal->itemsLabel(), (float) $deal->agreed_amount);
+                }
+            }
+
+            $document->update([
+                'sent_at' => $at,
+                // Signed the way confirm() marks it: confirmed, plus received (order form) / signed (contract).
+                'confirmed_at' => $signed ? $at : null,
+                'received_at' => $signed && $type === 'order_form' ? $at : null,
+                'signed_at' => $signed && $type === 'contract' ? $at : null,
+            ]);
+
+            return $document;
+        });
+
+        $label = self::TYPE_LABELS[$type];
+        $logger->log('document.recorded_external', "נרשם/ה {$label} שנעשה/תה מחוץ למערכת עבור {$document->subjectLabel()}: ".self::externalStates($type)[$state]
+            .' בתאריך '.$at->format('d/m/Y').($document->external_number ? " (מס' {$document->external_number})" : ''), [
+                'document_id' => $document->id, 'deal_id' => $deal->id, 'customer_id' => $deal->customer_id,
+            ]);
+
+        if ($type === 'invoice') {
+            $deal->markInvoiceSent($logger);
+        }
+
+        return $document;
+    }
+
+    /** An external document recorded by mistake can be removed — while nothing (a receipt, a later document) rests on it. */
+    public function isDeletableExternal(): bool
+    {
+        return $this->is_external
+            && ! $this->receipts()->exists()
+            && ! self::where('preceding_document_id', $this->id)->exists();
+    }
+
+    /** @throws RuntimeException when it can't be removed (isDeletableExternal()). */
+    public function deleteExternal(ActivityLogger $logger): void
+    {
+        if (! $this->isDeletableExternal()) {
+            throw new RuntimeException('לא ניתן למחוק את המסמך — יש מסמך או קבלה שנשענים עליו.');
+        }
+
+        $deal = $this->deal;
+        $label = self::TYPE_LABELS[$this->document_type] ?? $this->document_type;
+        $this->delete();
+
+        // Without its invoice the deal is open again (unless paid or cancelled).
+        if ($this->document_type === 'invoice' && $deal && $deal->status?->name === Deal::INVOICE_SENT_STATUS_NAME && ! $deal->issuedInvoice()) {
+            $open = StatusDefinition::firstOrCreate(['scope' => 'deal', 'name' => Deal::DEFAULT_STATUS_NAME], ['is_active' => true, 'sort_order' => 1]);
+            $deal->update(['status_id' => $open->id, 'version' => $deal->version + 1]);
+        }
+
+        $logger->log('document.external_deleted', "נמחק/ה {$label} שנרשם/ה מחוץ למערכת עבור {$this->subjectLabel()}", [
+            'deal_id' => $deal?->id, 'customer_id' => $deal?->customer_id,
+        ]);
     }
 
     /** Shared by every generateFor()/generateCreditNoteFor() branch above — the sole INSERT point for this table. */
@@ -1654,6 +1782,7 @@ class Document extends Model
     public function sentFormatLabel(): string
     {
         return match ($this->format) {
+            'external' => 'מחוץ למערכת',
             'pdf' => 'קובץ PDF',
             self::FORMAT_FORM_AND_PDF => 'טופס מקוון + PDF',
             default => 'טופס מקוון',
@@ -1663,7 +1792,7 @@ class Document extends Model
     /** Sent with a PDF the customer may sign on paper, so staff can mark it signed by hand. */
     public function canBeMarkedSignedByHand(): bool
     {
-        return in_array($this->format, ['pdf', self::FORMAT_FORM_AND_PDF], true)
+        return in_array($this->format, ['pdf', self::FORMAT_FORM_AND_PDF, 'external'], true)
             && $this->sent_at && ! $this->confirmed_at
             && ! in_array($this->document_type, ['invoice', 'credit_note'], true);
     }

@@ -536,6 +536,189 @@ class extends Component
         $this->reset(['catalogFile', 'catalogCheck', 'catalogFixes', 'catalogResult']);
     }
 
+    // ----- יבוא עסקאות (App\Services\DealImport) -----
+
+    public $dealFile = null;
+
+    #[\Livewire\Attributes\Locked]
+    public ?string $dealPath = null;
+
+    /** The check's outcome: fileError, total, valid rows, invalid rows (with their fields). */
+    #[\Livewire\Attributes\Locked]
+    public array $dealCheck = [];
+
+    /** Values typed into the "שגויות" table: [row => [column => value]]. */
+    public array $dealFixes = [];
+
+    /** The import running in the background (App\Jobs\ImportDeals). */
+    #[\Livewire\Attributes\Locked]
+    public ?string $dealImportId = null;
+
+    private function canImportDeals(): bool
+    {
+        return auth()->user()->hasPermission('settings', 'edit') && auth()->user()->hasPermission('customers', 'edit');
+    }
+
+    public function checkDealImport(\App\Services\DealImport $import): void
+    {
+        $this->validate(['dealFile' => ['required', 'file', 'max:10240', 'mimes:xlsx']], [
+            'dealFile.required' => 'יש לבחור קובץ.',
+            'dealFile.mimes' => 'יש להעלות קובץ אקסל (xlsx).',
+            'dealFile.max' => 'הקובץ גדול מדי (עד 10MB).',
+        ]);
+
+        $this->discardDealFile();
+        $this->dealImportId = null;
+
+        $path = $this->dealFile->store('imports', 'local');
+        $this->dealFile = null;
+
+        $this->analyzeDeals($import, $path);
+    }
+
+    public function fixDealImport(\App\Services\DealImport $import): void
+    {
+        if (! $this->dealPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->dealPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetDealImport();
+
+            return;
+        }
+
+        // Only the rows and fields the check flagged can be changed here.
+        $allowed = collect($this->dealCheck['invalid'] ?? [])->mapWithKeys(fn ($row) => [$row['row'] => array_keys($row['fields'])]);
+        $fixes = [];
+
+        foreach ($this->dealFixes as $row => $values) {
+            foreach ((array) $values as $key => $value) {
+                if (in_array($key, $allowed[$row] ?? [], true) && is_scalar($value ?? '')) {
+                    $fixes[$row][$key] = (string) $value;
+                }
+            }
+        }
+
+        try {
+            $import->applyFixes(\Illuminate\Support\Facades\Storage::disk('local')->path($this->dealPath), $fixes);
+        } catch (\Throwable $e) {
+            report($e);
+            $this->notifyError('לא ניתן לשמור את התיקונים בקובץ. יש לתקן בקובץ עצמו ולהעלות אותו שוב.');
+
+            return;
+        }
+
+        $this->analyzeDeals($import, $this->dealPath);
+
+        $left = count($this->dealCheck['invalid'] ?? []);
+        $this->notifySuccess($left ? "התיקונים נשמרו. נשארו {$left} שורות עם שגיאות." : 'התיקונים נשמרו — כל השורות תקינות.');
+    }
+
+    private function analyzeDeals(\App\Services\DealImport $import, string $path): void
+    {
+        $result = $import->analyze(\Illuminate\Support\Facades\Storage::disk('local')->path($path));
+        $columns = \App\Services\DealImport::columns();
+        $valid = [];
+        $invalid = [];
+        $fixes = [];
+
+        foreach ($result['rows'] as $row) {
+            if ($row['data'] !== null) {
+                $valid[] = ['row' => $row['row'], 'data' => $row['data']];
+
+                continue;
+            }
+
+            $fields = [];
+
+            // An item's error shows its amount too, and an amount's error its item — they're fixed together.
+            $keys = array_keys($row['errors']);
+
+            foreach ($row['errors'] as $key => $message) {
+                if (preg_match('/^(item|amount)(\d+)$/', $key, $m)) {
+                    $keys[] = "item{$m[2]}";
+                    $keys[] = "amount{$m[2]}";
+                }
+
+                // A document's state and date (and the invoice's number) are fixed together too.
+                if (preg_match('/^(quote|order_form|contract|invoice)_(state|date|number)$/', $key, $m)) {
+                    $keys[] = "{$m[1]}_state";
+                    $keys[] = "{$m[1]}_date";
+
+                    if ($m[1] === 'invoice') {
+                        $keys[] = 'invoice_number';
+                    }
+                }
+            }
+
+            foreach (array_keys($columns) as $key) {
+                if (in_array($key, $keys, true)) {
+                    $fields[$key] = ['label' => $columns[$key][0], 'message' => $row['errors'][$key] ?? null];
+                    $fixes[$row['row']][$key] = $row['values'][$key] ?? '';
+                }
+            }
+
+            $invalid[] = ['row' => $row['row'], 'customer' => $row['customer'], 'fields' => $fields];
+        }
+
+        $this->dealFixes = $fixes;
+        $this->dealCheck = [
+            'fileError' => $result['fileError'],
+            'total' => count($result['rows']),
+            'valid' => $valid,
+            'invalid' => $invalid,
+        ];
+
+        if ($result['fileError']) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($path);
+            $this->dealPath = null;
+        } else {
+            $this->dealPath = $path;
+        }
+    }
+
+    public function runDealImport(): void
+    {
+        if (! $this->canImportDeals()) {
+            $this->notifyError('ליבוא עסקאות נדרשת הרשאת עריכה בהגדרות ובלקוחות.');
+
+            return;
+        }
+
+        if (! $this->dealPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->dealPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetDealImport();
+
+            return;
+        }
+
+        $this->dealImportId = (string) \Illuminate\Support\Str::uuid();
+        \Illuminate\Support\Facades\Cache::put(\App\Jobs\ImportDeals::cacheKey($this->dealImportId), ['state' => 'queued', 'total' => count($this->dealCheck['valid'] ?? []), 'done' => 0], now()->addDay());
+
+        \App\Jobs\ImportDeals::dispatch($this->dealImportId, $this->dealPath, auth()->id());
+
+        // The job owns the file now and deletes it when done.
+        $this->dealPath = null;
+    }
+
+    public function resetDealImport(): void
+    {
+        $this->discardDealFile();
+        $this->reset(['dealFile', 'dealCheck', 'dealFixes', 'dealImportId']);
+    }
+
+    private function discardDealFile(): void
+    {
+        if ($this->dealPath) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($this->dealPath);
+            $this->dealPath = null;
+        }
+    }
+
+    #[Computed]
+    public function dealImportStatus(): ?array
+    {
+        return $this->dealImportId ? \App\Jobs\ImportDeals::status($this->dealImportId) : null;
+    }
+
     private function discardCatalogFile(): void
     {
         if ($this->catalogPath) {
@@ -1765,9 +1948,12 @@ class extends Component
     <div class="tabs" style="margin-bottom: var(--sp-md)">
         <span class="{{ $importKind === 'customers' ? 'active' : '' }}" wire:click="$set('importKind', 'customers')">לקוחות</span>
         <span class="{{ $importKind === 'catalog' ? 'active' : '' }}" wire:click="$set('importKind', 'catalog')">תוכניות ומארזים</span>
+        <span class="{{ $importKind === 'deals' ? 'active' : '' }}" wire:click="$set('importKind', 'deals')">עסקאות</span>
     </div>
     @if ($importKind === 'catalog')
         @include('partials.settings-catalog-import')
+    @elseif ($importKind === 'deals')
+        @include('partials.settings-deal-import', ['dealImportStatus' => $this->dealImportStatus])
     @else
     <section class="settings-section">
         <div class="section-head">

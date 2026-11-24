@@ -747,6 +747,71 @@ class extends Component
         $this->notifySuccess("טיוטת ה{$label} נמחקה.");
     }
 
+    // ===== מסמך שנעשה מחוץ למערכת (Document::recordExternal(), 2026-11-25) =====
+    public string $externalType = 'contract';
+    public string $externalState = 'signed';
+    public string $externalDate = '';
+    public string $externalNumber = '';
+
+    public function recordExternalDocument(ActivityLogger $activityLogger): void
+    {
+        $this->documentError = null;
+
+        $data = $this->validate([
+            'externalType' => ['required', \Illuminate\Validation\Rule::in(Document::EXTERNAL_TYPES)],
+            'externalState' => ['required', \Illuminate\Validation\Rule::in(array_keys(Document::externalStates($this->externalType)))],
+            'externalDate' => ['required', 'date', 'before_or_equal:today'],
+            'externalNumber' => ['nullable', 'string', 'max:50'],
+        ], [
+            'externalState.in' => 'חשבונית נרשמת כ"הופקה ונשלחה" בלבד.',
+            'externalDate.before_or_equal' => 'תאריך המסמך לא יכול להיות עתידי.',
+        ], ['externalType' => 'סוג המסמך', 'externalState' => 'מצב', 'externalDate' => 'תאריך', 'externalNumber' => 'מספר']);
+
+        try {
+            Document::recordExternal($this->deal, $data['externalType'], $data['externalState'], \Carbon\Carbon::parse($data['externalDate']), $data['externalNumber'] ?: null, $activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+            $this->dispatch('close-modals');
+
+            return;
+        }
+
+        $this->deal->refresh();
+        $this->loadedVersion = (int) $this->deal->version;
+        $this->selectedStatusId = (string) $this->deal->status_id;
+        $this->reset(['externalType', 'externalState', 'externalDate', 'externalNumber']);
+        unset($this->documents);
+        $this->dispatch('close-modals');
+        $this->notifySuccess('המסמך נרשם.');
+    }
+
+    /** The invoice can only be "sent" — switching to it resets the state picker. */
+    public function updatedExternalType(): void
+    {
+        if (! array_key_exists($this->externalState, Document::externalStates($this->externalType))) {
+            $this->externalState = 'sent';
+        }
+    }
+
+    public function deleteExternalDocument(int $documentId, ActivityLogger $activityLogger): void
+    {
+        $this->documentError = null;
+
+        try {
+            $this->deal->documents()->findOrFail($documentId)->deleteExternal($activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->documentError = $e->getMessage();
+
+            return;
+        }
+
+        $this->deal->refresh();
+        $this->loadedVersion = (int) $this->deal->version;
+        $this->selectedStatusId = (string) $this->deal->status_id;
+        unset($this->documents);
+        $this->notifySuccess('המסמך נמחק.');
+    }
+
     public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
@@ -1547,6 +1612,45 @@ class extends Component
             @endforeach
         </div>
 
+        <div style="margin:-8px 0 var(--sp-lg)">
+            <x-modal trigger-label="+ רישום מסמך שנעשה מחוץ למערכת" trigger-class="btn btn-ghost btn-sm" title="מסמך שנעשה מחוץ למערכת">
+                <form wire:submit="recordExternalDocument" class="form-grid">
+                    <p class="full text-text-secondary" style="font-size:var(--fs-caption); margin:0">למסמך שכבר נשלח או נחתם לפני המערכת או מחוצה לה — על נייר, במייל, או חשבונית שהופקה ישירות ב־SUMIT. המסמך רק נרשם בעסקה: שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT. את הקובץ עצמו אפשר להעלות לתיקיית הקבצים למטה.</p>
+                    <div>
+                        <label for="externalType">סוג המסמך</label>
+                        <select id="externalType" wire:model.live="externalType">
+                            @foreach (\App\Models\Document::EXTERNAL_TYPES as $type)
+                                <option value="{{ $type }}">{{ \App\Models\Document::TYPE_LABELS[$type] }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
+                        <label for="externalState">מצב</label>
+                        <select id="externalState" wire:model="externalState">
+                            @foreach (\App\Models\Document::externalStates($externalType) as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </select>
+                        @error('externalState') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="externalDate">תאריך</label>
+                        <input type="date" id="externalDate" wire:model="externalDate" max="{{ now()->toDateString() }}">
+                        @error('externalDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="externalNumber">מספר מסמך (לא חובה)</label>
+                        <input type="text" id="externalNumber" wire:model="externalNumber" dir="ltr" class="ltr-num">
+                        @error('externalNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    @if ($externalType === 'invoice')
+                        <p class="full" style="font-size:var(--fs-caption); margin:0; color:var(--color-warning)">חשבונית שנרשמת כאן נחשבת לחשבונית של העסקה: הסטטוס יעבור ל"נשלחה חשבונית", הסכום המוסכם יינעל, ולא ניתן יהיה להפיק חשבונית נוספת דרך המערכת.</p>
+                    @endif
+                    <div class="full"><button type="submit" class="btn btn-primary">רישום המסמך</button></div>
+                </form>
+            </x-modal>
+        </div>
+
         @if ($this->documents->isEmpty())
             <div class="empty-state">טרם הופקו מסמכים לעסקה זו.</div>
         @else
@@ -1562,6 +1666,7 @@ class extends Component
                                     <span class="text-text-secondary">—</span>
                                 @else
                                     <span class="badge badge-neutral">{{ $document->sentFormatLabel() }}</span>
+                                    @if ($document->external_number)<div class="ltr-num" style="font-size:var(--fs-caption)">מס' {{ $document->external_number }}</div>@endif
                                 @endif
                             </td>
                             <td>
@@ -1578,6 +1683,9 @@ class extends Component
                                 <a href="{{ route('document-view', $document) }}" class="btn btn-ghost btn-sm">צפייה</a>
                                 @if ($document->isDeletableDraft())
                                     <button type="button" wire:click="deleteDocument({{ $document->id }})" wire:confirm="למחוק את הטיוטה?" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
+                                @endif
+                                @if ($document->isDeletableExternal())
+                                    <button type="button" wire:click="deleteExternalDocument({{ $document->id }})" wire:confirm="למחוק את רישום המסמך? (המסמך נרשם כמסמך שנעשה מחוץ למערכת — שום דבר לא נשלח או בוטל מול הלקוחה או SUMIT)" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
                                 @endif
                                 @if ($document->canBeMarkedSignedByHand())
                                     <button type="button" wire:click="markDocumentSigned({{ $document->id }})" wire:confirm="לסמן את המסמך כנחתם? פעולה זו מדמה חתימה מקוונת של הלקוחה." class="btn btn-secondary btn-sm">סמן כנחתם</button>

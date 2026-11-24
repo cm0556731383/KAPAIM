@@ -257,7 +257,9 @@ class extends Component
             @if ($document->engagementStatusLabel())
                 <span class="badge badge-neutral">{{ $document->engagementStatusLabel() }}</span>
             @endif
-            <a href="{{ route('document-print', $document) }}" target="_blank" class="btn btn-secondary">תצוגת הדפסה / PDF</a>
+            @unless ($document->is_external)
+                <a href="{{ route('document-print', $document) }}" target="_blank" class="btn btn-secondary">תצוגת הדפסה / PDF</a>
+            @endunless
         </div>
     </div>
 
@@ -363,7 +365,16 @@ class extends Component
 
             {{-- ===== חשבונית/זיכוי: הפקה מול Summit בלבד — אין טופס מקוון/PDF/נמענים במייל,
                  ההפקה החשבונאית מתבצעת ישירות מול Summit (לא Smove) בלחיצת הכפתור. ===== --}}
-            @if (in_array($document->document_type, ['invoice', 'credit_note'], true))
+            @if ($document->is_external)
+                <div class="card">
+                    <h3>מסמך שנעשה מחוץ למערכת</h3>
+                    <p class="text-text-secondary" style="font-size:var(--fs-small); margin:0">
+                        המסמך נרשם בעסקה כמסמך שנעשה לפני המערכת או מחוצה לה (על נייר, במייל, או ישירות ב־SUMIT) — הוא לא נשלח ולא הופק מכאן, ואין לו תוכן במערכת.
+                        @if ($document->external_number) מספר המסמך: <span class="ltr-num">{{ $document->external_number }}</span>.@endif
+                        את הקובץ עצמו אפשר להעלות לתיקיית הקבצים בכרטיס העסקה.
+                    </p>
+                </div>
+            @elseif (in_array($document->document_type, ['invoice', 'credit_note'], true))
                 <div class="card">
                     <h3>הפקה מול Summit</h3>
                     @if ($document->sent_at)
