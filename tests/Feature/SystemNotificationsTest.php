@@ -174,6 +174,7 @@ class SystemNotificationsTest extends TestCase
         $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->deal->customer]);
         $component->set('activeTab', 'subscription')
             ->assertDontSeeHtml('wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?"')
+            ->call('openSubscriptionCreditNote', $subscription->id)
             ->call('generateSubscriptionCreditNote', $subscription->id)
             ->assertDispatched('notify', fn ($name, $params) => $params['type'] === 'error' && $params['sticky'] === true
                 && $params['message'] === $component->get('subscriptionError'));

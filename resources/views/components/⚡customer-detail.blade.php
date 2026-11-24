@@ -156,6 +156,10 @@ class extends Component
     /** subscription_id => why the subscription is cancelled. */
     public array $cancelReasons = [];
 
+    /** subscription_id => the credit note's own amount / line text, set in its issue window. */
+    public array $creditNoteAmounts = [];
+    public array $creditNoteDescriptions = [];
+
     /** Choosing the month fills in its computed credit — still editable after. */
     /** Picking an item adds it as a line at its price (FR-3.11 discount included) — still editable. */
     public function updatedDealItem(): void
@@ -1139,6 +1143,20 @@ class extends Component
      * re-checks the "deal already has an invoice" gate server-side via
      * Document::generateCreditNoteFor().
      */
+    /** Opens the credit note window, filled with the suggested amount (the money to hand back) — editable. */
+    public function openSubscriptionCreditNote(int $subscriptionId): void
+    {
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
+        $amount = $subscription->suggestedCreditNoteAmount();
+
+        $this->subscriptionError = null;
+        $this->creditNoteAmounts[$subscriptionId] = (string) (floor($amount) == $amount ? (int) $amount : $amount);
+        $this->creditNoteDescriptions[$subscriptionId] = $subscription->creditDescription($amount);
+        $this->dispatch('open-modal', name: 'credit-note-'.$subscriptionId);
+    }
+
     public function generateSubscriptionCreditNote(int $subscriptionId, ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, SmoveClient $smove): void
     {
         abort_unless(auth()->user()->can('subscriptions.manage'), 403);
@@ -1147,20 +1165,36 @@ class extends Component
 
         $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
+        $amount = trim(str_replace([',', '₪'], '', (string) ($this->creditNoteAmounts[$subscriptionId] ?? '')));
+        $description = trim((string) ($this->creditNoteDescriptions[$subscriptionId] ?? ''));
+
+        if (! is_numeric($amount) || (float) $amount <= 0) {
+            $this->subscriptionError = 'יש להזין את סכום הזיכוי (מספר גדול מ-0).';
+
+            return;
+        }
+
+        if (mb_strlen($description) > 255) {
+            $this->subscriptionError = 'הפירוט ארוך מדי (עד 255 תווים).';
+
+            return;
+        }
+
         try {
-            ['document' => $document, 'operations' => $operations] = $subscription->issueCreditNote($activityLogger, $runner, $summit, $smove);
+            ['document' => $document, 'operations' => $operations] = $subscription->issueCreditNote($activityLogger, $runner, $summit, $smove, (float) $amount, $description ?: null);
         } catch (\RuntimeException $e) {
             $this->subscriptionError = $e->getMessage();
 
             return;
         }
 
-        $activityLogger->log('document.credit_note_generated', "הופקה חשבונית זיכוי עבור מנוי #{$subscription->id}", [
+        $activityLogger->log('document.credit_note_generated', "הופקה חשבונית זיכוי בסך ₪".number_format((float) $amount, 2)." עבור מנוי #{$subscription->id}", [
             'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
-            'metadata' => ['document_id' => $document->id],
+            'metadata' => ['document_id' => $document->id, 'amount' => (float) $amount, 'cancellation_credit' => (float) $subscription->cancellation_credit],
         ]);
 
         unset($this->subscriptions);
+        $this->dispatch('close-modals');
 
         if (($operations['summit'] ?? null)?->status === \App\Models\ExternalOperation::STATUS_FAILED) {
             $this->subscriptionError = 'ההפקה ב-SUMIT נכשלה, ולכן טיוטת הזיכוי נמחקה ולא נשלח דבר ללקוחה. אפשר לנסות שוב. פירוט השגיאה: '.$operations['summit']->error_message;
@@ -2071,14 +2105,39 @@ class extends Component
                         @if ($creditNote)
                             <a href="{{ route('document-view', $creditNote) }}" class="btn btn-secondary">{{ $creditNote->sent_at ? 'צפייה בחשבונית הזיכוי' : 'חשבונית הזיכוי (טרם הופקה מול SUMIT)' }}</a>
                         @else
-                            <button
-                                type="button"
-                                class="btn btn-secondary"
-                                wire:click="generateSubscriptionCreditNote({{ $subscription->id }})"
-                                @if (\App\Models\Document::canGenerate($subscription->deal, 'credit_note'))
-                                    wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?"
-                                @endif
-                            >הפקת חשבונית זיכוי</button>
+                            <button type="button" class="btn btn-secondary" wire:click="openSubscriptionCreditNote({{ $subscription->id }})">הפקת חשבונית זיכוי</button>
+                            @php
+                                $cnDeal = $subscription->deal;
+                                $cnPaid = $cnDeal->totalPaid();
+                                $cnOwed = max(0, (float) $cnDeal->agreed_amount - (float) $subscription->cancellation_credit);
+                            @endphp
+                            <x-modal name="credit-note-{{ $subscription->id }}" title="הפקת חשבונית זיכוי">
+                                <form wire:submit="generateSubscriptionCreditNote({{ $subscription->id }})" class="form-grid"
+                                    @if (\App\Models\Document::canGenerate($cnDeal, 'credit_note'))
+                                        wire:confirm="הזיכוי יופק ב-SUMIT ויישלח ללקוחה במייל. זו פעולה חשבונאית בלתי הפיכה — להמשיך?"
+                                    @endif
+                                >
+                                    <div class="full" style="font-size:var(--fs-small); display:grid; grid-template-columns:auto auto; gap:4px var(--sp-lg); justify-content:start">
+                                        <span style="color:var(--color-text-secondary)">סכום העסקה</span><span class="ltr-num">₪{{ number_format((float) $cnDeal->agreed_amount, 0) }}</span>
+                                        <span style="color:var(--color-text-secondary)">זיכוי מחושב בביטול</span><span class="ltr-num">₪{{ number_format((float) $subscription->cancellation_credit, 0) }}</span>
+                                        <span style="color:var(--color-text-secondary)">לתשלום על החודשים שנוצלו</span><span class="ltr-num">₪{{ number_format($cnOwed, 0) }}</span>
+                                        <span style="color:var(--color-text-secondary)">שולם עד כה</span><span class="ltr-num">₪{{ number_format($cnPaid, 0) }}</span>
+                                    </div>
+                                    <div class="full">
+                                        <label for="creditNoteAmount{{ $subscription->id }}">סכום חשבונית / קבלת הזיכוי (₪)</label>
+                                        <input type="text" id="creditNoteAmount{{ $subscription->id }}" class="ltr-num" dir="ltr" wire:model="creditNoteAmounts.{{ $subscription->id }}">
+                                        <div style="font-size:var(--fs-caption); color:var(--color-text-secondary); margin-top:4px">הוצע אוטומטית: מה ששולם פחות מה שמגיע על החודשים שנוצלו. ניתן לשנות. הסכום הזה לא משנה את יתרת החוב — הלקוחה לא תיוותר בחוב על ההפרש.</div>
+                                    </div>
+                                    <div class="full">
+                                        <label for="creditNoteDescription{{ $subscription->id }}">פירוט</label>
+                                        <input type="text" id="creditNoteDescription{{ $subscription->id }}" wire:model="creditNoteDescriptions.{{ $subscription->id }}">
+                                    </div>
+                                    @if ($subscriptionError)
+                                        <div class="full" style="color:var(--color-error); font-size:var(--fs-small)">{{ $subscriptionError }}</div>
+                                    @endif
+                                    <div class="full"><button type="submit" class="btn btn-primary">הפקה ושליחה ללקוחה</button></div>
+                                </form>
+                            </x-modal>
                         @endif
                         </div>
                     </div>

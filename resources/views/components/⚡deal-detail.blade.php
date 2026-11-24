@@ -1560,7 +1560,8 @@ class extends Component
         <div class="pay-summary">
             <div class="cell"><div class="k">סכום עסקה</div><div class="v ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</div></div>
             @if ($credited > 0)
-                <div class="cell"><div class="k">זוכה{{ $deal->issuedCreditTotal() < $credited - 0.005 ? ' (חשבונית הזיכוי טרם הופקה)' : '' }}</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
+                @php $issuedCredit = $deal->issuedCreditTotal(); @endphp
+                <div class="cell"><div class="k">זוכה{{ $issuedCredit <= 0 ? ' (חשבונית הזיכוי טרם הופקה)' : ($issuedCredit < $credited - 0.005 ? ' (חשבונית זיכוי הופקה על ₪'.number_format($issuedCredit, 0).')' : '') }}</div><div class="v ltr-num">₪{{ number_format($credited, 0) }}</div></div>
             @endif
             <div class="cell"><div class="k">שולם</div><div class="v ltr-num">₪{{ number_format($this->totalPaid, 0) }}</div></div>
             @php $pendingChecks = $this->deal->pendingChecks(); @endphp

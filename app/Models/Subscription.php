@@ -227,7 +227,7 @@ class Subscription extends Model
     }
 
     /** The credit note's line text — which months are credited, and at what monthly price. */
-    public function creditDescription(): string
+    public function creditDescription(?float $amount = null): string
     {
         if ($this->cancelled_from_month === null) {
             return 'זיכוי בגין ביטול מנוי';
@@ -239,8 +239,10 @@ class Subscription extends Model
             : $this->monthLabel($this->cancelled_from_month).' – '.$this->monthLabel(self::TOTAL_DELIVERIES);
         $monthly = number_format((float) $this->agreed_price / self::TOTAL_DELIVERIES, 2);
 
-        // An amount set by hand in the cancellation window isn't months × monthly price.
-        if (abs((float) $this->cancellation_credit - $this->creditFor($this->cancelled_from_month)) > 0.005) {
+        // An amount set by hand (in the cancellation window, or for the credit
+        // note itself) isn't months × monthly price.
+        $amount ??= (float) $this->cancellation_credit;
+        if (abs($amount - $this->creditFor($this->cancelled_from_month)) > 0.005) {
             return "זיכוי בגין ביטול מנוי החל מחודש {$this->cancelled_from_month} ({$range})";
         }
 
@@ -571,19 +573,59 @@ class Subscription extends Model
      * @throws RuntimeException when the subscription isn't cancelled yet, or
      *                          the gate above isn't met.
      */
-    public function generateCreditNote(): Document
+    public function generateCreditNote(?float $amount = null, ?string $description = null): Document
     {
-        $this->assertCancelledForCredit();
+        $amount = $this->assertCreditNoteAmount($amount);
 
-        return Document::generateCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription());
+        return Document::generateCreditNoteFor($this->deal, $amount, $description ?: $this->creditDescription($amount));
     }
 
-    /** generateCreditNote(), issued in SUMIT and sent to the customer in the same step (Document::issueCreditNoteFor()). */
-    public function issueCreditNote(\App\Services\ActivityLogger $logger, \App\Services\Integrations\ExternalOperationRunner $runner, \App\Services\Integrations\SummitClient $summit, \App\Services\Integrations\SmoveClient $smove): array
+    /**
+     * generateCreditNote(), issued in SUMIT and sent to the customer in the same step (Document::issueCreditNoteFor()).
+     *
+     * $amount is the credit note's own sum, set by hand when issuing it —
+     * typically just the money handed back (what was paid less what the
+     * months used cost), not the whole cancellation credit. The customer's
+     * balance still nets off the cancellation credit (Deal::totalCredited()
+     * takes the larger of the two), so a smaller note never leaves a debt.
+     */
+    public function issueCreditNote(\App\Services\ActivityLogger $logger, \App\Services\Integrations\ExternalOperationRunner $runner, \App\Services\Integrations\SummitClient $summit, \App\Services\Integrations\SmoveClient $smove, ?float $amount = null, ?string $description = null): array
+    {
+        $amount = $this->assertCreditNoteAmount($amount);
+
+        return Document::issueCreditNoteFor($this->deal, $amount, $description ?: $this->creditDescription($amount), $logger, $runner, $summit, $smove);
+    }
+
+    /**
+     * What the credit note window starts with: the money to hand back —
+     * paid less what's owed for the months used (agreed − cancellation
+     * credit). With nothing to hand back, the cancellation credit itself.
+     */
+    public function suggestedCreditNoteAmount(): float
+    {
+        $owedForUsedMonths = max(0.0, (float) $this->deal->agreed_amount - (float) $this->cancellation_credit);
+        $refund = round($this->deal->totalPaid() - $owedForUsedMonths, 2);
+
+        return $refund > 0 ? $refund : round((float) $this->cancellation_credit, 2);
+    }
+
+    /** @throws RuntimeException */
+    private function assertCreditNoteAmount(?float $amount): float
     {
         $this->assertCancelledForCredit();
 
-        return Document::issueCreditNoteFor($this->deal, (float) $this->cancellation_credit, $this->creditDescription(), $logger, $runner, $summit, $smove);
+        $amount = round($amount ?? (float) $this->cancellation_credit, 2);
+        $max = (float) $this->deal->agreed_amount;
+
+        if ($amount <= 0) {
+            throw new RuntimeException('סכום הזיכוי חייב להיות גדול מ-₪0.');
+        }
+
+        if ($amount > $max + 0.005) {
+            throw new RuntimeException('סכום הזיכוי לא יכול לעלות על סכום העסקה (₪'.number_format($max, 2).').');
+        }
+
+        return $amount;
     }
 
     private function assertCancelledForCredit(): void

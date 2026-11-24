@@ -646,6 +646,60 @@ class SubscriptionsTest extends TestCase
         $this->assertEquals(1350, $deal->fresh()->outstandingBalance());
     }
 
+    /**
+     * The owner's example (2026-11-24): a ₪4,000 subscription, ₪2,000 paid,
+     * cancelled after two months → calculated credit ₪3,200. The credit note
+     * is issued for the money handed back only (₪1,200), and no debt is left.
+     */
+    public function test_the_credit_note_amount_is_set_by_hand_and_a_smaller_one_leaves_no_debt(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 4000);
+        $this->giveDealAnInvoice($subscription->deal);
+        $this->createTemplate('credit_note');
+        $transfer = \App\Models\PaymentMethod::create(['name' => 'העברה בנקאית', 'type' => 'bank_transfer', 'is_active' => true]);
+        $deal = $subscription->deal->fresh();
+        $deal->recordPayment($deal->version, 2000, null, $transfer->id);
+        $subscription->fresh()->cancel(3, null, 'בדיקה');
+        $subscription = $subscription->fresh();
+
+        $this->assertEquals(3200, (float) $subscription->cancellation_credit);
+        $this->assertEquals(1200, $subscription->suggestedCreditNoteAmount());
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
+            ->set('activeTab', 'subscription')
+            ->assertSee('סכום חשבונית / קבלת הזיכוי')
+            ->assertSee('₪3,200')
+            ->call('openSubscriptionCreditNote', $subscription->id)
+            ->assertSet("creditNoteAmounts.{$subscription->id}", '1200')
+            ->assertDispatched('open-modal');
+
+        $document = $subscription->generateCreditNote(1200, 'החזר בגין ביטול מנוי');
+        $document->update(['sent_at' => now()]); // as if issued in SUMIT
+
+        $this->assertEquals(1200, (float) $document->lines()->sum('amount'));
+        $this->assertSame('החזר בגין ביטול מנוי', $document->lines()->first()->description);
+        $this->assertEquals(0, $deal->fresh()->outstandingBalance());
+        $this->assertEquals(3200, $deal->fresh()->totalCredited());
+    }
+
+    public function test_the_credit_note_amount_must_be_positive_and_within_the_deal(): void
+    {
+        $subscription = $this->openSubscription(agreedAmount: 4000);
+        $this->giveDealAnInvoice($subscription->deal);
+        $subscription->deal->issuedInvoice()->businessEntity->update(['classification' => 'עוסק מורשה']);
+        $this->createTemplate('credit_note');
+        $subscription->cancel(3, null, 'בדיקה');
+
+        foreach ([0, -5, 4000.01] as $amount) {
+            try {
+                $subscription->fresh()->generateCreditNote($amount);
+                $this->fail("A credit note of {$amount} should be refused.");
+            } catch (\RuntimeException) {
+                $this->assertSame(0, Document::where('deal_id', $subscription->deal_id)->where('document_type', 'credit_note')->count());
+            }
+        }
+    }
+
     public function test_paying_off_a_cancelled_deals_remaining_balance_keeps_it_cancelled(): void
     {
         $subscription = $this->openSubscription(agreedAmount: 4500);
