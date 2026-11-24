@@ -352,6 +352,105 @@ class DealsManagementTest extends TestCase
 
     // ----- helpers -----
 
+    /** 2026-11-24: prices by classes per grade — the customer's school field picks the tier. */
+    public function test_deal_price_follows_the_schools_number_of_classes(): void
+    {
+        $program = $this->createProgram(price: 400);
+        $program->update(['price_3_4' => 700, 'price_5_6' => 900]);
+
+        foreach ([null => 400, 1 => 400, 2 => 400, 3 => 700, 4 => 700, 5 => 900, 6 => 900, 8 => 900] as $classes => $expected) {
+            $customer = $this->createCustomer();
+            $customer->school->update(['classes_per_grade' => $classes ?: null]);
+
+            $deal = Deal::createForCustomer($customer->fresh(), $program, null);
+
+            $this->assertEquals($expected, (float) $deal->agreed_amount, "classes={$classes}");
+            $this->assertEquals($expected, (float) $deal->program_price_snapshot);
+        }
+    }
+
+    public function test_an_empty_tier_price_falls_back_to_the_base_price(): void
+    {
+        $bundle = $this->createBundle(price: 500);
+        $bundle->update(['price_5_6' => 1100]);
+
+        $customer = $this->createCustomer();
+        $customer->school->update(['classes_per_grade' => 3]);
+
+        $deal = Deal::createForCustomer($customer->fresh(), null, $bundle);
+
+        $this->assertEquals(500, (float) $deal->agreed_amount);
+        $this->assertSame('3-4', $deal->class_tier);
+    }
+
+    public function test_the_deal_form_fills_the_tier_price_from_the_customer_card(): void
+    {
+        $program = $this->createProgram(price: 400);
+        $program->update(['price_3_4' => 700, 'price_5_6' => 900]);
+        $customer = $this->createCustomer();
+        $customer->school->update(['classes_per_grade' => 5]);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer->fresh()])
+            ->set('dealItem', "program:{$program->id}")
+            ->assertSet('dealAgreedAmount', '900')
+            // The card's value wins over a submitted choice.
+            ->set('dealClassTier', '1-2')
+            ->assertSet('dealAgreedAmount', '900')
+            ->call('createDeal')
+            ->assertHasNoErrors();
+
+        $deal = Deal::sole();
+        $this->assertSame('5-6', $deal->class_tier);
+        $this->assertEquals(900, (float) $deal->agreed_amount);
+    }
+
+    public function test_without_classes_on_the_card_the_deal_form_asks_for_the_tier(): void
+    {
+        $program = $this->createProgram(price: 400);
+        $program->update(['price_3_4' => 700]);
+        $customer = $this->createCustomer();
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('dealItem', "program:{$program->id}")
+            ->assertSet('dealAgreedAmount', '400')
+            ->call('createDeal')
+            ->assertHasErrors(['dealClassTier']);
+
+        $this->assertSame(0, Deal::count());
+
+        $component->set('dealClassTier', '3-4')
+            ->assertSet('dealAgreedAmount', '700')
+            ->call('createDeal')
+            ->assertHasNoErrors();
+
+        $this->assertSame('3-4', Deal::sole()->class_tier);
+        $this->assertEquals(700, (float) Deal::sole()->agreed_amount);
+    }
+
+    public function test_the_catalog_saves_the_tier_prices(): void
+    {
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->set('programName', 'תוכנית מדורגת')
+            ->set('programPrice', '400')
+            ->set('programPrice34', '700')
+            ->set('programPrice56', '')
+            ->call('addProgram')
+            ->assertHasNoErrors();
+
+        $program = Program::where('name', 'תוכנית מדורגת')->sole();
+        $this->assertEquals(700, (float) $program->price_3_4);
+        $this->assertNull($program->price_5_6);
+
+        Livewire::actingAs($this->owner)->test('programs-catalog')
+            ->call('editItem', 'program', $program->id)
+            ->assertSet('editPrice34', '700')
+            ->set('editPrice56', '950')
+            ->call('saveItem')
+            ->assertHasNoErrors();
+
+        $this->assertEquals(950, (float) $program->fresh()->price_5_6);
+    }
+
     private function createDeal(): Deal
     {
         $customer = $this->createCustomer();

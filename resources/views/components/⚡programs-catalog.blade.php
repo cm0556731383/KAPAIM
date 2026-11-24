@@ -19,6 +19,8 @@ class extends Component
     public string $programName = '';
     public string $programDescription = '';
     public string $programPrice = '';
+    public string $programPrice34 = '';
+    public string $programPrice56 = '';
     public bool $programIsPremium = false;
     public string $programContractTemplateId = '';
 
@@ -26,6 +28,8 @@ class extends Component
     public string $bundleName = '';
     public string $bundleDescription = '';
     public string $bundlePrice = '';
+    public string $bundlePrice34 = '';
+    public string $bundlePrice56 = '';
     public bool $bundleIsSubscriptionType = false;
     public string $bundleContractTemplateId = '';
 
@@ -35,6 +39,8 @@ class extends Component
     public string $editName = '';
     public string $editDescription = '';
     public string $editPrice = '';
+    public string $editPrice34 = '';
+    public string $editPrice56 = '';
     public bool $editFlag = false;
     public string $editContractTemplateId = '';
 
@@ -83,17 +89,23 @@ class extends Component
             'programName' => ['required', 'string', 'max:255', 'unique:programs,name'],
             'programDescription' => ['nullable', 'string'],
             'programPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'programPrice34' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'programPrice56' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'programIsPremium' => ['boolean'],
             'programContractTemplateId' => $this->contractTemplateRule(),
         ], [], [
             'programName' => 'שם התוכנית',
-            'programPrice' => 'מחיר',
+            'programPrice' => 'מחיר 1–2 כיתות',
+            'programPrice34' => 'מחיר 3–4 כיתות',
+            'programPrice56' => 'מחיר 5–6 כיתות',
         ]);
 
         $program = Program::create([
             'name' => $data['programName'],
             'description' => $data['programDescription'] ?: null,
             'price' => $data['programPrice'],
+            'price_3_4' => $data['programPrice34'] ?: null,
+            'price_5_6' => $data['programPrice56'] ?: null,
             'is_premium' => $data['programIsPremium'],
             'contract_template_id' => $data['programContractTemplateId'] ?: null,
             'is_active' => true,
@@ -101,7 +113,7 @@ class extends Component
 
         $activityLogger->log('program.created', "נוצרה תוכנית חדשה: {$program->name}");
 
-        $this->reset(['programName', 'programDescription', 'programPrice', 'programIsPremium']);
+        $this->reset(['programName', 'programDescription', 'programPrice', 'programPrice34', 'programPrice56', 'programIsPremium']);
         $this->resetContractDefaults();
         unset($this->programs);
 
@@ -140,13 +152,15 @@ class extends Component
         $this->editName = $item->name;
         $this->editDescription = (string) $item->description;
         $this->editPrice = (string) (float) $item->price;
+        $this->editPrice34 = $item->price_3_4 !== null ? (string) (float) $item->price_3_4 : '';
+        $this->editPrice56 = $item->price_5_6 !== null ? (string) (float) $item->price_5_6 : '';
         $this->editFlag = (bool) ($type === 'program' ? $item->is_premium : $item->is_subscription_type);
         $this->editContractTemplateId = (string) ($item->contract_template_id ?? '');
     }
 
     public function cancelItemEdit(): void
     {
-        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editFlag', 'editContractTemplateId']);
+        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editPrice34', 'editPrice56', 'editFlag', 'editContractTemplateId']);
     }
 
     public function saveItem(ActivityLogger $activityLogger): void
@@ -159,9 +173,11 @@ class extends Component
             'editName' => ['required', 'string', 'max:255', "unique:{$table},name,".(int) $id],
             'editDescription' => ['nullable', 'string'],
             'editPrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'editPrice34' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'editPrice56' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editFlag' => ['boolean'],
             'editContractTemplateId' => $this->contractTemplateRule(),
-        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר', 'editContractTemplateId' => 'חוזה ברירת מחדל']);
+        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר 1–2 כיתות', 'editPrice34' => 'מחיר 3–4 כיתות', 'editPrice56' => 'מחיר 5–6 כיתות', 'editContractTemplateId' => 'חוזה ברירת מחדל']);
 
         if ($type === 'program') {
             $item = Program::findOrFail((int) $id);
@@ -170,6 +186,8 @@ class extends Component
                 'name' => $data['editName'],
                 'description' => $data['editDescription'] ?: null,
                 'price' => $data['editPrice'],
+                'price_3_4' => $data['editPrice34'] ?: null,
+                'price_5_6' => $data['editPrice56'] ?: null,
                 'is_premium' => $data['editFlag'],
                 'contract_template_id' => $data['editContractTemplateId'] ?: null,
             ]);
@@ -189,6 +207,8 @@ class extends Component
                 'name' => $data['editName'],
                 'description' => $data['editDescription'] ?: null,
                 'price' => $data['editPrice'],
+                'price_3_4' => $data['editPrice34'] ?: null,
+                'price_5_6' => $data['editPrice56'] ?: null,
                 'is_subscription_type' => $data['editFlag'],
                 'contract_template_id' => $data['editContractTemplateId'] ?: null,
             ]);
@@ -218,11 +238,15 @@ class extends Component
             'bundleName' => ['required', 'string', 'max:255', 'unique:bundles,name'],
             'bundleDescription' => ['nullable', 'string'],
             'bundlePrice' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'bundlePrice34' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'bundlePrice56' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'bundleIsSubscriptionType' => ['boolean'],
             'bundleContractTemplateId' => $this->contractTemplateRule(),
         ], [], [
             'bundleName' => 'שם המארז',
-            'bundlePrice' => 'מחיר',
+            'bundlePrice' => 'מחיר 1–2 כיתות',
+            'bundlePrice34' => 'מחיר 3–4 כיתות',
+            'bundlePrice56' => 'מחיר 5–6 כיתות',
         ]);
 
         if ($data['bundleIsSubscriptionType'] && $this->anotherActiveSubscriptionBundleExists()) {
@@ -235,6 +259,8 @@ class extends Component
             'name' => $data['bundleName'],
             'description' => $data['bundleDescription'] ?: null,
             'price' => $data['bundlePrice'],
+            'price_3_4' => $data['bundlePrice34'] ?: null,
+            'price_5_6' => $data['bundlePrice56'] ?: null,
             'is_subscription_type' => $data['bundleIsSubscriptionType'],
             'contract_template_id' => $data['bundleContractTemplateId'] ?: null,
             'is_active' => true,
@@ -242,7 +268,7 @@ class extends Component
 
         $activityLogger->log('bundle.created', "נוצר מארז חדש: {$bundle->name}");
 
-        $this->reset(['bundleName', 'bundleDescription', 'bundlePrice', 'bundleIsSubscriptionType']);
+        $this->reset(['bundleName', 'bundleDescription', 'bundlePrice', 'bundlePrice34', 'bundlePrice56', 'bundleIsSubscriptionType']);
         $this->resetContractDefaults();
         unset($this->bundles);
 
@@ -370,9 +396,19 @@ class extends Component
                         <textarea id="programDescription" wire:model="programDescription" rows="2" placeholder="תיאור קצר של התוכנית..."></textarea>
                     </div>
                     <div>
-                        <label for="programPrice">מחיר</label>
+                        <label for="programPrice">מחיר 1–2 כיתות</label>
                         <input type="text" id="programPrice" wire:model="programPrice" class="ltr-num" dir="ltr" placeholder="₪ 0">
                         @error('programPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="programPrice34">מחיר 3–4 כיתות</label>
+                        <input type="text" id="programPrice34" wire:model="programPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
+                        @error('programPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="programPrice56">מחיר 5–6 כיתות</label>
+                        <input type="text" id="programPrice56" wire:model="programPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
+                        @error('programPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                     </div>
                     <div>
                         <label>&nbsp;</label>
@@ -398,7 +434,7 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table>
-                <thead><tr><th>שם</th><th>מחיר</th><th>פרימיום</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>מחיר לפי כיתות</th><th>פרימיום</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->programs as $program)
                         @if ($editingItem === "program:{$program->id}")
@@ -406,7 +442,9 @@ class extends Component
                             <td colspan="6">
                                 <form wire:submit="saveItem" class="form-grid">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 1–2 כיתות</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 3–4 כיתות</label><input type="text" wire:model="editPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 5–6 כיתות</label><input type="text" wire:model="editPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
                                     <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">תוכנית פרימיום</label></span></div>
                                     <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
@@ -430,7 +468,7 @@ class extends Component
                         @endif
                         <tr>
                             <td>{{ $program->name }}</td>
-                            <td class="ltr-num">₪{{ number_format((float) $program->price, 0) }}</td>
+                            <td>@include('components.catalog.tier-prices', ['item' => $program])</td>
                             <td>@if ($program->is_premium)<span class="badge badge-primary">פרימיום</span>@else —@endif</td>
                             <td>{{ $program->contractTemplate?->is_active ? $program->contractTemplate->name : 'החוזה הסטנדרטי' }}</td>
                             <td>
@@ -467,10 +505,20 @@ class extends Component
                             <label for="bundleDescription">תיאור</label>
                             <textarea id="bundleDescription" wire:model="bundleDescription" rows="2"></textarea>
                         </div>
-                        <div class="full">
-                            <label for="bundlePrice">מחיר</label>
+                        <div>
+                            <label for="bundlePrice">מחיר 1–2 כיתות</label>
                             <input type="text" id="bundlePrice" wire:model="bundlePrice" class="ltr-num" dir="ltr" placeholder="₪ 0">
                             @error('bundlePrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="bundlePrice34">מחיר 3–4 כיתות</label>
+                            <input type="text" id="bundlePrice34" wire:model="bundlePrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
+                            @error('bundlePrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="bundlePrice56">מחיר 5–6 כיתות</label>
+                            <input type="text" id="bundlePrice56" wire:model="bundlePrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2">
+                            @error('bundlePrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div class="full">
                             <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי</label></span>
@@ -519,7 +567,7 @@ class extends Component
         <div class="card" style="padding:0; overflow:hidden; margin-bottom: var(--sp-md)">
             <div class="table-scroll">
             <table>
-                <thead><tr><th>שם</th><th>מחיר</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
+                <thead><tr><th>שם</th><th>מחיר לפי כיתות</th><th>סוג</th><th>תוכניות כלולות</th><th>חוזה ברירת מחדל</th><th>סטטוס</th><th></th></tr></thead>
                 <tbody>
                     @foreach ($this->bundles as $bundle)
                         @if ($editingItem === "bundle:{$bundle->id}")
@@ -527,7 +575,9 @@ class extends Component
                             <td colspan="7">
                                 <form wire:submit="saveItem" class="form-grid">
                                     <div><label>שם</label><input type="text" wire:model="editName"> @error('editName') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div><label>מחיר</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 1–2 כיתות</label><input type="text" wire:model="editPrice" class="ltr-num" dir="ltr"> @error('editPrice') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 3–4 כיתות</label><input type="text" wire:model="editPrice34" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice34') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
+                                    <div><label>מחיר 5–6 כיתות</label><input type="text" wire:model="editPrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('editPrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                                     <div class="full"><label>תיאור</label><textarea wire:model="editDescription" rows="2"></textarea></div>
                                     <div class="full"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
                                     <div class="full"><label for="editContractTemplateId">חוזה ברירת מחדל</label>
@@ -551,7 +601,7 @@ class extends Component
                         @endif
                         <tr>
                             <td>{{ $bundle->name }}</td>
-                            <td class="ltr-num">₪{{ number_format((float) $bundle->price, 0) }}</td>
+                            <td>@include('components.catalog.tier-prices', ['item' => $bundle])</td>
                             <td>@if ($bundle->is_subscription_type)<span class="badge" style="background:#92600D22; color:#92600D">מנוי שנתי</span>@else —@endif</td>
                             <td>
                                 <div class="chip-list">

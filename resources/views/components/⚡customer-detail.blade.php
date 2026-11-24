@@ -121,6 +121,9 @@ class extends Component
 
     public string $dealAgreedAmount = '';
 
+    /** Classes-per-grade price tier ('1-2'/'3-4'/'5-6') — fixed by the school's field when it has one, else chosen here. */
+    public string $dealClassTier = '';
+
     /** Shown under the amount when it was filled in with the subscriber discount. */
     public ?string $dealDiscountNote = null;
 
@@ -154,6 +157,28 @@ class extends Component
     /** Fills the agreed amount with the chosen item's price (FR-3.11 discount included) — still editable. */
     public function updatedDealItem(): void
     {
+        $this->fillDealAmount();
+    }
+
+    public function updatedDealClassTier(): void
+    {
+        $this->fillDealAmount();
+    }
+
+    /** The tier from the customer's "מספר כיתות בשנתון", or null when it is empty. */
+    #[Computed]
+    public function schoolClassTier(): ?string
+    {
+        return Program::classTierFor($this->customer->school?->classes_per_grade);
+    }
+
+    private function effectiveDealClassTier(): ?string
+    {
+        return $this->schoolClassTier ?? ($this->dealClassTier !== '' ? $this->dealClassTier : null);
+    }
+
+    private function fillDealAmount(): void
+    {
         [$type, $id] = array_pad(explode(':', $this->dealItem, 2), 2, null);
         $program = $type === 'program' ? Program::find($id) : null;
         $bundle = $type === 'bundle' ? Bundle::find($id) : null;
@@ -166,11 +191,12 @@ class extends Component
             return;
         }
 
-        $amount = Deal::defaultAgreedAmount($this->customer, $program, $bundle);
+        $tier = $this->effectiveDealClassTier();
+        $amount = Deal::defaultAgreedAmount($this->customer, $program, $bundle, $tier);
         $this->dealAgreedAmount = rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
 
         if (Deal::hasSubscriberDiscount($this->customer, $program)) {
-            $this->dealDiscountNote = 'הלקוחה מנויה, ולכן חלה הנחת מנוי של 10% על תוכנית הפרימיום (מחיר המחירון: ₪'.number_format((float) $program->price, 0).').';
+            $this->dealDiscountNote = 'הלקוחה מנויה, ולכן חלה הנחת מנוי של 10% על תוכנית הפרימיום (מחיר המחירון: ₪'.number_format($program->priceForClassTier($tier), 0).').';
         }
     }
 
@@ -873,12 +899,20 @@ class extends Component
             'dealSpecialRequest' => ['nullable', 'string'],
             'dealPaymentMethodId' => ['nullable', 'exists:payment_methods,id'],
             'dealStudentsCount' => ['nullable', 'integer', 'min:0'],
-        ], [], ['dealItem' => 'תוכנית / מארז', 'dealStudentsCount' => 'מספר תלמידות']);
+            'dealClassTier' => ['nullable', \Illuminate\Validation\Rule::in(array_keys(Program::CLASS_TIERS))],
+        ], [], ['dealItem' => 'תוכנית / מארז', 'dealStudentsCount' => 'מספר תלמידות', 'dealClassTier' => 'מספר כיתות']);
 
         [$type, $id] = array_pad(explode(':', $data['dealItem'], 2), 2, null);
 
         $program = $type === 'program' ? Program::find($id) : null;
         $bundle = $type === 'bundle' ? Bundle::find($id) : null;
+
+        // An item priced by classes needs the tier when the customer card has no number of classes.
+        if (! $this->schoolClassTier && $this->dealClassTier === '' && ($program ?? $bundle)?->hasClassTierPrices()) {
+            $this->addError('dealClassTier', 'למחיר של פריט זה יש לבחור מספר כיתות (בכרטיס הלקוחה אין מספר כיתות בשנתון).');
+
+            return;
+        }
 
         try {
             $deal = Deal::createForCustomer(
@@ -888,6 +922,7 @@ class extends Component
                 $data['dealAgreedAmount'] !== null && $data['dealAgreedAmount'] !== '' ? (float) $data['dealAgreedAmount'] : null,
                 $data['dealSpecialRequest'] ?: null,
                 $data['dealPaymentMethodId'] ?: null,
+                classTier: $this->effectiveDealClassTier(),
             );
         } catch (\RuntimeException $e) {
             $this->dealError = $e->getMessage();
@@ -901,13 +936,13 @@ class extends Component
 
         $itemName = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot;
         $discount = Deal::hasSubscriberDiscount($this->customer, $program)
-            && abs((float) $deal->agreed_amount - Deal::defaultAgreedAmount($this->customer, $program, $bundle)) < 0.005
+            && abs((float) $deal->agreed_amount - Deal::defaultAgreedAmount($this->customer, $program, $bundle, $deal->class_tier)) < 0.005
             ? ' (כולל הנחת מנוי של 10%)' : '';
         $activityLogger->log('deal.created', "נוצרה עסקה חדשה #{$deal->id} עבור לקוחה \"{$this->customer->school?->name}\": {$itemName}{$discount}", [
             'deal_id' => $deal->id, 'customer_id' => $this->customer->id,
         ]);
 
-        $this->reset(['dealItem', 'dealAgreedAmount', 'dealDiscountNote', 'dealSpecialRequest', 'dealPaymentMethodId', 'dealStudentsCount']);
+        $this->reset(['dealItem', 'dealAgreedAmount', 'dealClassTier', 'dealDiscountNote', 'dealSpecialRequest', 'dealPaymentMethodId', 'dealStudentsCount']);
         unset($this->deals);
 
         $this->redirect(route('deal-detail', $deal), navigate: false);
@@ -2075,19 +2110,37 @@ class extends Component
                                 @if ($this->availablePrograms->isNotEmpty())
                                     <optgroup label="תוכניות">
                                         @foreach ($this->availablePrograms as $program)
-                                            <option value="program:{{ $program->id }}">{{ $program->name }} (₪{{ number_format((float) $program->price, 0) }})</option>
+                                            <option value="program:{{ $program->id }}">{{ $program->name }} (₪{{ number_format($program->priceForClassTier($this->schoolClassTier ?? ($dealClassTier ?: null)), 0) }})</option>
                                         @endforeach
                                     </optgroup>
                                 @endif
                                 @if ($this->availableBundles->isNotEmpty())
                                     <optgroup label="מארזים">
                                         @foreach ($this->availableBundles as $bundle)
-                                            <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }} (₪{{ number_format((float) $bundle->price, 0) }})</option>
+                                            <option value="bundle:{{ $bundle->id }}">{{ $bundle->name }} (₪{{ number_format($bundle->priceForClassTier($this->schoolClassTier ?? ($dealClassTier ?: null)), 0) }})</option>
                                         @endforeach
                                     </optgroup>
                                 @endif
                             </select>
                             @error('dealItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                        <div>
+                            <label for="dealClassTier">מספר כיתות בשנתון</label>
+                            @if ($this->schoolClassTier)
+                                <select id="dealClassTier" disabled>
+                                    <option>{{ \App\Models\Program::CLASS_TIERS[$this->schoolClassTier] }}</option>
+                                </select>
+                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">לפי כרטיס הלקוחה ({{ $this->customer->school->classes_per_grade }} כיתות) — המחיר מחושב בהתאם.</div>
+                            @else
+                                <select id="dealClassTier" wire:model.live="dealClassTier">
+                                    <option value="">בחרו מספר כיתות</option>
+                                    @foreach (\App\Models\Program::CLASS_TIERS as $tierKey => $tierLabel)
+                                        <option value="{{ $tierKey }}">{{ $tierLabel }}</option>
+                                    @endforeach
+                                </select>
+                                <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">בכרטיס הלקוחה אין מספר כיתות — יש לבחור כדי לקבוע את המחיר.</div>
+                            @endif
+                            @error('dealClassTier') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>
                             <label for="dealAgreedAmount">סכום מוסכם (ניתן לשינוי)</label>

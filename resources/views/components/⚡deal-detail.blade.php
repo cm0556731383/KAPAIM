@@ -1188,10 +1188,10 @@ class extends Component
                 <div class="info-grid">
                     @if ($deal->program_id)
                         <div class="item"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
-                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}</div></div>
+                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}@if ($deal->class_tier) <span class="text-text-secondary" style="font-size:var(--fs-caption)">({{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }})</span>@endif</div></div>
                     @else
                         <div class="item"><div class="k">מארז</div><div class="v">{{ $deal->bundle_name_snapshot }}</div></div>
-                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->bundle_price_snapshot, 0) }}</div></div>
+                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->bundle_price_snapshot, 0) }}@if ($deal->class_tier) <span class="text-text-secondary" style="font-size:var(--fs-caption)">({{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }})</span>@endif</div></div>
                     @endif
                 </div>
             </div>

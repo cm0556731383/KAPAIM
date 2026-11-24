@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Concerns\HasClassTierPrices;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -16,9 +17,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * which case purchasing it opens a real SUBSCRIPTION instead of a plain deal
  * — see Deal::createForCustomer()/openSubscriptionIfApplicable().
  */
-#[Fillable(['name', 'description', 'price', 'is_subscription_type', 'is_active', 'contract_template_id'])]
+#[Fillable(['name', 'description', 'price', 'price_3_4', 'price_5_6', 'is_subscription_type', 'is_active', 'contract_template_id'])]
 class Bundle extends Model
 {
+    use HasClassTierPrices;
     use HasFactory;
 
     /** The contract its order form + contract pair is generated with (Document::generateOrderFormAndContract()). */
@@ -31,6 +33,8 @@ class Bundle extends Model
     {
         return [
             'price' => 'decimal:2',
+            'price_3_4' => 'decimal:2',
+            'price_5_6' => 'decimal:2',
             'is_subscription_type' => 'boolean',
             'is_active' => 'boolean',
         ];

@@ -30,7 +30,7 @@ use RuntimeException;
  */
 #[Fillable([
     'customer_id', 'program_id', 'bundle_id', 'status_id', 'agreed_amount', 'students_count',
-    'program_price_snapshot', 'bundle_price_snapshot', 'program_name_snapshot', 'bundle_name_snapshot',
+    'program_price_snapshot', 'bundle_price_snapshot', 'class_tier', 'program_name_snapshot', 'bundle_name_snapshot',
     'payment_method_id', 'special_request', 'purchased_at', 'completed_at', 'version',
 ])]
 class Deal extends Model
@@ -324,6 +324,7 @@ class Deal extends Model
         ?string $specialRequest = null,
         ?int $paymentMethodId = null,
         ?\DateTimeInterface $purchasedAt = null,
+        ?string $classTier = null,
     ): self {
         if (($program === null) === ($bundle === null)) {
             throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד.');
@@ -350,7 +351,13 @@ class Deal extends Model
             ['is_active' => true, 'sort_order' => 1],
         );
 
-        $defaultAgreedAmount = self::defaultAgreedAmount($customer, $program, $bundle);
+        // Prices by classes per grade (2026-11-24): the tier picked in the
+        // new-deal window, else the one from the customer's school.
+        $classTier = array_key_exists((string) $classTier, Program::CLASS_TIERS)
+            ? $classTier
+            : Program::classTierFor($customer->school?->classes_per_grade);
+
+        $defaultAgreedAmount = self::defaultAgreedAmount($customer, $program, $bundle, $classTier);
 
         $deal = self::create([
             'customer_id' => $customer->id,
@@ -358,8 +365,9 @@ class Deal extends Model
             'bundle_id' => $bundle?->id,
             'status_id' => $status->id,
             'agreed_amount' => $agreedAmount ?? $defaultAgreedAmount,
-            'program_price_snapshot' => $program?->price,
-            'bundle_price_snapshot' => $bundle?->price,
+            'program_price_snapshot' => $program?->priceForClassTier($classTier),
+            'bundle_price_snapshot' => $bundle?->priceForClassTier($classTier),
+            'class_tier' => $classTier,
             'program_name_snapshot' => $program?->name,
             'bundle_name_snapshot' => $bundle?->name,
             'payment_method_id' => $paymentMethodId,
@@ -466,9 +474,9 @@ class Deal extends Model
      * bought by a customer with an active subscription. The new-deal window
      * fills this in (editable) before the deal is created.
      */
-    public static function defaultAgreedAmount(Customer $customer, ?Program $program, ?Bundle $bundle): float
+    public static function defaultAgreedAmount(Customer $customer, ?Program $program, ?Bundle $bundle, ?string $classTier = null): float
     {
-        $price = (float) ($program->price ?? $bundle?->price ?? 0);
+        $price = ($program ?? $bundle)?->priceForClassTier($classTier) ?? 0.0;
 
         return self::hasSubscriberDiscount($customer, $program) ? round($price * 0.9, 2) : $price;
     }
