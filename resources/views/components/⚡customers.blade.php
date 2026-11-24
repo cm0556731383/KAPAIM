@@ -295,6 +295,11 @@ class extends Component
             ->when($this->filterSubscription === 'no', fn ($q) => $q->whereDoesntHave(
                 'subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
             ))
+            // Former subscriber: no active subscription, but one that ended or was cancelled.
+            ->when($this->filterSubscription === 'former', fn ($q) => $q
+                ->whereDoesntHave('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME)))
+                ->whereHas('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->whereIn('name', [Subscription::ENDED_STATUS_NAME, Subscription::CANCELLED_STATUS_NAME])))
+            )
             ->when($this->filterStatusIds, fn ($q) => $q->whereIn('status_id', array_map('intval', $this->filterStatusIds)))
             ->orderByDesc('converted_at')
             ->get();
@@ -443,6 +448,7 @@ class extends Component
                 <option value="">הכל</option>
                 <option value="yes">יש מנוי פעיל</option>
                 <option value="no">אין מנוי פעיל</option>
+                <option value="former">מנויה לשעבר</option>
             </select>
         </div>
         <x-multi-filter model="filterStatusIds" label="סטטוס" all-label="כל הסטטוסים" :selected="$filterStatusIds"
@@ -466,12 +472,13 @@ class extends Component
                     @php
                         $primaryContact = $customer->contacts->firstWhere('is_primary', true);
                         $hasActiveSubscription = $customer->subscriptions->first(fn ($s) => $s->status?->name === \App\Models\Subscription::ACTIVE_STATUS_NAME) !== null;
+                        $isFormerSubscriber = ! $hasActiveSubscription && $customer->subscriptions->first(fn ($s) => in_array($s->status?->name, [\App\Models\Subscription::ENDED_STATUS_NAME, \App\Models\Subscription::CANCELLED_STATUS_NAME], true)) !== null;
                     @endphp
-                    <tr class="row-link {{ $hasActiveSubscription ? 'is-subscription' : '' }}" @if ($hasActiveSubscription) title="לקוחה מנויה" @endif onclick="window.location='{{ route('customer-detail', $customer) }}'">
+                    <tr class="row-link {{ $hasActiveSubscription ? 'is-subscription' : ($isFormerSubscriber ? 'is-former-subscription' : '') }}" @if ($hasActiveSubscription) title="לקוחה מנויה" @elseif ($isFormerSubscriber) title="מנויה לשעבר" @endif onclick="window.location='{{ route('customer-detail', $customer) }}'">
                         <td>{{ $customer->school?->name ?? '—' }}</td>
                         <td>{{ $primaryContact ? $primaryContact->name.($primaryContact->role ? ', '.$primaryContact->role : '') : '—' }}</td>
                         <td><span class="badge {{ \App\Models\Customer::badgeClassForStatusName($customer->status?->name) }}">{{ $customer->status?->name }}</span></td>
-                        <td>@if ($hasActiveSubscription)<span class="badge badge-primary">מנויה פעילה</span>@else—@endif</td>
+                        <td>@if ($hasActiveSubscription)<span class="badge badge-primary">מנויה פעילה</span>@elseif ($isFormerSubscriber)<span class="badge badge-neutral">מנויה לשעבר</span>@else—@endif</td>
                         <td class="ltr-num">{{ $customer->converted_at->format('d/m/Y') }}</td>
                     </tr>
                 @empty

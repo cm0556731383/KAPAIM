@@ -421,6 +421,28 @@ class SubscriptionsTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/<tr class="row-link is-subscription"[^>]*customers\/'.$other->id.'\b/u', $html);
     }
 
+    public function test_customers_list_marks_and_filters_former_subscribers(): void
+    {
+        $active = $this->openSubscription();
+        $former = $this->openSubscription();
+        $former->cancel();
+        $never = $this->createCustomer();
+
+        $row = fn (int $customerId) => route('customer-detail', $customerId);
+        $component = Livewire::actingAs($this->owner)->test('customers');
+        $html = $component->html();
+
+        $this->assertMatchesRegularExpression('/<tr class="row-link is-former-subscription"[^>]*customers\/'.$former->customer_id.'\b/u', $html);
+        $this->assertDoesNotMatchRegularExpression('/is-former-subscription"[^>]*customers\/'.$active->customer_id.'\b/u', $html);
+        $this->assertDoesNotMatchRegularExpression('/is-former-subscription"[^>]*customers\/'.$never->id.'\b/u', $html);
+        $this->assertStringContainsString('מנויה לשעבר</span>', $html);
+
+        $component->set('filterSubscription', 'former')
+            ->assertSeeHtml($row($former->customer_id))
+            ->assertDontSeeHtml($row($active->customer_id))
+            ->assertDontSeeHtml($row($never->id));
+    }
+
     public function test_monthly_payment_counts_only_an_issued_invoice_with_an_amount(): void
     {
         $subscription = $this->openSubscription(agreedAmount: 2000);

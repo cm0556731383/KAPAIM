@@ -138,6 +138,7 @@ tr.row-link { cursor: pointer; }
 tr.is-subscription td { background: #EEF6FB; }
 tr.is-subscription:hover td { background: var(--color-primary-lighter); }
 tr.is-subscription td:last-child::after { content: "★"; float: left; margin-inline-start: 10px; font-size: 18px; line-height: 1; color: #C99A2E; background: linear-gradient(160deg, #E6BC55 0%, #D4A537 40%, #BE9026 70%, #9E7518 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 0.5px rgba(110, 75, 0, .6)); }
+tr.is-former-subscription td:last-child::after { content: "★"; float: left; margin-inline-start: 10px; font-size: 18px; line-height: 1; color: #A3A9B0; }
 .subscription-legend { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-caption); color: var(--color-text-secondary); }
 .subscription-legend::before { content: ""; width: 18px; height: 12px; background: #EEF6FB; border: 1px solid var(--color-primary-lighter); border-radius: 2px; }
 
