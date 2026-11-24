@@ -12,6 +12,9 @@ use App\Models\PaymentMethod;
 use App\Models\ExternalOperation;
 use App\Models\Receipt;
 use App\Models\StatusDefinition;
+use App\Models\Program;
+use App\Models\Bundle;
+use App\Support\DealLines;
 use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SmoveClient;
@@ -99,11 +102,93 @@ class extends Component
 
     public string $linkEmail = '';
 
+    // ===== תוכניות ומארזים בעסקה (DEAL_ITEM, 2026-11-24) =====
+    public bool $editingItems = false;
+
+    /** The lines being edited — App\Support\DealLines. */
+    public array $itemLines = [];
+
+    public string $itemPicker = '';
+
+    public ?string $itemsError = null;
+
+    public function editItems(): void
+    {
+        $this->itemsError = $this->deal->itemsLockReason();
+
+        if ($this->itemsError) {
+            return;
+        }
+
+        $this->resetValidation();
+        $this->itemLines = DealLines::fromDeal($this->deal->load('items'));
+        $this->editingItems = true;
+    }
+
+    public function cancelItemsEdit(): void
+    {
+        $this->reset(['editingItems', 'itemLines', 'itemPicker', 'itemsError']);
+    }
+
+    public function updatedItemPicker(): void
+    {
+        $this->itemLines = DealLines::add($this->itemLines, $this->itemPicker, $this->itemPriceFor(...));
+        $this->itemPicker = '';
+    }
+
+    public function removeItemLine(int $index): void
+    {
+        unset($this->itemLines[$index]);
+        $this->itemLines = array_values($this->itemLines);
+    }
+
+    private function itemPriceFor(?Program $program, ?Bundle $bundle): float
+    {
+        return Deal::defaultAgreedAmount($this->deal->customer, $program, $bundle, $this->deal->class_tier);
+    }
+
+    public function saveItems(ActivityLogger $activityLogger): void
+    {
+        $this->itemsError = null;
+        $this->validate(DealLines::rules('itemLines'), [], DealLines::attributes('itemLines'));
+
+        $before = $this->deal->itemsLabel().' (₪'.number_format((float) $this->deal->agreed_amount, 0).')';
+
+        try {
+            $this->deal->replaceItems($this->loadedVersion, DealLines::toItems($this->itemLines));
+        } catch (\RuntimeException $e) {
+            $this->itemsError = $e->getMessage();
+
+            return;
+        }
+
+        $activityLogger->log('deal.items_updated', "עודכנו התוכניות בעסקה #{$this->deal->id}: {$before} ← {$this->deal->itemsLabel()} (₪".number_format((float) $this->deal->agreed_amount, 0).')', [
+            'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
+        ]);
+
+        $this->cancelItemsEdit();
+        $this->syncFields();
+        $this->pairContractTemplateId = (string) (DocumentTemplate::defaultContractFor($this->deal)?->id ?? '');
+        $this->notifySuccess('התוכניות והסכומים בעסקה עודכנו.');
+    }
+
+    #[Computed]
+    public function catalogPrograms()
+    {
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function catalogBundles()
+    {
+        return Bundle::where('is_active', true)->where('is_subscription_type', false)->orderBy('name')->get();
+    }
+
     public function mount(Deal $deal): void
     {
         abort_unless(auth()->user()->can('deals.view'), 403);
 
-        $this->deal = $deal->load(['customer.school', 'program', 'bundle', 'status', 'paymentMethod']);
+        $this->deal = $deal->load(['customer.school', 'program', 'bundle', 'status', 'paymentMethod', 'items.program', 'items.bundle']);
         $this->syncFields();
         // Locked once SUMIT issued anything for the deal (Deal::lockToBusinessEntity()).
         $this->invoiceBusinessEntityId = (string) ($this->deal->business_entity_id ?? '');
@@ -162,13 +247,26 @@ class extends Component
 
         $lockReason = $this->deal->amountLockReason();
 
-        if ($lockReason && abs((float) $data['agreedAmount'] - (float) $this->deal->agreed_amount) >= 0.005) {
+        $amountChanged = abs((float) $data['agreedAmount'] - (float) $this->deal->agreed_amount) >= 0.005;
+
+        if ($lockReason && $amountChanged) {
             $this->addError('agreedAmount', $lockReason);
 
             return;
         }
 
+        // With several lines the amount is their sum — changed through the lines.
+        if ($amountChanged && $this->deal->items->count() > 1) {
+            $this->addError('agreedAmount', 'בעסקה כמה תוכניות — הסכום הוא סכום השורות, ומשנים אותו בעריכת התוכניות בעסקה.');
+
+            return;
+        }
+
         try {
+            if ($amountChanged && $this->deal->items->count() === 1) {
+                $this->deal->items->first()->update(['amount' => $data['agreedAmount']]);
+            }
+
             $this->deal->updateDetailsWithLock($this->loadedVersion, [
                 'agreed_amount' => $data['agreedAmount'],
                 'special_request' => $data['specialRequest'] ?: null,
@@ -185,7 +283,7 @@ class extends Component
             'deal_id' => $this->deal->id, 'customer_id' => $this->deal->customer_id,
         ]);
 
-        $this->deal->refresh()->load('paymentMethod');
+        $this->deal->refresh()->load('paymentMethod', 'items.program', 'items.bundle');
         $this->syncFields();
     }
 
@@ -1149,7 +1247,7 @@ class extends Component
     <div class="topbar">
         <div>
             <span class="badge {{ \App\Models\Deal::badgeClassForStatusName($deal->status?->name) }}" style="margin-bottom:8px; display:inline-flex">{{ $deal->status?->name }}</span>
-            <h1>{{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}</h1>
+            <h1>{{ $deal->itemsLabel() }}</h1>
             <p style="color:var(--color-text-secondary); margin:0">
                 לקוחה: {{ $deal->customer->school?->name ?? '—' }}
                 @if ($deal->customer->hasActiveSubscription())
@@ -1182,18 +1280,51 @@ class extends Component
 
     <div class="cols2">
         <div>
-            {{-- ===== פרטי המוצר הנמכר (Snapshot) ===== --}}
+            {{-- ===== התוכניות והמארזים בעסקה (DEAL_ITEM snapshots, 2026-11-24) ===== --}}
             <div class="card" style="margin-bottom:var(--sp-lg)">
-                <h3>פרטי המוצר בעת המכירה</h3>
-                <div class="info-grid">
-                    @if ($deal->program_id)
-                        <div class="item"><div class="k">תוכנית</div><div class="v">{{ $deal->program_name_snapshot }}</div></div>
-                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->program_price_snapshot, 0) }}@if ($deal->class_tier) <span class="text-text-secondary" style="font-size:var(--fs-caption)">({{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }})</span>@endif</div></div>
-                    @else
-                        <div class="item"><div class="k">מארז</div><div class="v">{{ $deal->bundle_name_snapshot }}</div></div>
-                        <div class="item"><div class="k">מחיר בעת המכירה</div><div class="v ltr-num">₪{{ number_format((float) $deal->bundle_price_snapshot, 0) }}@if ($deal->class_tier) <span class="text-text-secondary" style="font-size:var(--fs-caption)">({{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }})</span>@endif</div></div>
-                    @endif
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)">
+                    <h3 style="margin:0">תוכניות ומארזים בעסקה</h3>
+                    @unless ($editingItems)
+                        <button type="button" class="btn btn-ghost btn-sm" wire:click="editItems" @if ($lock = $deal->itemsLockReason()) disabled title="{{ $lock }}" @endif>עריכה</button>
+                    @endunless
                 </div>
+                @if ($itemsError)
+                    <div style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small); margin-bottom: var(--sp-sm)">{{ $itemsError }}</div>
+                @endif
+                @if ($editingItems)
+                    <form wire:submit="saveItems" class="form-grid">
+                        @include('components.deal-lines.editor', [
+                            'lines' => $itemLines, 'prop' => 'itemLines', 'picker' => 'itemPicker', 'remove' => 'removeItemLine',
+                            'programs' => $this->catalogPrograms, 'bundles' => $this->catalogBundles, 'tier' => $deal->class_tier,
+                        ])
+                        <div class="full" style="display:flex; gap:var(--sp-sm); align-items:center">
+                            <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
+                            <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemsEdit">ביטול</button>
+                            <span class="text-text-secondary" style="font-size:var(--fs-caption)">סכום העסקה יתעדכן לסכום השורות.</span>
+                        </div>
+                    </form>
+                @else
+                    <div class="table-scroll">
+                        <table class="deal-items-table">
+                            <thead><tr><th>פריט</th><th>מחיר מחירון</th><th>סכום בעסקה</th></tr></thead>
+                            <tbody>
+                                @foreach ($deal->items as $item)
+                                    <tr>
+                                        <td>@if ($item->bundle_id)<span class="text-text-secondary">מארז:</span> @endif{{ $item->name_snapshot }}</td>
+                                        <td class="ltr-num">{{ $item->list_price !== null ? '₪'.number_format((float) $item->list_price, 0) : '—' }}</td>
+                                        <td class="ltr-num">₪{{ number_format((float) $item->amount, 0) }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                            @if ($deal->items->count() > 1)
+                                <tfoot><tr><td>סה״כ</td><td></td><td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td></tr></tfoot>
+                            @endif
+                        </table>
+                    </div>
+                    @if ($deal->class_tier)
+                        <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:var(--sp-sm) 0 0">המחירים לפי {{ \App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier }}.</p>
+                    @endif
+                @endif
             </div>
 
             {{-- ===== פרטי עסקה: סכום, אמצעי תשלום, מספר תלמידות, בקשה מיוחדת ===== --}}
@@ -1203,6 +1334,7 @@ class extends Component
                     <div>
                         <label for="agreedAmount">סכום מוסכם</label>
                         @php $amountLockReason = $deal->amountLockReason(); @endphp
+                        @php $amountLockReason ??= $deal->items->count() > 1 ? 'סכום השורות — משנים אותו בעריכת התוכניות בעסקה.' : null; @endphp
                         <input type="text" id="agreedAmount" wire:model="agreedAmount" class="ltr-num" dir="ltr" @disabled($amountLockReason) @if ($amountLockReason) title="{{ $amountLockReason }}" @endif>
                         @if ($amountLockReason) <div style="color: var(--color-text-secondary); font-size: var(--fs-caption); margin-top: 4px;">{{ $amountLockReason }}</div> @endif
                         @error('agreedAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror

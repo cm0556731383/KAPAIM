@@ -292,7 +292,11 @@ class extends Component
                         @foreach ($document->templateFields() as $field)
                             <div class="full">
                                 <label>{{ $field->name }} @if ($field->is_required)<span style="color:var(--color-error)">*</span>@endif @if ($field->field_type === 'linked')<span class="scope-pill" style="margin-inline-start:6px">מקושר</span>@endif</label>
-                                <input type="text" wire:model="fieldValues.{{ $field->id }}" @disabled($document->confirmed_at)>
+                                @if (\App\Services\DocumentLinkedFields::isMultiline($field->linked_field))
+                                    <textarea wire:model="fieldValues.{{ $field->id }}" rows="3" @disabled($document->confirmed_at)></textarea>
+                                @else
+                                    <input type="text" wire:model="fieldValues.{{ $field->id }}" @disabled($document->confirmed_at)>
+                                @endif
                             </div>
                         @endforeach
                         @if ($document->confirmed_at)

@@ -63,7 +63,8 @@ class LeadQuoteTest extends TestCase
 
         $this->assertNull($quote->deal_id);
         $this->assertSame($lead->id, $quote->lead_id);
-        $this->assertSame(['program_id' => $program->id, 'bundle_id' => null, 'agreed_amount' => 1000, 'students_count' => 30, 'class_tier' => null], $quote->lead_offer);
+        $this->assertSame(['program_id' => $program->id, 'bundle_id' => null, 'agreed_amount' => 1000, 'students_count' => 30, 'class_tier' => null,
+            'items' => [['program_id' => $program->id, 'bundle_id' => null, 'amount' => 1000]]], $quote->lead_offer);
         $values = array_values($quote->currentFieldValues());
         $this->assertSame([$lead->school->name, 'רחל המנהלת', $program->name, '1,000'], $values);
         $this->assertSame(['rachel@example.com'], $quote->defaultRecipients()->pluck('email')->all());
@@ -175,9 +176,9 @@ class LeadQuoteTest extends TestCase
 
         $component = Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
             ->call('openQuoteForm')
-            ->assertSet('quoteItem', "program:{$program->id}")
-            ->assertSet('quoteAmount', '900')
-            ->set('quoteAmount', '850')
+            ->assertSet('quoteLines.0.item', "program:{$program->id}")
+            ->assertSet('quoteLines.0.amount', '900')
+            ->set('quoteLines.0.amount', '850')
             ->call('createQuote')
             ->assertHasNoErrors();
 
@@ -201,9 +202,9 @@ class LeadQuoteTest extends TestCase
         Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead->fresh()])
             ->call('openQuoteForm')
             ->assertSet('quoteClassTier', '3-4')
-            ->assertSet('quoteAmount', '1300')
+            ->assertSet('quoteLines.0.amount', '1300')
             ->set('quoteClassTier', '5-6')
-            ->assertSet('quoteAmount', '1600')
+            ->assertSet('quoteLines.0.amount', '1600')
             ->call('createQuote')
             ->assertHasNoErrors();
 
@@ -231,7 +232,7 @@ class LeadQuoteTest extends TestCase
         Livewire::actingAs($this->owner)->test('lead-detail', ['lead' => $lead])
             ->call('openQuoteForm')
             ->assertSet('quoteClassTier', '1-2')
-            ->assertSet('quoteAmount', '900');
+            ->assertSet('quoteLines.0.amount', '900');
     }
 
     public function test_a_sales_rep_with_leads_access_only_can_open_and_send_the_lead_quote(): void

@@ -115,7 +115,7 @@ class extends Component
                         <tr class="row-link" onclick="location.href='{{ route('deal-detail', $deal) }}'">
                             <td>{{ $deal->customer->school?->name ?? '—' }}</td>
                             <td>
-                                {{ $deal->program_name_snapshot ?? $deal->bundle_name_snapshot }}
+                                {{ $deal->itemsLabel() }}
                                 @if ($row->atRisk)<div><span class="badge badge-warning">חשש לתשלום כפול או ביתר</span></div>@endif
                             </td>
                             <td class="ltr-num">₪{{ number_format((float) $deal->agreed_amount, 0) }}</td>
@@ -152,7 +152,7 @@ class extends Component
                     @foreach ($this->pendingChecks as $payment)
                         <tr>
                             <td>{{ $payment->deal->customer->school?->name ?? '—' }}</td>
-                            <td><a href="{{ route('deal-detail', $payment->deal) }}">{{ $payment->deal->program_name_snapshot ?? $payment->deal->bundle_name_snapshot }}</a></td>
+                            <td><a href="{{ route('deal-detail', $payment->deal) }}">{{ $payment->deal->itemsLabel() }}</a></td>
                             <td class="ltr-num">
                                 {{ $payment->check_number ?? '—' }}
                                 @if ($payment->checkBankLabel())<div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">{{ $payment->checkBankLabel() }}</div>@endif

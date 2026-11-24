@@ -172,12 +172,14 @@ class RevenueReport
     /** @return Collection<int, array{month: string, amount: float, source: string, label: string}> one row per non-subscription payment and per subscription month-slice */
     private function revenueEntries(): Collection
     {
-        $entries = $this->nonSubscriptionPayments()->toBase()->map(fn (Payment $payment) => [
+        $entries = $this->nonSubscriptionPayments()->toBase()->flatMap(fn (Payment $payment) => collect($this->paymentSplit($payment))->map(fn (array $part) => [
             'month' => CarbonImmutable::parse($this->incomeDate($payment))->format('Y-m'),
             'date' => CarbonImmutable::parse($this->incomeDate($payment))->toDateString(),
-            'amount' => (float) $payment->amount,
+            'amount' => $part['amount'],
             'description' => "תשלום · {$this->customerName($payment->deal)}",
-        ] + $this->revenueSource($payment->deal));
+            'source' => $part['source'],
+            'label' => $part['label'],
+        ]));
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$entries) {
             foreach ($this->subscriptionMonthlySlices($subscription) as $slice) {
@@ -188,7 +190,7 @@ class RevenueReport
                     'description' => ($slice['number']
                         ? "מנוי, חודש {$slice['number']} מתוך ".Subscription::TOTAL_DELIVERIES." ({$slice['label']})"
                         : 'התאמה לסכום הזיכוי בביטול המנוי').' · '.$this->customerName($subscription->deal),
-                ] + $this->revenueSource($subscription->deal));
+                ] + $this->subscriptionSource($subscription->deal));
             }
         });
 
@@ -213,14 +215,60 @@ class RevenueReport
         return $deal?->customer?->school?->name ?? 'עסקה #'.$deal?->id;
     }
 
-    /** @return array{source: string, label: string} what a deal's income is filed under — its program, else its bundle. */
-    private function revenueSource(Deal $deal): array
+    /** @return array{source: string, label: string} what a subscription's income is filed under — its bundle. */
+    private function subscriptionSource(Deal $deal): array
     {
-        if ($deal->program) {
-            return ['source' => "program:{$deal->program_id}", 'label' => $deal->program->name];
+        $bundle = $deal->subscriptionBundle();
+
+        return ['source' => 'bundle:'.(int) $bundle?->id, 'label' => $bundle?->name ?? self::BUNDLE_BUCKET_LABEL];
+    }
+
+    /**
+     * A payment split over its deal's lines by their share of the deal's
+     * amount (2026-11-24: several programs/bundles in one deal). The
+     * subscription bundle's share is left out — it's recognized month by
+     * month instead (subscriptionMonthlySlices()).
+     *
+     * @return list<array{amount: float, source: string, label: string, program_label: string}>
+     */
+    private function paymentSplit(Payment $payment): array
+    {
+        $deal = $payment->deal;
+        $items = $deal->items;
+        $amount = (float) $payment->amount;
+
+        if ($items->isEmpty()) {
+            return [[
+                'amount' => $amount,
+                'source' => $deal->program_id ? "program:{$deal->program_id}" : 'bundle:'.(int) $deal->bundle_id,
+                'label' => $deal->program?->name ?? $deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL,
+                'program_label' => $deal->program?->name ?? self::BUNDLE_BUCKET_LABEL,
+            ]];
         }
 
-        return ['source' => 'bundle:'.(int) $deal->bundle_id, 'label' => $deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL];
+        $total = (float) $items->sum('amount');
+        $parts = [];
+
+        foreach ($items as $item) {
+            if ($item->isSubscriptionBundle()) {
+                continue;
+            }
+
+            $share = $total > 0 ? (float) $item->amount / $total : 1 / $items->count();
+            $parts[] = [
+                'amount' => round($amount * $share, 2),
+                'source' => $item->program_id ? "program:{$item->program_id}" : "bundle:{$item->bundle_id}",
+                'label' => $item->program?->name ?? $item->bundle?->name ?? $item->name_snapshot,
+                'program_label' => $item->program?->name ?? self::BUNDLE_BUCKET_LABEL,
+            ];
+        }
+
+        // Rounding leftovers go to the last part, so the parts add up to the payment.
+        if ($parts !== [] && count($parts) === $items->count()) {
+            $parts[count($parts) - 1]['amount'] = round($amount - array_sum(array_column(array_slice($parts, 0, -1), 'amount')), 2);
+        }
+
+        return $parts;
     }
 
     private function periodDescription(array $years, array $months, array $sources): string
@@ -266,12 +314,13 @@ class RevenueReport
         $revenue = [];
 
         $this->nonSubscriptionPayments()->each(function (Payment $payment) use (&$revenue) {
-            $label = $this->programLabelForDeal($payment->deal);
-            $revenue[$label] = ($revenue[$label] ?? 0) + (float) $payment->amount;
+            foreach ($this->paymentSplit($payment) as $part) {
+                $revenue[$part['program_label']] = ($revenue[$part['program_label']] ?? 0) + $part['amount'];
+            }
         });
 
         $this->subscriptions()->each(function (Subscription $subscription) use (&$revenue) {
-            $label = $subscription->deal->program?->name ?? $subscription->deal->bundle?->name ?? self::BUNDLE_BUCKET_LABEL;
+            $label = $subscription->deal->subscriptionBundle()?->name ?? self::BUNDLE_BUCKET_LABEL;
             $revenue[$label] = ($revenue[$label] ?? 0) + array_sum(array_column($this->subscriptionMonthlySlices($subscription), 'amount'));
         });
 
@@ -345,8 +394,10 @@ class RevenueReport
      */
     private function nonSubscriptionPayments(): Collection
     {
-        return Payment::with('paymentMethod', 'deal.bundle', 'deal.program', 'deal.customer.school')->get()
-            ->filter(fn (Payment $payment) => $payment->deal && ! $payment->deal->bundle?->is_subscription_type)
+        return Payment::with('paymentMethod', 'deal.bundle', 'deal.program', 'deal.items.program', 'deal.items.bundle', 'deal.customer.school')->get()
+            ->filter(fn (Payment $payment) => $payment->deal && ($payment->deal->items->isEmpty()
+                ? ! $payment->deal->bundle?->is_subscription_type
+                : $payment->deal->items->contains(fn ($item) => ! $item->isSubscriptionBundle())))
             ->reject(fn (Payment $payment) => $payment->isCheck() && ! $payment->cleared_date);
     }
 
@@ -357,7 +408,7 @@ class RevenueReport
 
     private function subscriptions(): Collection
     {
-        return Subscription::with('deal.program', 'deal.bundle', 'deal.customer.school')->get();
+        return Subscription::with('deal.program', 'deal.bundle', 'deal.items.bundle', 'deal.customer.school')->get();
     }
 
     /**
@@ -407,11 +458,6 @@ class RevenueReport
         }
 
         return $kept;
-    }
-
-    private function programLabelForDeal(Deal $deal): string
-    {
-        return $deal->program?->name ?? self::BUNDLE_BUCKET_LABEL;
     }
 }
 

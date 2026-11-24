@@ -305,14 +305,23 @@ class Document extends Model
             ) ?? '',
         ]);
 
-        // A new invoice starts with one line for what was sold — "<program/
-        // bundle> — <invoice name>" at the deal's agreed amount — editable
-        // or removable on the invoice screen until it's sent (FR-4.20).
+        // A new invoice starts with a line per program/bundle sold —
+        // "<program/bundle> — <invoice name>" at that line's agreed amount
+        // (2026-11-24: several items per deal) — each editable or removable
+        // on the invoice screen until it's sent (FR-4.20). Lines that don't
+        // add up to the deal's amount (shouldn't happen) fall back to one.
         if ($document->document_type === 'invoice' && (float) $deal->agreed_amount > 0) {
-            $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
             $invoiceName = DocumentLinkedFields::invoiceName($deal);
+            $label = fn (string $item) => $invoiceName ? "{$item} — {$invoiceName}" : $item;
+            $items = $deal->items->filter(fn ($item) => (float) $item->amount > 0);
 
-            $document->addLine($invoiceName ? "{$item} — {$invoiceName}" : $item, (float) $deal->agreed_amount);
+            if ($items->isNotEmpty() && abs((float) $items->sum('amount') - (float) $deal->agreed_amount) < 0.005) {
+                foreach ($items as $item) {
+                    $document->addLine($label($item->name_snapshot), (float) $item->amount);
+                }
+            } else {
+                $document->addLine($label($deal->itemsLabel()), (float) $deal->agreed_amount);
+            }
         }
 
         return $document;
@@ -354,8 +363,38 @@ class Document extends Model
             throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור הצעת המחיר — לא שניהם ולא אף אחד.');
         }
 
-        if (($program && ! $program->is_active) || ($bundle && ! $bundle->is_active)) {
-            throw new RuntimeException('לא ניתן לשלוח הצעת מחיר עבור תוכנית או מארז שהושבתו.');
+        return self::generateForLeadWithItems($lead, $template, [['program' => $program, 'bundle' => $bundle, 'amount' => $agreedAmount]], $studentsCount, $classTier);
+    }
+
+    /**
+     * generateForLead() for several programs/bundles (2026-11-24) — each
+     * line ['program' => ?Program, 'bundle' => ?Bundle, 'amount' => ?float];
+     * a missing amount is the item's classes-tier price. The offer keeps the
+     * lines (lead_offer.items); confirming opens one deal with all of them.
+     *
+     * @throws RuntimeException on a business-rule violation.
+     */
+    public static function generateForLeadWithItems(
+        Lead $lead,
+        DocumentTemplate $template,
+        array $items,
+        ?int $studentsCount = null,
+        ?string $classTier = null,
+    ): self {
+        if ($template->document_type !== 'quote' || ! $template->is_active) {
+            throw new RuntimeException('יש לבחור תבנית פעילה של הצעת מחיר.');
+        }
+
+        if ($lead->customer()->exists()) {
+            throw new RuntimeException('ליד זה כבר הומר ללקוחה — הצעת מחיר לרכישה נוספת נשלחת מכרטיס העסקה בכרטיס הלקוחה.');
+        }
+
+        if (! $lead->school_id) {
+            throw new RuntimeException('יש להשלים פרטי בית ספר עבור הליד לפני שליחת הצעת מחיר.');
+        }
+
+        if ($items === []) {
+            throw new RuntimeException('יש לבחור לפחות תוכנית אחת או מארז אחד עבור הצעת המחיר.');
         }
 
         // Prices by classes per grade (2026-11-24): the tier chosen in the
@@ -364,20 +403,40 @@ class Document extends Model
             ? $classTier
             : Program::classTierFor($lead->school?->classes_per_grade);
 
-        $amount = $agreedAmount ?? ($program ?? $bundle)->priceForClassTier($classTier);
+        $offerItems = [];
 
-        if ($amount <= 0) {
-            throw new RuntimeException('יש להזין סכום להצעת המחיר.');
+        foreach ($items as $item) {
+            $program = $item['program'] ?? null;
+            $bundle = $item['bundle'] ?? null;
+
+            if (($program === null) === ($bundle === null)) {
+                throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד בכל שורה של הצעת המחיר.');
+            }
+
+            if (($program && ! $program->is_active) || ($bundle && ! $bundle->is_active)) {
+                throw new RuntimeException('לא ניתן לשלוח הצעת מחיר עבור תוכנית או מארז שהושבתו.');
+            }
+
+            $amount = round((float) ($item['amount'] ?? ($program ?? $bundle)->priceForClassTier($classTier)), 2);
+
+            if ($amount <= 0) {
+                throw new RuntimeException('יש להזין סכום לכל שורה בהצעת המחיר.');
+            }
+
+            $offerItems[] = ['program_id' => $program?->id, 'bundle_id' => $bundle?->id, 'amount' => $amount];
         }
+
+        $amount = round(array_sum(array_column($offerItems, 'amount')), 2);
 
         $document = new self([
             'lead_id' => $lead->id,
             'lead_offer' => [
-                'program_id' => $program?->id,
-                'bundle_id' => $bundle?->id,
-                'agreed_amount' => round($amount, 2),
+                'program_id' => $offerItems[0]['program_id'],
+                'bundle_id' => $offerItems[0]['bundle_id'],
+                'agreed_amount' => $amount,
                 'students_count' => $studentsCount,
                 'class_tier' => $classTier,
+                'items' => $offerItems,
             ],
         ]);
         $document->setRelation('lead', $lead);
@@ -410,8 +469,23 @@ class Document extends Model
     {
         $lead = $this->lead;
         $offer = $this->lead_offer ?? [];
-        $program = isset($offer['program_id']) ? Program::find($offer['program_id']) : null;
-        $bundle = isset($offer['bundle_id']) ? Bundle::find($offer['bundle_id']) : null;
+        $tier = $offer['class_tier'] ?? null;
+        $items = new \Illuminate\Database\Eloquent\Collection(collect($this->leadOfferItems())->values()->map(function (array $line, int $index) use ($tier) {
+            $item = new DealItem([
+                'program_id' => $line['program']?->id,
+                'bundle_id' => $line['bundle']?->id,
+                'name_snapshot' => (string) ($line['program'] ?? $line['bundle'])?->name,
+                'list_price' => ($line['program'] ?? $line['bundle'])?->priceForClassTier($tier),
+                'amount' => $line['amount'],
+                'sort_order' => $index + 1,
+            ]);
+            $item->setRelation('program', $line['program']);
+            $item->setRelation('bundle', $line['bundle']);
+
+            return $item;
+        })->all());
+        $program = $items->first()?->program;
+        $bundle = $items->first()?->bundle;
 
         $contacts = Contact::where('school_id', $lead->school_id)->get();
 
@@ -443,19 +517,43 @@ class Document extends Model
             $deal->setRelation($relation, null);
         }
 
+        $deal->setRelation('items', $items);
+
         return $deal->setRelation('customer', $customer);
+    }
+
+    /**
+     * A lead quote's offered lines — lead_offer.items, or for a quote made
+     * before several items were possible, its one program/bundle.
+     *
+     * @return list<array{program: ?Program, bundle: ?Bundle, amount: float}>
+     */
+    public function leadOfferItems(): array
+    {
+        $offer = $this->lead_offer ?? [];
+        $lines = $offer['items'] ?? [[
+            'program_id' => $offer['program_id'] ?? null,
+            'bundle_id' => $offer['bundle_id'] ?? null,
+            'amount' => $offer['agreed_amount'] ?? 0,
+        ]];
+
+        return collect($lines)
+            ->map(fn (array $line) => [
+                'program' => isset($line['program_id']) ? Program::find($line['program_id']) : null,
+                'bundle' => isset($line['bundle_id']) ? Bundle::find($line['bundle_id']) : null,
+                'amount' => (float) ($line['amount'] ?? 0),
+            ])
+            ->filter(fn (array $line) => $line['program'] || $line['bundle'])
+            ->values()->all();
     }
 
     /** The offered program/bundle's name — "מארז: …" for a bundle. */
     public function leadOfferItemName(): ?string
     {
-        $offer = $this->lead_offer ?? [];
+        $names = collect($this->leadOfferItems())
+            ->map(fn (array $line) => $line['program']?->name ?? "מארז: {$line['bundle']->name}");
 
-        if (isset($offer['program_id'])) {
-            return Program::find($offer['program_id'])?->name;
-        }
-
-        return isset($offer['bundle_id']) && ($bundle = Bundle::find($offer['bundle_id'])) ? "מארז: {$bundle->name}" : null;
+        return $names->isEmpty() ? null : $names->implode(' + ');
     }
 
     /** The deal the linked fields read from — the real one, or a pending lead quote's offer (leadOfferDeal()). */
@@ -479,11 +577,9 @@ class Document extends Model
         $offer = $this->lead_offer ?? [];
 
         try {
-            $deal = Deal::createForCustomer(
+            $deal = Deal::createWithItems(
                 $customer,
-                isset($offer['program_id']) ? Program::find($offer['program_id']) : null,
-                isset($offer['bundle_id']) ? Bundle::find($offer['bundle_id']) : null,
-                (float) ($offer['agreed_amount'] ?? 0) ?: null,
+                collect($this->leadOfferItems())->map(fn (array $line) => [...$line, 'amount' => $line['amount'] ?: null])->all(),
                 classTier: $offer['class_tier'] ?? null,
             );
         } catch (RuntimeException $e) {
@@ -497,7 +593,7 @@ class Document extends Model
         $this->update(['deal_id' => $deal->id]);
         $this->setRelation('deal', $deal);
 
-        $logger->log('deal.created', "נוצרה עסקה #{$deal->id} מאישור הצעת המחיר שנשלחה לליד #{$lead->id}: ".($deal->program_name_snapshot ?? $deal->bundle_name_snapshot), [
+        $logger->log('deal.created', "נוצרה עסקה #{$deal->id} מאישור הצעת המחיר שנשלחה לליד #{$lead->id}: ".$deal->itemsLabel(), [
             'deal_id' => $deal->id, 'customer_id' => $customer->id, 'lead_id' => $lead->id, 'document_id' => $this->id, 'user' => null,
         ]);
     }

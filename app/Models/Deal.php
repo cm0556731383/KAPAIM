@@ -297,24 +297,11 @@ class Deal extends Model
     }
 
     /**
-     * FR-3.2/FR-3.3/FR-8.4: the only place a Deal row is ever created — a
-     * customer is always required (never freely user-supplied — the caller
-     * passes it from context) and exactly one of $programId/$bundleId must
-     * be given. FR-8.5: the chosen program/bundle must be active. Snapshots
-     * the chosen item's current name/price and defaults agreed_amount to
-     * that price (editable by the caller before/at creation). FR-3.11: when
-     * the chosen program is a premium program and the customer already has
-     * an active subscription, the default instead becomes 10% off that
-     * price — still fully overridable by an explicit $agreedAmount.
+     * FR-3.2/FR-3.3/FR-8.4: a deal for one program or one bundle — exactly
+     * one of $programId/$bundleId. Kept for every caller that sells a single
+     * item; see createWithItems() for the general case (several lines).
      *
-     * @param  ?\DateTimeInterface  $purchasedAt  Build-plan 18 (FR-8.21): lets the
-     *                                            legacy-data importer backdate a
-     *                                            historical deal's purchase date —
-     *                                            every other caller omits this and
-     *                                            gets today, exactly as before.
-     *
-     * @throws RuntimeException on a business-rule violation — the caller
-     *                          shows the message as a friendly error.
+     * @throws RuntimeException on a business-rule violation.
      */
     public static function createForCustomer(
         Customer $customer,
@@ -330,20 +317,56 @@ class Deal extends Model
             throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד.');
         }
 
-        if ($program && ! $program->is_active) {
-            throw new RuntimeException('לא ניתן ליצור עסקה עבור תוכנית שהושבתה.');
-        }
+        return self::createWithItems(
+            $customer,
+            [['program' => $program, 'bundle' => $bundle, 'amount' => $agreedAmount]],
+            $specialRequest,
+            $paymentMethodId,
+            $purchasedAt,
+            $classTier,
+        );
+    }
 
-        if ($bundle && ! $bundle->is_active) {
-            throw new RuntimeException('לא ניתן ליצור עסקה עבור מארז שהושבת.');
-        }
+    /**
+     * The only place a Deal row is ever created (FR-3.2/FR-8.4) — a
+     * customer is always required, and at least one line (2026-11-24:
+     * several programs/bundles in one deal). Each line is
+     * ['program' => ?Program, 'bundle' => ?Bundle, 'amount' => ?float] with
+     * exactly one of program/bundle; FR-8.5: each must be active. A line's
+     * amount defaults to its classes-tier price (FR-3.11 discount included);
+     * the deal's agreed_amount is the lines' sum.
+     *
+     * @param  array<int, array{program?: ?Program, bundle?: ?Bundle, amount?: ?float}>  $items
+     *
+     * @throws RuntimeException on a business-rule violation — the caller
+     *                          shows the message as a friendly error.
+     */
+    public static function createWithItems(
+        Customer $customer,
+        array $items,
+        ?string $specialRequest = null,
+        ?int $paymentMethodId = null,
+        ?\DateTimeInterface $purchasedAt = null,
+        ?string $classTier = null,
+    ): self {
+        // Prices by classes per grade (2026-11-24): the tier picked in the
+        // new-deal window, else the one from the customer's school.
+        $classTier = array_key_exists((string) $classTier, Program::CLASS_TIERS)
+            ? $classTier
+            : Program::classTierFor($customer->school?->classes_per_grade);
 
-        // The same subscription twice at once is a duplicate sale (e.g. a
-        // second click) — renewing means next year's bundle, a different one.
-        if ($bundle?->is_subscription_type && $customer->subscriptions()
-            ->whereHas('deal', fn ($q) => $q->where('bundle_id', $bundle->id))
-            ->get()->contains->isActive()) {
-            throw new RuntimeException("ללקוחה כבר יש מנוי פעיל במארז \"{$bundle->name}\" — לא ניתן למכור לה אותו מנוי פעם נוספת.");
+        $lines = self::buildItemLines($customer, $items, $classTier);
+
+        foreach ($lines as $line) {
+            $bundle = $line['bundle'];
+
+            // The same subscription twice at once is a duplicate sale (e.g. a
+            // second click) — renewing means next year's bundle, a different one.
+            if ($bundle?->is_subscription_type && $customer->subscriptions()
+                ->whereHas('deal', fn ($q) => $q->withItem($bundle))
+                ->get()->contains->isActive()) {
+                throw new RuntimeException("ללקוחה כבר יש מנוי פעיל במארז \"{$bundle->name}\" — לא ניתן למכור לה אותו מנוי פעם נוספת.");
+            }
         }
 
         $status = StatusDefinition::firstOrCreate(
@@ -351,39 +374,225 @@ class Deal extends Model
             ['is_active' => true, 'sort_order' => 1],
         );
 
-        // Prices by classes per grade (2026-11-24): the tier picked in the
-        // new-deal window, else the one from the customer's school.
-        $classTier = array_key_exists((string) $classTier, Program::CLASS_TIERS)
-            ? $classTier
-            : Program::classTierFor($customer->school?->classes_per_grade);
+        $deal = DB::transaction(function () use ($customer, $lines, $classTier, $status, $paymentMethodId, $specialRequest, $purchasedAt) {
+            $deal = self::create([
+                'customer_id' => $customer->id,
+                'status_id' => $status->id,
+                'agreed_amount' => round(array_sum(array_column($lines, 'amount')), 2),
+                'class_tier' => $classTier,
+                'payment_method_id' => $paymentMethodId,
+                'special_request' => $specialRequest,
+                'purchased_at' => $purchasedAt ?? now(),
+                'version' => 0,
+            ] + self::primaryItemColumns($lines[0]));
 
-        $defaultAgreedAmount = self::defaultAgreedAmount($customer, $program, $bundle, $classTier);
+            $deal->writeItems($lines);
 
-        $deal = self::create([
-            'customer_id' => $customer->id,
-            'program_id' => $program?->id,
-            'bundle_id' => $bundle?->id,
-            'status_id' => $status->id,
-            'agreed_amount' => $agreedAmount ?? $defaultAgreedAmount,
-            'program_price_snapshot' => $program?->priceForClassTier($classTier),
-            'bundle_price_snapshot' => $bundle?->priceForClassTier($classTier),
-            'class_tier' => $classTier,
-            'program_name_snapshot' => $program?->name,
-            'bundle_name_snapshot' => $bundle?->name,
-            'payment_method_id' => $paymentMethodId,
-            'special_request' => $specialRequest,
-            'purchased_at' => $purchasedAt ?? now(),
-            'version' => 0,
-        ]);
+            if ($subscriptionLine = collect($lines)->first(fn ($line) => $line['bundle']?->is_subscription_type)) {
+                $deal->openSubscriptionIfApplicable($subscriptionLine['bundle'], $subscriptionLine['amount']);
+            }
 
-        if ($program) {
-            $deal->assignMailingListsForProgramPurchase($program);
-        } elseif ($bundle) {
-            $deal->openSubscriptionIfApplicable($bundle);
-            $deal->assignMailingListsForBundlePurchase($bundle);
+            return $deal;
+        });
+
+        // Mailing lists (Smove calls) once the deal is saved — as before.
+        foreach ($lines as $line) {
+            if ($line['program']) {
+                $deal->assignMailingListsForProgramPurchase($line['program']);
+            } elseif ($line['bundle']->is_subscription_type) {
+                $deal->assignMailingListsForBundlePurchase($line['bundle']);
+            }
         }
 
         return $deal;
+    }
+
+    /**
+     * Validates and prices the requested lines.
+     *
+     * @return list<array{program: ?Program, bundle: ?Bundle, amount: float, list_price: float, name: string}>
+     */
+    private static function buildItemLines(Customer $customer, array $items, ?string $classTier): array
+    {
+        $lines = [];
+
+        foreach (array_values($items) as $item) {
+            $program = $item['program'] ?? null;
+            $bundle = $item['bundle'] ?? null;
+
+            if (($program === null) === ($bundle === null)) {
+                throw new RuntimeException('יש לבחור תוכנית אחת או מארז אחד בלבד עבור העסקה — לא שניהם ולא אף אחד.');
+            }
+
+            if ($program && ! $program->is_active) {
+                throw new RuntimeException('לא ניתן ליצור עסקה עבור תוכנית שהושבתה.');
+            }
+
+            if ($bundle && ! $bundle->is_active) {
+                throw new RuntimeException('לא ניתן ליצור עסקה עבור מארז שהושבת.');
+            }
+
+            $amount = $item['amount'] ?? null;
+
+            $lines[] = [
+                'program' => $program,
+                'bundle' => $bundle,
+                'amount' => round($amount !== null ? (float) $amount : self::defaultAgreedAmount($customer, $program, $bundle, $classTier), 2),
+                'list_price' => ($program ?? $bundle)->priceForClassTier($classTier),
+                'name' => ($program ?? $bundle)->name,
+            ];
+        }
+
+        if ($lines === []) {
+            throw new RuntimeException('יש לבחור לפחות תוכנית אחת או מארז אחד עבור העסקה.');
+        }
+
+        if (collect($lines)->filter(fn ($line) => $line['bundle']?->is_subscription_type)->count() > 1) {
+            throw new RuntimeException('עסקה יכולה לכלול מארז מנוי אחד בלבד.');
+        }
+
+        return $lines;
+    }
+
+    /** deals.program_id/bundle_id + snapshots mirror the first line (see the deal_items migration). */
+    private static function primaryItemColumns(array $line): array
+    {
+        return [
+            'program_id' => $line['program']?->id,
+            'bundle_id' => $line['bundle']?->id,
+            'program_price_snapshot' => $line['program'] ? $line['list_price'] : null,
+            'bundle_price_snapshot' => $line['bundle'] ? $line['list_price'] : null,
+            'program_name_snapshot' => $line['program'] ? $line['name'] : null,
+            'bundle_name_snapshot' => $line['bundle'] ? $line['name'] : null,
+        ];
+    }
+
+    private function writeItems(array $lines): void
+    {
+        foreach ($lines as $index => $line) {
+            $this->items()->create([
+                'program_id' => $line['program']?->id,
+                'bundle_id' => $line['bundle']?->id,
+                'name_snapshot' => $line['name'],
+                'list_price' => $line['list_price'],
+                'amount' => $line['amount'],
+                'sort_order' => $index + 1,
+            ]);
+        }
+
+        $this->unsetRelation('items');
+    }
+
+    /** The programs/bundles sold in this deal, in order (2026-11-24). */
+    public function items(): HasMany
+    {
+        return $this->hasMany(DealItem::class)->orderBy('sort_order')->orderBy('id');
+    }
+
+    /** Deals that include $item (a Program or a Bundle) in one of their lines. */
+    public function scopeWithItem($query, Program|Bundle $item)
+    {
+        return $query->whereHas('items', fn ($q) => $q->where($item instanceof Program ? 'program_id' : 'bundle_id', $item->id));
+    }
+
+    /** Deals that include any of these program ids in one of their lines. */
+    public function scopeWithAnyProgram($query, iterable $programIds)
+    {
+        return $query->whereHas('items', fn ($q) => $q->whereIn('program_id', collect($programIds)->all()));
+    }
+
+    /** What was sold, for headings and lists: "A", or "A + B + C". */
+    public function itemsLabel(): string
+    {
+        $names = $this->items->pluck('name_snapshot')->filter();
+
+        if ($names->isEmpty()) {
+            $names = collect([$this->program_name_snapshot ?? $this->bundle_name_snapshot])->filter();
+        }
+
+        return $names->implode(' + ') ?: "עסקה #{$this->id}";
+    }
+
+    /** The subscription-type bundle sold in this deal, if any. */
+    public function subscriptionBundle(): ?Bundle
+    {
+        return $this->items->map->bundle->filter()->first(fn (Bundle $bundle) => $bundle->is_subscription_type)
+            ?? ($this->bundle?->is_subscription_type ? $this->bundle : null);
+    }
+
+    /** Programs sold directly in this deal (not through a bundle). */
+    public function programIds(): \Illuminate\Support\Collection
+    {
+        return $this->items->pluck('program_id')->filter()->values();
+    }
+
+    /** Bundles sold in this deal. */
+    public function bundleIds(): \Illuminate\Support\Collection
+    {
+        return $this->items->pluck('bundle_id')->filter()->values();
+    }
+
+    /**
+     * Why the lines can't change any more, or null: a cancelled deal, an
+     * invoice issued (as for the amount — amountLockReason()), or a document
+     * already sent to the customer (quote / order form / contract).
+     */
+    public function itemsLockReason(): ?string
+    {
+        if ($reason = $this->amountLockReason()) {
+            return str_replace('הסכום המוסכם', 'התוכניות והסכומים בעסקה', $reason);
+        }
+
+        if ($this->documents()->whereNotNull('sent_at')->exists()) {
+            return 'כבר נשלח ללקוחה מסמך על עסקה זו — לא ניתן לשנות בה תוכניות או סכומים.';
+        }
+
+        return null;
+    }
+
+    /**
+     * Replaces the deal's lines (deal card, until itemsLockReason()) — same
+     * $items shape as createWithItems(). The subscription bundle can't be
+     * added or removed here (it opens / closes a whole subscription); new
+     * programs join their mailing lists. Optimistic lock as every deal edit.
+     *
+     * @throws RuntimeException
+     */
+    public function replaceItems(int $expectedVersion, array $items): void
+    {
+        $this->loadMissing('customer.school', 'items.bundle');
+
+        if ($reason = $this->itemsLockReason()) {
+            throw new RuntimeException($reason);
+        }
+
+        $lines = self::buildItemLines($this->customer, $items, $this->class_tier);
+
+        $before = $this->subscriptionBundle()?->id;
+        $after = collect($lines)->first(fn ($line) => $line['bundle']?->is_subscription_type)['bundle']?->id ?? null;
+
+        if ($before !== $after) {
+            throw new RuntimeException('לא ניתן להוסיף או להסיר מארז מנוי בעסקה קיימת — יש לפתוח עסקה חדשה או לבטל את המנוי.');
+        }
+
+        $oldProgramIds = $this->programIds();
+
+        DB::transaction(function () use ($expectedVersion, $lines) {
+            $this->updateDetailsWithLock($expectedVersion, [
+                'agreed_amount' => round(array_sum(array_column($lines, 'amount')), 2),
+            ] + self::primaryItemColumns($lines[0]));
+
+            $this->items()->delete();
+            $this->writeItems($lines);
+        });
+
+        foreach ($lines as $line) {
+            if ($line['program'] && ! $oldProgramIds->contains($line['program']->id)) {
+                $this->assignMailingListsForProgramPurchase($line['program']);
+            }
+        }
+
+        $this->load('items.program', 'items.bundle');
     }
 
     /**
@@ -436,9 +645,9 @@ class Deal extends Model
      * is always created normally either way — this only ever adds to it,
      * never changes deal creation itself.
      */
-    public function openSubscriptionIfApplicable(?Bundle $bundle = null): void
+    public function openSubscriptionIfApplicable(?Bundle $bundle = null, ?float $agreedPrice = null): void
     {
-        $bundle ??= $this->bundle;
+        $bundle ??= $this->subscriptionBundle();
 
         if (! $bundle?->is_subscription_type) {
             return;
@@ -455,7 +664,7 @@ class Deal extends Model
             'status_id' => $activeStatus->id,
             'start_date' => now()->toDateString(),
             'first_month_date' => HebrewCalendar::cycleStartFor(now(), HebrewCalendar::startMonth(), Subscription::TOTAL_DELIVERIES)->toDateString(),
-            'agreed_price' => $this->agreed_amount,
+            'agreed_price' => $agreedPrice ?? $this->agreed_amount,
             'version' => 0,
         ]);
 

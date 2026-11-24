@@ -10,6 +10,7 @@ use App\Models\Lead;
 use App\Models\LeadInteraction;
 use App\Models\LeadSource;
 use App\Models\Program;
+use App\Support\DealLines;
 use App\Models\School;
 use App\Models\StatusDefinition;
 use App\Models\Task;
@@ -62,8 +63,11 @@ class extends Component
 
     // ===== הצעת מחיר — נשלחת מהליד, לפני ההמרה (בעלת העסק, 2026-10-27) =====
     /** "program:{id}" or "bundle:{id}", same encoding as itemToAttach. */
+    /** The add-item picker of the quote window. */
     public string $quoteItem = '';
-    public string $quoteAmount = '';
+
+    /** The quote's programs/bundles — App\Support\DealLines lines (2026-11-24). */
+    public array $quoteLines = [];
 
     /** Classes-per-grade price tier the quote is priced by ('1-2'/'3-4'/'5-6'). */
     public string $quoteClassTier = '1-2';
@@ -177,27 +181,43 @@ class extends Component
         $this->quoteError = null;
         $this->resetValidation();
 
-        $first = $this->lead->interestedPrograms->first();
-        $this->quoteItem = $first ? "program:{$first->id}" : (($bundle = $this->lead->interestedBundles->first()) ? "bundle:{$bundle->id}" : '');
         $this->quoteStudentsCount = '';
         $this->quoteClassTier = Program::classTierFor($this->lead->school?->classes_per_grade) ?? '1-2';
         $this->quoteTemplateId = (string) ($this->quoteTemplates->first()?->id ?? '');
-        $this->updatedQuoteItem();
+        $this->quoteItem = '';
+        $this->quoteLines = [];
+
+        // Opens on everything the lead asked about.
+        foreach ($this->lead->interestedPrograms as $program) {
+            $this->quoteLines = DealLines::add($this->quoteLines, "program:{$program->id}", $this->quotePriceFor(...));
+        }
+        foreach ($this->lead->interestedBundles as $bundle) {
+            $this->quoteLines = DealLines::add($this->quoteLines, "bundle:{$bundle->id}", $this->quotePriceFor(...));
+        }
 
         $this->dispatch('open-modal', name: 'lead-quote');
     }
 
     public function updatedQuoteItem(): void
     {
-        [$type, $id] = array_pad(explode(':', $this->quoteItem, 2), 2, null);
-        $item = $type === 'program' ? Program::find($id) : ($type === 'bundle' ? Bundle::find($id) : null);
+        $this->quoteLines = DealLines::add($this->quoteLines, $this->quoteItem, $this->quotePriceFor(...));
+        $this->quoteItem = '';
+    }
 
-        $this->quoteAmount = $item ? rtrim(rtrim(number_format($item->priceForClassTier($this->quoteClassTier), 2, '.', ''), '0'), '.') : '';
+    public function removeQuoteLine(int $index): void
+    {
+        unset($this->quoteLines[$index]);
+        $this->quoteLines = array_values($this->quoteLines);
     }
 
     public function updatedQuoteClassTier(): void
     {
-        $this->updatedQuoteItem();
+        $this->quoteLines = DealLines::reprice($this->quoteLines, $this->quotePriceFor(...));
+    }
+
+    private function quotePriceFor(?Program $program, ?Bundle $bundle): float
+    {
+        return ($program ?? $bundle)->priceForClassTier(array_key_exists($this->quoteClassTier, Program::CLASS_TIERS) ? $this->quoteClassTier : null);
     }
 
     /**
@@ -211,14 +231,13 @@ class extends Component
         $this->quoteError = null;
 
         $data = $this->validate([
-            'quoteItem' => ['required', 'string'],
-            'quoteAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            ...DealLines::rules('quoteLines'),
+            'quoteLines.*.amount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'quoteStudentsCount' => ['nullable', 'integer', 'min:0'],
             'quoteTemplateId' => ['required'],
             'quoteClassTier' => ['required', \Illuminate\Validation\Rule::in(array_keys(Program::CLASS_TIERS))],
-        ], [], ['quoteClassTier' => 'מספר כיתות', 'quoteItem' => 'תוכנית / מארז', 'quoteAmount' => 'סכום', 'quoteStudentsCount' => 'מספר תלמידות', 'quoteTemplateId' => 'תבנית']);
+        ], [], DealLines::attributes('quoteLines') + ['quoteClassTier' => 'מספר כיתות', 'quoteStudentsCount' => 'מספר תלמידות', 'quoteTemplateId' => 'תבנית']);
 
-        [$type, $id] = array_pad(explode(':', $data['quoteItem'], 2), 2, null);
         $template = $this->quoteTemplates->firstWhere('id', (int) $data['quoteTemplateId']);
 
         if (! $template) {
@@ -228,12 +247,10 @@ class extends Component
         }
 
         try {
-            $document = Document::generateForLead(
+            $document = Document::generateForLeadWithItems(
                 $this->lead,
                 $template,
-                $type === 'program' ? Program::find($id) : null,
-                $type === 'bundle' ? Bundle::find($id) : null,
-                (float) $data['quoteAmount'],
+                DealLines::toItems($this->quoteLines),
                 $data['quoteStudentsCount'] !== null && $data['quoteStudentsCount'] !== '' ? (int) $data['quoteStudentsCount'] : null,
                 $data['quoteClassTier'],
             );
@@ -259,22 +276,16 @@ class extends Component
         return Document::where('lead_id', $this->lead->id)->with('deal')->orderByDesc('id')->get();
     }
 
-    /** Every active program and bundle — what the lead asked about listed first. */
     #[Computed]
-    public function quoteItems(): array
+    public function quotePrograms()
     {
-        $interestedPrograms = $this->lead->interestedPrograms->pluck('id');
-        $interestedBundles = $this->lead->interestedBundles->pluck('id');
+        return Program::where('is_active', true)->orderBy('name')->get();
+    }
 
-        $programs = Program::where('is_active', true)->orderBy('name')->get();
-        $bundles = Bundle::where('is_active', true)->orderBy('name')->get();
-
-        return [
-            'מבוקשות בליד' => $programs->whereIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p])
-                ->concat($bundles->whereIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", "מארז: {$b->name}", $b]))->values()->all(),
-            'תוכניות' => $programs->whereNotIn('id', $interestedPrograms)->map(fn ($p) => ["program:{$p->id}", $p->name, $p])->values()->all(),
-            'מארזים' => $bundles->whereNotIn('id', $interestedBundles)->map(fn ($b) => ["bundle:{$b->id}", $b->name, $b])->values()->all(),
-        ];
+    #[Computed]
+    public function quoteBundles()
+    {
+        return Bundle::where('is_active', true)->orderBy('name')->get();
     }
 
     private function syncSchoolFields(): void
@@ -1223,22 +1234,6 @@ class extends Component
                         @if ($quoteError)
                             <div class="full" style="background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small);">{{ $quoteError }}</div>
                         @endif
-                        <div class="full">
-                            <label for="quoteItem">תוכנית / מארז</label>
-                            <select id="quoteItem" wire:model.live="quoteItem">
-                                <option value="">בחרו תוכנית או מארז</option>
-                                @foreach ($this->quoteItems as $group => $items)
-                                    @if ($items)
-                                        <optgroup label="{{ $group }}">
-                                            @foreach ($items as [$value, $name, $price])
-                                                <option value="{{ $value }}">{{ $name }} (₪{{ number_format($price->priceForClassTier($quoteClassTier), 0) }})</option>
-                                            @endforeach
-                                        </optgroup>
-                                    @endif
-                                @endforeach
-                            </select>
-                            @error('quoteItem') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
                         <div>
                             <label for="quoteClassTier">מספר כיתות בשנתון</label>
                             <select id="quoteClassTier" wire:model.live="quoteClassTier">
@@ -1252,15 +1247,14 @@ class extends Component
                             @error('quoteClassTier') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
                         <div>
-                            <label for="quoteAmount">סכום ההצעה (ניתן לשינוי)</label>
-                            <input type="text" id="quoteAmount" wire:model="quoteAmount" class="ltr-num" dir="ltr" placeholder="₪">
-                            @error('quoteAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
-                        </div>
-                        <div>
                             <label for="quoteStudentsCount">מספר תלמידות</label>
                             <input type="text" id="quoteStudentsCount" wire:model="quoteStudentsCount" class="ltr-num" dir="ltr" inputmode="numeric">
                             @error('quoteStudentsCount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
                         </div>
+                        @include('components.deal-lines.editor', [
+                            'lines' => $quoteLines, 'prop' => 'quoteLines', 'picker' => 'quoteItem', 'remove' => 'removeQuoteLine',
+                            'programs' => $this->quotePrograms, 'bundles' => $this->quoteBundles, 'tier' => $quoteClassTier,
+                        ])
                         @if ($this->quoteTemplates->count() > 1)
                             <div class="full">
                                 <label for="quoteTemplateId">תבנית</label>

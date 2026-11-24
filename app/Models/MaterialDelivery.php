@@ -282,7 +282,7 @@ class MaterialDelivery extends Model
 
         // FR-5.8: best-effort — attach the relevant deal's id if one exists
         // for this exact customer+program, but never require it.
-        $deal = Deal::where('customer_id', $customer->id)->where('program_id', $program->id)->latest('id')->first();
+        $deal = Deal::where('customer_id', $customer->id)->withItem($program)->latest('id')->first();
 
         $activityLogger->log(
             'material_delivery.sent',

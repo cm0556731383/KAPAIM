@@ -588,3 +588,15 @@ td.mono { display: table-cell; }
   .form-grid.catalog-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tier-prices { grid-template-columns: 1fr; }
 }
+
+/* A deal's / quote's programs-and-bundles lines (components/deal-lines/editor). */
+.deal-lines table { margin-bottom: var(--sp-sm); border: 1px solid var(--color-border); border-radius: var(--radius-control); }
+.deal-lines td { padding: 4px 10px; vertical-align: middle; }
+.deal-lines td.amount { width: 130px; }
+.deal-lines td.amount input { padding: 4px 8px; }
+.deal-lines td.remove { width: 1%; }
+.deal-lines tfoot td { font-weight: 700; border-bottom: none; }
+.deal-lines tr:hover td { background: none; }
+.deal-lines .err { color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px; }
+.deal-items-table th, .deal-items-table td { padding: 6px 10px; }
+.deal-items-table tfoot td { font-weight: 700; border-bottom: none; }

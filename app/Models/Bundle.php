@@ -62,7 +62,7 @@ class Bundle extends Model
         $list = MailingList::forProgram($program);
 
         Subscription::with('customer', 'deliveries')
-            ->whereHas('deal', fn ($q) => $q->where('bundle_id', $this->id))
+            ->whereHas('deal', fn ($q) => $q->withItem($this))
             ->whereHas('status', fn ($q) => $q->where('name', Subscription::ACTIVE_STATUS_NAME))
             ->get()
             ->each(function (Subscription $subscription) use ($list, $program, $joined) {
@@ -73,7 +73,7 @@ class Bundle extends Model
                 }
 
                 $delivered = $subscription->deliveries->where('is_supplied', true)->pluck('program_id')->contains($program->id);
-                $bought = Deal::where('customer_id', $subscription->customer_id)->where('program_id', $program->id)
+                $bought = Deal::where('customer_id', $subscription->customer_id)->withItem($program)
                     ->whereHas('status', fn ($q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME))->exists();
 
                 if (! $delivered && ! $bought) {

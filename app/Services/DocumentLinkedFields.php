@@ -47,6 +47,7 @@ class DocumentLinkedFields
         'contact_accounting.email' => 'דוא"ל הגורם החשבונאי',
         'contact_accounting.email_secondary' => 'דוא"ל נוסף של הגורם החשבונאי',
         'deal.program_name' => 'שם התוכנית/המארז שנרכש',
+        'deal.items' => 'פירוט התוכניות והמארזים בעסקה (טבלה, שורה לכל פריט)',
         'deal.agreed_amount' => 'סכום העסקה המוסכם',
         'deal.students_count' => 'מספר תלמידות',
         'deal.class_tier' => 'מספר כיתות (לפיו המחיר)',
@@ -106,6 +107,45 @@ class DocumentLinkedFields
         return filled($school?->invoice_name) ? $school->invoice_name : $school?->name;
     }
 
+    /** Between an item's name and its amount in a 'deal.items' line. */
+    public const ITEM_SEPARATOR = ' — ₪';
+
+    /**
+     * A field's value as HTML in the rendered document: escaped text, except
+     * 'deal.items' — one "name — ₪amount" line per item — which becomes a
+     * table (2026-11-24: several programs/bundles in one deal).
+     */
+    public static function valueHtml(?string $linkedField, string $value): string
+    {
+        if ($linkedField !== 'deal.items') {
+            return e($value);
+        }
+
+        $rows = collect(preg_split('/\r\n|\n|\r/', $value))->map(fn ($line) => trim($line))->filter();
+
+        if ($rows->isEmpty()) {
+            return '';
+        }
+
+        $cell = 'style="border:1px solid #d9d4c7; padding:6px 10px; text-align:right"';
+        $html = '<table class="deal-items" dir="rtl" style="border-collapse:collapse; width:100%; margin:8px 0">'
+            .'<thead><tr><th '.$cell.'>פריט</th><th '.$cell.'>סכום</th></tr></thead><tbody>';
+
+        foreach ($rows as $line) {
+            $pos = mb_strrpos($line, self::ITEM_SEPARATOR);
+            [$name, $amount] = $pos === false ? [$line, ''] : [mb_substr($line, 0, $pos), '₪'.mb_substr($line, $pos + mb_strlen(self::ITEM_SEPARATOR))];
+            $html .= '<tr><td '.$cell.'>'.e($name).'</td><td '.$cell.' dir="ltr">'.e($amount).'</td></tr>';
+        }
+
+        return $html.'</tbody></table>';
+    }
+
+    /** Fields whose value spans several lines (edited in a textarea). */
+    public static function isMultiline(?string $linkedField): bool
+    {
+        return $linkedField === 'deal.items';
+    }
+
     public static function resolve(string $key, Deal $deal): ?string
     {
         $deal->loadMissing('customer.school', 'customer.contacts', 'customer.status', 'customer.lead.source', 'customer.lead.assignedUser', 'status', 'paymentMethod', 'subscription');
@@ -126,7 +166,9 @@ class DocumentLinkedFields
 
         $customer = $deal->customer;
         $subscription = $deal->subscription;
-        $listPrice = $deal->program_price_snapshot ?? $deal->bundle_price_snapshot;
+        $listPrice = $deal->items->isNotEmpty() && $deal->items->every(fn ($item) => $item->list_price !== null)
+            ? (float) $deal->items->sum('list_price')
+            : ($deal->program_price_snapshot ?? $deal->bundle_price_snapshot);
 
         return match ($key) {
             'customer_info.since' => $customer?->converted_at?->format('d/m/Y'),
@@ -135,7 +177,10 @@ class DocumentLinkedFields
             'customer_info.assigned_user' => $customer?->lead?->assignedUser?->name,
             'customer_info.contacts_names' => $customer?->contacts->sortByDesc('is_primary')->pluck('name')->filter()->implode(', ') ?: null,
             'customer_info.outstanding_balance' => $customer ? self::money($customer->outstandingBalance()) : null,
-            'deal.program_name' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
+            'deal.program_name' => $deal->itemsLabel(),
+            'deal.items' => $deal->items->isEmpty() ? null : $deal->items
+                ->map(fn ($item) => $item->name_snapshot.self::ITEM_SEPARATOR.self::money($item->amount))
+                ->implode("\n"),
             'deal.agreed_amount' => self::money($deal->agreed_amount),
             'deal.students_count' => $deal->students_count === null ? null : (string) $deal->students_count,
             'deal.class_tier' => $deal->class_tier ? (\App\Models\Program::CLASS_TIERS[$deal->class_tier] ?? $deal->class_tier) : null,

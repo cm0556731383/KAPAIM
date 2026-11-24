@@ -261,7 +261,7 @@ class extends Component
                     <div>
                         <a href="{{ route('deal-detail', $quote->deal) }}" style="font-weight:600">{{ $quote->deal->customer?->school?->name ?? '—' }}</a>
                         <div class="pay-note">
-                            אישרה את הצעת המחיר ל{{ $quote->deal->program_name_snapshot ?? $quote->deal->bundle_name_snapshot }}
+                            אישרה את הצעת המחיר ל{{ $quote->deal->itemsLabel() }}
                             · ₪<span class="ltr-num">{{ number_format((float) $quote->deal->agreed_amount, 0) }}</span>
                             · <span class="ltr-num">{{ $quote->confirmed_at->format('d/m/Y H:i') }}</span>
                         </div>

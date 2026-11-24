@@ -452,7 +452,7 @@ class SummitClient
 
     private function itemName(Deal $deal): string
     {
-        return $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
+        return $deal->itemsLabel();
     }
 
     /** SUMIT's DocumentID for a document this app already issued there (the issue_invoice operation's reference). */

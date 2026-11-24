@@ -283,7 +283,7 @@ class extends Component
                 // subscription or any other bundle — on a deal that wasn't
                 // cancelled, not only as its own standalone deal.
                 $q->where(function ($outer) use ($programIds) {
-                    $outer->whereHas('deals', fn ($dq) => $dq->whereIn('program_id', $programIds))
+                    $outer->whereHas('deals', fn ($dq) => $dq->withAnyProgram($programIds))
                         ->orWhereHas('deals', fn ($dq) => $dq
                             ->whereHas('bundle.programs', fn ($pq) => $pq->whereIn('programs.id', $programIds))
                             ->whereDoesntHave('status', fn ($stq) => $stq->where('name', Deal::CANCELLED_STATUS_NAME)));

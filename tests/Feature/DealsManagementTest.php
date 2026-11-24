@@ -103,7 +103,7 @@ class DealsManagementTest extends TestCase
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('dealItem', '')
             ->call('createDeal')
-            ->assertHasErrors(['dealItem']);
+            ->assertHasErrors(['dealLines']);
 
         $this->assertSame(0, Deal::count());
     }
@@ -392,10 +392,10 @@ class DealsManagementTest extends TestCase
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer->fresh()])
             ->set('dealItem', "program:{$program->id}")
-            ->assertSet('dealAgreedAmount', '900')
+            ->assertSet('dealLines.0.amount', '900')
             // The card's value wins over a submitted choice.
             ->set('dealClassTier', '1-2')
-            ->assertSet('dealAgreedAmount', '900')
+            ->assertSet('dealLines.0.amount', '900')
             ->call('createDeal')
             ->assertHasNoErrors();
 
@@ -412,14 +412,14 @@ class DealsManagementTest extends TestCase
 
         $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
             ->set('dealItem', "program:{$program->id}")
-            ->assertSet('dealAgreedAmount', '400')
+            ->assertSet('dealLines.0.amount', '400')
             ->call('createDeal')
             ->assertHasErrors(['dealClassTier']);
 
         $this->assertSame(0, Deal::count());
 
         $component->set('dealClassTier', '3-4')
-            ->assertSet('dealAgreedAmount', '700')
+            ->assertSet('dealLines.0.amount', '700')
             ->call('createDeal')
             ->assertHasNoErrors();
 

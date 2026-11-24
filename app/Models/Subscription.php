@@ -186,7 +186,7 @@ class Subscription extends Model
         $deliveries = $this->deliveries->where('sequence_number', '<', $this->cancelled_from_month);
         $unsuppliedMonths = $deliveries->filter(fn ($delivery) => ! $delivery->is_supplied || ! $delivery->program_id)
             ->map(fn ($delivery) => self::normalizedMonthName($this->monthLabel($delivery->sequence_number)));
-        $bundlePrograms = $this->deal?->bundle?->programs ?? collect();
+        $bundlePrograms = $this->deal?->subscriptionBundle()?->programs ?? collect();
 
         return $deliveries->pluck('program_id')->filter()
             ->merge($bundlePrograms->filter(fn (Program $program) => $unsuppliedMonths->contains(
@@ -551,11 +551,12 @@ class Subscription extends Model
 
         $deliveredProgramIds = $this->deliveries()->where('is_supplied', true)->pluck('program_id')->all();
 
-        $boughtProgramIds = Deal::where('customer_id', $this->customer_id)->whereNotNull('program_id')
-            ->whereHas('status', fn ($q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME))
+        $boughtProgramIds = DealItem::whereNotNull('program_id')
+            ->whereHas('deal', fn ($q) => $q->where('customer_id', $this->customer_id)
+                ->whereHas('status', fn ($q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME)))
             ->pluck('program_id')->all();
 
-        ($this->deal->bundle?->programs ?? collect())
+        ($this->deal->subscriptionBundle()?->programs ?? collect())
             ->reject(fn (Program $program) => in_array($program->id, $deliveredProgramIds, true) || in_array($program->id, $boughtProgramIds, true))
             ->each(fn (Program $program) => MailingMembership::removeCustomer(MailingList::forProgram($program), $this->customer));
     }

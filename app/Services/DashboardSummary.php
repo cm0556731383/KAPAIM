@@ -179,7 +179,7 @@ class DashboardSummary
         $purchased = collect();
 
         if ($canSeeCustomers) {
-            $purchased = Deal::where('program_id', $program->id)
+            $purchased = Deal::withItem($program)
                 ->whereHas('status', fn (Builder $q) => $q->where('name', '!=', Deal::CANCELLED_STATUS_NAME))
                 ->with('customer.school')
                 ->get()
@@ -285,7 +285,7 @@ class DashboardSummary
             ->filter(fn (Task $task) => $task->deal !== null)
             ->map(fn (Task $task) => [
                 'label' => ($task->deal->customer->school?->name ?? '—').' — נשלחה חשבונית, ממתינה לתשלום',
-                'subtitle' => ($task->deal->program_name_snapshot ?? $task->deal->bundle_name_snapshot).' · משימת גבייה',
+                'subtitle' => $task->deal->itemsLabel().' · משימת גבייה',
                 'badge' => 'באיחור',
                 'badgeClass' => 'badge-error',
                 'url' => route('deal-detail', $task->deal),
@@ -309,7 +309,7 @@ class DashboardSummary
             })
             ->map(fn (Deal $deal) => [
                 'label' => ($deal->customer->school?->name ?? '—').' — התקבל תשלום, ממתינה להפקת קבלה',
-                'subtitle' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
+                'subtitle' => $deal->itemsLabel(),
                 'badge' => 'לביצוע',
                 'badgeClass' => 'badge-info',
                 'url' => route('deal-detail', $deal),
@@ -330,14 +330,15 @@ class DashboardSummary
         }
 
         return $this->paidDeals()
-            ->whereNotNull('program_id')
+            ->whereHas('items', fn ($q) => $q->whereNotNull('program_id'))
+            ->with('items')
             ->get()
-            ->filter(fn (Deal $deal) => ! MaterialDelivery::where('customer_id', $deal->customer_id)
-                ->where('program_id', $deal->program_id)
-                ->exists())
+            ->filter(fn (Deal $deal) => $deal->programIds()->contains(fn ($programId) => ! MaterialDelivery::where('customer_id', $deal->customer_id)
+                ->where('program_id', $programId)
+                ->exists()))
             ->map(fn (Deal $deal) => [
                 'label' => ($deal->customer->school?->name ?? '—').' — עסקה הושלמה, טרם נשלחו חומרים',
-                'subtitle' => $deal->program_name_snapshot ?? $deal->bundle_name_snapshot,
+                'subtitle' => $deal->itemsLabel(),
                 'badge' => 'לשליחה',
                 'badgeClass' => 'badge-primary',
                 'url' => route('customer-detail', $deal->customer),

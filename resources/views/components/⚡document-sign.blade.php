@@ -78,7 +78,9 @@ class extends Component
             $value = (string) ($this->fieldValues[$field->id] ?? '');
 
             if ($this->readonlyFields[$field->id] ?? false) {
-                return '<strong>'.e($value).'</strong>';
+                return DocumentLinkedFields::isMultiline($field->linked_field)
+                    ? DocumentLinkedFields::valueHtml($field->linked_field, $value)
+                    : '<strong>'.e($value).'</strong>';
             }
 
             // A blank line only — no visible field name. The single-space

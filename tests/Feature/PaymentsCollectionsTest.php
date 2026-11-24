@@ -164,9 +164,9 @@ class PaymentsCollectionsTest extends TestCase
 
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $deal->customer])
             ->set('dealItem', 'program:'.$deal->program_id)
-            ->set('dealAgreedAmount', '99999999999999')
+            ->set('dealLines.0.amount', '99999999999999')
             ->call('createDeal')
-            ->assertHasErrors('dealAgreedAmount')
+            ->assertHasErrors('dealLines.0.amount')
             ->assertSet('dealError', null);
     }
 

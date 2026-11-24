@@ -49,12 +49,26 @@ class DocumentTemplate extends Model
         return (clone $active)->where('name', self::STANDARD_CONTRACT_NAME)->first() ?? $active->first();
     }
 
-    /** The contract a deal's order form + contract pair is generated with: its program's/bundle's, else the standard one. */
+    /**
+     * The contract a deal's order form + contract pair defaults to (still
+     * changeable in the deal card's window): the one contract all its
+     * programs/bundles share, else the standard one (2026-11-24).
+     */
     public static function defaultContractFor(Deal $deal): ?self
     {
-        $chosen = ($deal->program ?? $deal->bundle)?->contractTemplate;
+        $items = $deal->items->map->item()->filter();
 
-        return $chosen?->is_active && $chosen->document_type === 'contract' ? $chosen : self::standardContract();
+        if ($items->isEmpty()) {
+            $items = collect([$deal->program ?? $deal->bundle])->filter();
+        }
+
+        // Each item's contract (an inactive / missing one means the standard one).
+        $contracts = $items->map(fn ($item) => $item->contractTemplate?->is_active && $item->contractTemplate->document_type === 'contract'
+            ? $item->contractTemplate : null);
+
+        return $contracts->unique(fn ($t) => $t?->id)->count() === 1 && $contracts->first()
+            ? $contracts->first()
+            : self::standardContract();
     }
 
     protected function casts(): array
@@ -141,7 +155,7 @@ class DocumentTemplate extends Model
             $blank = $printFriendly ? str_repeat('_', 24) : '['.e($field->name).']';
             $content = str_replace(
                 $field->placeholderToken(),
-                $value !== null && $value !== '' ? e((string) $value) : $blank,
+                $value !== null && $value !== '' ? \App\Services\DocumentLinkedFields::valueHtml($field->linked_field, (string) $value) : $blank,
                 $content,
             );
         }

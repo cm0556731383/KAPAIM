@@ -198,7 +198,7 @@ class PaymentLink extends Model
      */
     public static function emailMessage(Deal $deal, float $amount, bool $standingOrder, CarbonInterface $expiresAt, string $name, string $url): EmailMessage
     {
-        $item = $deal->program_name_snapshot ?? $deal->bundle_name_snapshot ?? "עסקה #{$deal->id}";
+        $item = $deal->itemsLabel();
         $template = EmailTemplate::forType($standingOrder ? EmailTemplate::STANDING_ORDER_LINK : EmailTemplate::PAYMENT_LINK);
         $rendered = $template->render([
             'recipient_name' => $name,

@@ -111,9 +111,9 @@ class Customer extends Model
      */
     public function standaloneProgramsTotal(): float
     {
-        return (float) $this->deals()
-            ->whereNotNull('program_id')
-            ->sum('agreed_amount');
+        return (float) DealItem::whereNotNull('program_id')
+            ->whereHas('deal', fn ($q) => $q->where('customer_id', $this->id))
+            ->sum('amount');
     }
 
     /**
