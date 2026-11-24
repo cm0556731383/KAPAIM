@@ -84,6 +84,7 @@ class extends Component
         Program::where('is_active', true)->get()->each(fn (Program $program) => MailingList::forProgram($program));
         MailingList::primaryList();
         MailingList::subscribersList();
+        MailingList::formerSubscribersList();
         MailingList::suppliersList();
     }
 
@@ -328,7 +329,7 @@ class extends Component
     #[Computed]
     public function lists()
     {
-        $order = [MailingList::TYPE_PRIMARY => 0, MailingList::TYPE_SUBSCRIPTION => 1, MailingList::TYPE_PROGRAM => 2, MailingList::TYPE_SUPPLIER => 3];
+        $order = [MailingList::TYPE_PRIMARY => 0, MailingList::TYPE_SUBSCRIPTION => 1, MailingList::TYPE_FORMER_SUBSCRIPTION => 2, MailingList::TYPE_PROGRAM => 3, MailingList::TYPE_SUPPLIER => 4];
 
         return MailingList::with('program')
             ->withCount(['memberships as active_members_count' => fn ($q) => $q->where('membership_status', MailingMembership::STATUS_ACTIVE)])
@@ -339,6 +340,10 @@ class extends Component
             ->values()
             ->map(function (MailingList $list) {
                 $list->recipients_count = count($list->recipients());
+
+                if ($list->list_type === MailingList::TYPE_FORMER_SUBSCRIPTION) {
+                    $list->active_members_count = $list->activeMemberCount();
+                }
 
                 return $list;
             });
@@ -361,13 +366,35 @@ class extends Component
         'primary' => 'כללית',
         'program' => 'תוכנית',
         'subscription' => 'מנויים',
+        'former_subscription' => 'מנויות לשעבר',
         'supplier' => 'ספקים',
     ];
+
+    /** The list picker's groups, in the order the lists are shown. */
+    private const PICKER_GROUPS = [
+        'primary' => 'כללית',
+        'subscription' => 'מנויים',
+        'former_subscription' => 'מנויים',
+        'program' => 'תוכניות',
+        'supplier' => 'ספקים',
+    ];
+
+    /** @return array<string, \Illuminate\Support\Collection<int, MailingList>> group label => lists */
+    public function pickerGroups(): array
+    {
+        return $this->lists->groupBy(fn (MailingList $list) => self::PICKER_GROUPS[$list->list_type] ?? 'אחרות')->all();
+    }
+
+    public function removeSendList(int $listId): void
+    {
+        $this->sendListIds = array_values(array_filter($this->sendListIds, fn ($id) => (int) $id !== $listId));
+    }
 
     private const TYPE_BADGE_CLASSES = [
         'primary' => 'badge-primary',
         'program' => 'badge-info',
         'subscription' => 'badge-success',
+        'former_subscription' => 'badge-neutral',
         'supplier' => 'badge-warning',
     ];
 
@@ -415,17 +442,49 @@ class extends Component
         <h3>שליחת מייל לרשימות</h3>
         <form wire:submit="send" class="form-grid">
             <div class="full">
-                <label>רשימות</label>
-                <div style="display:flex; flex-wrap:wrap; gap:var(--sp-sm) var(--sp-lg)">
-                    @foreach ($this->lists as $list)
-                        <label wire:key="pick-{{ $list->id }}" style="display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:500; cursor:pointer">
-                            <input type="checkbox" value="{{ $list->id }}" wire:model.live="sendListIds" style="width:auto; margin:0">
-                            {{ $list->displayName() }} <span class="text-text-secondary ltr-num" style="font-weight:400">({{ $list->recipients_count }})</span>
-                        </label>
-                    @endforeach
+                <label id="sendListsLabel">רשימות</label>
+                @php $pickedLists = $this->lists->whereIn('id', array_map('intval', $sendListIds)); @endphp
+                <div class="list-picker">
+                    <div class="multi-filter list-picker-select" x-data="{ open: false }" x-on:click.outside="open = false" x-on:keydown.escape="open = false">
+                        <button type="button" class="multi-filter-btn {{ $pickedLists->isNotEmpty() ? 'is-set' : '' }}" x-on:click="open = ! open" :aria-expanded="open" aria-labelledby="sendListsLabel">
+                            <span class="multi-filter-value">{{ $pickedLists->isEmpty() ? 'בחירת רשימות…' : 'נבחרו '.$pickedLists->count().' רשימות' }}</span>
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+                        </button>
+                        <div class="multi-filter-panel" x-show="open" x-cloak x-transition.opacity.duration.100ms>
+                            @if ($pickedLists->isNotEmpty())
+                                <button type="button" class="multi-filter-clear" wire:click="$set('sendListIds', [])">ניקוי הבחירה</button>
+                            @endif
+                            @foreach ($this->pickerGroups() as $groupLabel => $groupLists)
+                                <div class="multi-filter-group">{{ $groupLabel }}</div>
+                                @foreach ($groupLists as $list)
+                                    <label class="multi-filter-item" wire:key="pick-{{ $list->id }}">
+                                        <input type="checkbox" value="{{ $list->id }}" wire:model.live="sendListIds">
+                                        <span style="flex:1">{{ $list->displayName() }}</span>
+                                        <span class="text-text-secondary ltr-num">{{ $list->recipients_count }}</span>
+                                    </label>
+                                @endforeach
+                            @endforeach
+                        </div>
+                    </div>
+                    <div class="list-picker-selected" aria-live="polite">
+                        <div class="list-picker-selected-head">
+                            <span>רשימות שנבחרו</span>
+                            @if ($pickedLists->isNotEmpty())
+                                <span class="ltr-num">{{ $this->selectedRecipientCount }} כתובות</span>
+                            @endif
+                        </div>
+                        @forelse ($pickedLists as $list)
+                            <span class="chip-recipient" wire:key="picked-{{ $list->id }}">
+                                {{ $list->displayName() }} <span class="ltr-num" style="opacity:.75">({{ $list->recipients_count }})</span>
+                                <button type="button" wire:click="removeSendList({{ $list->id }})" aria-label="הסרת {{ $list->displayName() }}">&times;</button>
+                            </span>
+                        @empty
+                            <span class="text-text-secondary" style="font-size:var(--fs-small)">עדיין לא נבחרה רשימה.</span>
+                        @endforelse
+                    </div>
                 </div>
                 @if ($sendListIds)
-                    <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">סה"כ <span class="ltr-num">{{ $this->selectedRecipientCount }}</span> כתובות — כתובת שמופיעה בכמה רשימות תקבל את המייל פעם אחת.</div>
+                    <div class="text-text-secondary" style="font-size:var(--fs-caption); margin-top:6px">כתובת שמופיעה בכמה רשימות תקבל את המייל פעם אחת.</div>
                 @endif
                 @error('sendListIds') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
             </div>

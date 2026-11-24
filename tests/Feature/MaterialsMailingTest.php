@@ -1080,6 +1080,41 @@ class MaterialsMailingTest extends TestCase
         $this->assertCount(2, $send->recipients());
     }
 
+    public function test_the_former_subscribers_list_reaches_only_customers_whose_subscription_ended_or_was_cancelled(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $bundle = $this->createSubscriptionBundle();
+        $former = $this->createCustomerWithEmailContact();
+        $active = $this->createCustomerWithEmailContact();
+        $never = $this->createCustomerWithEmailContact();
+        Subscription::where('deal_id', Deal::createForCustomer($former, null, $bundle)->id)->firstOrFail()->cancel();
+        Deal::createForCustomer($active, null, $bundle);
+
+        $list = MailingList::formerSubscribersList();
+        $emails = array_column($list->recipients(), 'email');
+
+        $this->assertSame([$former->contacts()->first()->email], $emails);
+        $this->assertSame(1, $list->activeMemberCount());
+        $this->assertSame(0, $list->memberships()->count()); // computed — nothing kept, nothing pushed to Smove
+        $this->assertNotContains($active->contacts()->first()->email, $emails);
+        $this->assertNotContains($never->contacts()->first()->email, $emails);
+
+        Livewire::actingAs($this->owner)->test('mailing-lists')
+            ->assertSee('מנויות לשעבר')
+            ->set('sendListIds', [(string) $list->id, (string) MailingList::subscribersList()->id])
+            ->assertSet('selectedRecipientCount', 2)
+            ->assertSee('רשימות שנבחרו')
+            ->call('removeSendList', MailingList::subscribersList()->id)
+            ->assertSet('sendListIds', [(string) $list->id])
+            ->assertSet('selectedRecipientCount', 1)
+            ->set('sendSubject', 'למנויות לשעבר')
+            ->set('sendBody', 'שלום')
+            ->call('send', true)
+            ->assertSet('sendError', null);
+
+        $this->assertSame(1, \App\Models\MailingListSend::firstOrFail()->recipient_count);
+    }
+
     public function test_an_uploaded_html_file_is_sent_as_is_and_an_empty_list_is_refused(): void
     {
         \Illuminate\Support\Facades\Queue::fake();

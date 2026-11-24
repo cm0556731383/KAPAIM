@@ -29,11 +29,16 @@ class MailingList extends Model
 
     public const TYPE_SUPPLIER = 'supplier';
 
+    /** Computed, not kept as memberships: see recipients() / formerSubscriberCustomers(). */
+    public const TYPE_FORMER_SUBSCRIPTION = 'former_subscription';
+
     public const PRIMARY_LIST_NAME = 'רשימה ראשית';
 
     public const SUBSCRIBERS_LIST_NAME = 'מנויים';
 
     public const SUPPLIERS_LIST_NAME = 'ספקים';
+
+    public const FORMER_SUBSCRIBERS_LIST_NAME = 'מנויות לשעבר';
 
     protected function casts(): array
     {
@@ -83,6 +88,18 @@ class MailingList extends Model
      */
     public function recipients(): array
     {
+        // Former subscribers are worked out from the subscriptions each time
+        // (Customer::formerSubscribers()) — no membership rows, so nothing
+        // here is ever pushed to Smove's list.
+        if ($this->list_type === self::TYPE_FORMER_SUBSCRIPTION) {
+            return self::formerSubscriberCustomers()
+                ->flatMap(fn (Customer $customer) => $customer->contacts->reject(fn ($c) => $c->isAccountingOnly())->map(fn ($c) => ['email' => $c->email, 'name' => $c->name]))
+                ->filter(fn (array $r) => filled($r['email']) && filter_var($r['email'], FILTER_VALIDATE_EMAIL))
+                ->unique(fn (array $r) => mb_strtolower(trim($r['email'])))
+                ->values()
+                ->all();
+        }
+
         return $this->memberships()
             ->where('membership_status', MailingMembership::STATUS_ACTIVE)
             ->with(['lead.school', 'customer.contacts', 'supplier'])
@@ -133,6 +150,21 @@ class MailingList extends Model
         );
     }
 
+    /** The singleton "מנויות לשעבר" list — its members are computed (recipients()). */
+    public static function formerSubscribersList(): self
+    {
+        return self::firstOrCreate(
+            ['list_type' => self::TYPE_FORMER_SUBSCRIPTION],
+            ['name' => self::FORMER_SUBSCRIBERS_LIST_NAME, 'is_active' => true],
+        );
+    }
+
+    /** @return \Illuminate\Support\Collection<int, Customer> */
+    public static function formerSubscriberCustomers()
+    {
+        return Customer::formerSubscribers()->with('contacts')->get();
+    }
+
     /** FR-5.22: one list per catalog PROGRAM, created lazily on first use. */
     public static function forProgram(Program $program): self
     {
@@ -145,6 +177,10 @@ class MailingList extends Model
     /** Read-only ⚡mailing-lists.blade.php's member-count column. */
     public function activeMemberCount(): int
     {
+        if ($this->list_type === self::TYPE_FORMER_SUBSCRIPTION) {
+            return Customer::formerSubscribers()->count();
+        }
+
         return $this->memberships()->where('membership_status', MailingMembership::STATUS_ACTIVE)->count();
     }
 }

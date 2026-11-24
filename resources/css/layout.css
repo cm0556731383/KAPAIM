@@ -116,6 +116,16 @@ section > .section-head p { margin: 2px 0 0; color: var(--color-text-secondary);
   background: none; border: none; border-bottom: 1px solid var(--color-border); padding: 7px 10px 9px; margin-bottom: 4px; cursor: pointer;
 }
 .multi-filter-empty { padding: 7px 10px; color: var(--color-text-secondary); font-size: var(--fs-small); }
+/* Mailing lists → send: a multi-select dropdown, with what's picked shown beside it. */
+.list-picker { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: var(--sp-md); align-items: start; }
+.list-picker-select .multi-filter-panel { min-width: 300px; max-height: 380px; }
+.list-picker-select .multi-filter-value { max-width: none; }
+.list-picker-selected {
+  display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-height: 44px;
+  border: 1px dashed var(--color-border); border-radius: var(--radius-control); padding: 10px 12px; background: var(--color-background);
+}
+.list-picker-selected-head { flex-basis: 100%; display: flex; justify-content: space-between; font-size: var(--fs-caption); font-weight: 600; color: var(--color-text-secondary); }
+@media (max-width: 720px) { .list-picker { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .filter-row > div { flex: 1 1 100%; } .multi-filter-value { max-width: none; } }
 
 .actor-auto { color: var(--color-text-secondary); font-size: var(--fs-caption); margin-inline-start: 6px; }

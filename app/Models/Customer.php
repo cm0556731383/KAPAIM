@@ -84,6 +84,17 @@ class Customer extends Model
     }
 
     /**
+     * A former subscriber: no active subscription now, but one that ended or
+     * was cancelled — the customers list's "מנויה לשעבר" and the mailing
+     * list of the same name.
+     */
+    public function scopeFormerSubscribers(\Illuminate\Database\Eloquent\Builder $query): void
+    {
+        $query->whereDoesntHave('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME)))
+            ->whereHas('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->whereIn('name', [Subscription::ENDED_STATUS_NAME, Subscription::CANCELLED_STATUS_NAME])));
+    }
+
+    /**
      * FR-2.17: "מנוי פעיל" everywhere the customer is shown — a badge check
      * should always go through this (status-based), never through mere row
      * existence, so a cancelled/ended subscription correctly falls off.

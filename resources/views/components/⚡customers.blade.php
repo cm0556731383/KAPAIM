@@ -296,10 +296,7 @@ class extends Component
                 'subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME))
             ))
             // Former subscriber: no active subscription, but one that ended or was cancelled.
-            ->when($this->filterSubscription === 'former', fn ($q) => $q
-                ->whereDoesntHave('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->where('name', Subscription::ACTIVE_STATUS_NAME)))
-                ->whereHas('subscriptions', fn ($sq) => $sq->whereHas('status', fn ($stq) => $stq->whereIn('name', [Subscription::ENDED_STATUS_NAME, Subscription::CANCELLED_STATUS_NAME])))
-            )
+            ->when($this->filterSubscription === 'former', fn ($q) => $q->formerSubscribers())
             ->when($this->filterStatusIds, fn ($q) => $q->whereIn('status_id', array_map('intval', $this->filterStatusIds)))
             ->orderByDesc('converted_at')
             ->get();
