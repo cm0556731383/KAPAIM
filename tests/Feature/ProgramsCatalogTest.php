@@ -49,18 +49,33 @@ class ProgramsCatalogTest extends TestCase
         $this->assertSame('תיאור', $bundle->fresh()->description);
     }
 
-    public function test_editing_cannot_make_a_second_active_subscription_bundle(): void
+    /** 2026-11-24: one subscription bundle per school year — several may be active at once. */
+    public function test_several_subscription_bundles_can_be_active_at_once(): void
     {
-        Bundle::create(['name' => 'מנוי', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        Bundle::create(['name' => 'מנוי תשפ"ו', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
         $other = Bundle::create(['name' => 'מארז', 'price' => 900, 'is_subscription_type' => false, 'is_active' => true]);
+        $inactive = Bundle::create(['name' => 'מנוי ישן', 'price' => 3000, 'is_subscription_type' => true, 'is_active' => false]);
 
         Livewire::actingAs($this->owner)->test('programs-catalog')
             ->call('editItem', 'bundle', $other->id)
             ->set('editFlag', true)
+            ->set('editSchoolYear', '5788')
             ->call('saveItem')
-            ->assertSet('catalogError', 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני שמארז זה יוגדר כמארז מנוי.');
+            ->assertHasNoErrors()
+            ->assertSet('catalogError', null)
+            ->set('bundleName', 'מנוי תשפ"ז')
+            ->set('bundlePrice', '4500')
+            ->set('bundleIsSubscriptionType', true)
+            ->set('bundleSchoolYear', '5787')
+            ->call('addBundle')
+            ->assertHasNoErrors()
+            ->assertSet('catalogError', null)
+            ->call('toggleBundle', $inactive->id)
+            ->assertSet('catalogError', null);
 
-        $this->assertFalse($other->fresh()->is_subscription_type);
+        $this->assertTrue($other->fresh()->is_subscription_type);
+        $this->assertTrue($inactive->fresh()->is_active);
+        $this->assertSame(4, Bundle::where('is_subscription_type', true)->where('is_active', true)->count());
     }
 
     public function test_catalog_page_requires_auth(): void
@@ -111,43 +126,6 @@ class ProgramsCatalogTest extends TestCase
 
         $this->assertSame($before, Program::count());
         $this->assertFalse($program->fresh()->is_active);
-    }
-
-    public function test_only_one_active_subscription_type_bundle_is_allowed(): void
-    {
-        Bundle::create([
-            'name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true,
-        ]);
-
-        Livewire::actingAs($this->owner)->test('programs-catalog')
-            ->set('bundleName', 'מנוי שני')
-            ->set('bundlePrice', '4500')
-            ->set('bundleIsSubscriptionType', true)
-            ->call('addBundle');
-
-        $this->assertDatabaseMissing('bundles', ['name' => 'מנוי שני']);
-    }
-
-    public function test_activating_a_second_subscription_type_bundle_is_blocked(): void
-    {
-        Bundle::create(['name' => 'מנוי פעיל', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
-        $secondSub = Bundle::create(['name' => 'מנוי מושבת', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
-
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $secondSub->id);
-
-        $this->assertFalse($secondSub->fresh()->is_active);
-    }
-
-    public function test_disabling_the_active_subscription_bundle_allows_activating_another(): void
-    {
-        $first = Bundle::create(['name' => 'מנוי א', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
-        $second = Bundle::create(['name' => 'מנוי ב', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => false]);
-
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $first->id);
-        Livewire::actingAs($this->owner)->test('programs-catalog')->call('toggleBundle', $second->id);
-
-        $this->assertFalse($first->fresh()->is_active);
-        $this->assertTrue($second->fresh()->is_active);
     }
 
     public function test_bundle_program_membership_can_be_added_and_removed(): void

@@ -11,13 +11,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
  * A bundle is a one-off, independent purchase — not counted in a
- * subscription's 10-program offset (FR-3.8) — UNLESS it's the one bundle
- * flagged is_subscription_type (moved here from Program 2026-09-09, at most
- * one active at a time, enforced in the catalog Livewire component), in
+ * subscription's 10-program offset (FR-3.8) — UNLESS it's flagged
+ * is_subscription_type (moved here from Program 2026-09-09). Several
+ * subscription bundles may be active at once (2026-11-24, business owner:
+ * one per school year — renewing = selling next year's bundle), in
  * which case purchasing it opens a real SUBSCRIPTION instead of a plain deal
  * — see Deal::createForCustomer()/openSubscriptionIfApplicable().
  */
-#[Fillable(['name', 'description', 'price', 'price_3_4', 'price_5_6', 'is_subscription_type', 'is_active', 'contract_template_id'])]
+#[Fillable(['name', 'description', 'price', 'price_3_4', 'price_5_6', 'is_subscription_type', 'school_year', 'is_active', 'contract_template_id'])]
 class Bundle extends Model
 {
     use HasClassTierPrices;
@@ -36,8 +37,36 @@ class Bundle extends Model
             'price_3_4' => 'decimal:2',
             'price_5_6' => 'decimal:2',
             'is_subscription_type' => 'boolean',
+            'school_year' => 'integer',
             'is_active' => 'boolean',
         ];
+    }
+
+    /**
+     * A subscription bundle's month 1 — the start of its school year
+     * (HebrewCalendar::schoolYearStart()); null when no year is set (a
+     * subscription then follows its sale date, as before 2026-11-24).
+     */
+    public function subscriptionFirstMonth(): ?\Carbon\CarbonImmutable
+    {
+        return $this->is_subscription_type && $this->school_year
+            ? \App\Services\HebrewCalendar::schoolYearStart($this->school_year)
+            : null;
+    }
+
+    /** The school year's 10 months are over — it can't be sold any more. */
+    public function schoolYearHasEnded(): bool
+    {
+        $start = $this->subscriptionFirstMonth();
+
+        return $start !== null
+            && now('Asia/Jerusalem')->toDateString() >= \App\Services\HebrewCalendar::addMonths($start, Subscription::TOTAL_DELIVERIES)->toDateString();
+    }
+
+    /** e.g. "תשפ״ז (2026–2027)". */
+    public function schoolYearLabel(): ?string
+    {
+        return $this->school_year ? \App\Services\HebrewCalendar::schoolYearLabel($this->school_year) : null;
     }
 
     public function programs(): BelongsToMany

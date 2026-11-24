@@ -31,6 +31,9 @@ class extends Component
     public string $bundlePrice34 = '';
     public string $bundlePrice56 = '';
     public bool $bundleIsSubscriptionType = false;
+
+    /** A subscription bundle's school year (Hebrew year, 5787 = תשפ״ז) — required for one (2026-11-24). */
+    public string $bundleSchoolYear = '';
     public string $bundleContractTemplateId = '';
 
     // ===== עריכה =====
@@ -42,6 +45,7 @@ class extends Component
     public string $editPrice34 = '';
     public string $editPrice56 = '';
     public bool $editFlag = false;
+    public string $editSchoolYear = '';
     public string $editContractTemplateId = '';
 
     // ===== שיוך תוכניות למארז =====
@@ -159,11 +163,24 @@ class extends Component
         $this->editPrice56 = $item->price_5_6 !== null ? (string) (float) $item->price_5_6 : '';
         $this->editFlag = (bool) ($type === 'program' ? $item->is_premium : $item->is_subscription_type);
         $this->editContractTemplateId = (string) ($item->contract_template_id ?? '');
+        $this->editSchoolYear = (string) ($type === 'bundle' ? ($item->school_year ?? '') : '');
+    }
+
+    /** The school-year rule: required for a subscription bundle. */
+    private function schoolYearRule(string $flagField): array
+    {
+        return ["required_if_accepted:{$flagField}", 'nullable', 'integer', 'between:5700,5999'];
+    }
+
+    /** School-year picker options (keeps an edited bundle's own year even when outside the range). */
+    public function schoolYearOptions(?int $include = null): array
+    {
+        return \App\Services\HebrewCalendar::schoolYearOptions($include);
     }
 
     public function cancelItemEdit(): void
     {
-        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editPrice34', 'editPrice56', 'editFlag', 'editContractTemplateId']);
+        $this->reset(['editingItem', 'editName', 'editDescription', 'editPrice', 'editPrice34', 'editPrice56', 'editFlag', 'editSchoolYear', 'editContractTemplateId']);
     }
 
     public function saveItem(ActivityLogger $activityLogger): void
@@ -179,8 +196,9 @@ class extends Component
             'editPrice34' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editPrice56' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'editFlag' => ['boolean'],
+            'editSchoolYear' => $type === 'bundle' ? $this->schoolYearRule('editFlag') : ['nullable'],
             'editContractTemplateId' => $this->contractTemplateRule(),
-        ], [], ['editName' => 'שם', 'editPrice' => 'מחיר 1–2 כיתות', 'editPrice34' => 'מחיר 3–4 כיתות', 'editPrice56' => 'מחיר 5–6 כיתות', 'editContractTemplateId' => 'חוזה ברירת מחדל']);
+        ], ['editSchoolYear.required_if_accepted' => 'למארז מנוי יש לבחור את שנת הלימודים שלו.'], ['editName' => 'שם', 'editSchoolYear' => 'שנת לימודים', 'editPrice' => 'מחיר 1–2 כיתות', 'editPrice34' => 'מחיר 3–4 כיתות', 'editPrice56' => 'מחיר 5–6 כיתות', 'editContractTemplateId' => 'חוזה ברירת מחדל']);
 
         if ($type === 'program') {
             $item = Program::findOrFail((int) $id);
@@ -212,12 +230,6 @@ class extends Component
                 return;
             }
 
-            if ($data['editFlag'] && ! $item->is_subscription_type && $item->is_active && $this->anotherActiveSubscriptionBundleExists($item->id)) {
-                $this->catalogError = 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני שמארז זה יוגדר כמארז מנוי.';
-
-                return;
-            }
-
             $item->update([
                 'name' => $data['editName'],
                 'description' => $data['editDescription'] ?: null,
@@ -225,6 +237,8 @@ class extends Component
                 'price_3_4' => $data['editPrice34'] ?: null,
                 'price_5_6' => $data['editPrice56'] ?: null,
                 'is_subscription_type' => $data['editFlag'],
+                // Subscriptions already sold keep their months; the year applies to new sales.
+                'school_year' => $data['editFlag'] && $data['editSchoolYear'] !== '' ? (int) $data['editSchoolYear'] : null,
                 'contract_template_id' => $data['editContractTemplateId'] ?: null,
             ]);
         }
@@ -256,19 +270,15 @@ class extends Component
             'bundlePrice34' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'bundlePrice56' => ['nullable', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
             'bundleIsSubscriptionType' => ['boolean'],
+            'bundleSchoolYear' => $this->schoolYearRule('bundleIsSubscriptionType'),
             'bundleContractTemplateId' => $this->contractTemplateRule(),
-        ], [], [
+        ], ['bundleSchoolYear.required_if_accepted' => 'למארז מנוי יש לבחור את שנת הלימודים שלו.'], [
+            'bundleSchoolYear' => 'שנת לימודים',
             'bundleName' => 'שם המארז',
             'bundlePrice' => 'מחיר 1–2 כיתות',
             'bundlePrice34' => 'מחיר 3–4 כיתות',
             'bundlePrice56' => 'מחיר 5–6 כיתות',
         ]);
-
-        if ($data['bundleIsSubscriptionType'] && $this->anotherActiveSubscriptionBundleExists()) {
-            $this->catalogError = 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני יצירת מארז מנוי חדש.';
-
-            return;
-        }
 
         $bundle = Bundle::create([
             'name' => $data['bundleName'],
@@ -277,13 +287,14 @@ class extends Component
             'price_3_4' => $data['bundlePrice34'] ?: null,
             'price_5_6' => $data['bundlePrice56'] ?: null,
             'is_subscription_type' => $data['bundleIsSubscriptionType'],
+            'school_year' => $data['bundleIsSubscriptionType'] && $data['bundleSchoolYear'] !== '' ? (int) $data['bundleSchoolYear'] : null,
             'contract_template_id' => $data['bundleContractTemplateId'] ?: null,
             'is_active' => true,
         ]);
 
         $activityLogger->log('bundle.created', "נוצר מארז חדש: {$bundle->name}");
 
-        $this->reset(['bundleName', 'bundleDescription', 'bundlePrice', 'bundlePrice34', 'bundlePrice56', 'bundleIsSubscriptionType']);
+        $this->reset(['bundleName', 'bundleDescription', 'bundlePrice', 'bundlePrice34', 'bundlePrice56', 'bundleIsSubscriptionType', 'bundleSchoolYear']);
         $this->resetContractDefaults();
         unset($this->bundles);
 
@@ -297,12 +308,6 @@ class extends Component
         /** @var Bundle $bundle */
         $bundle = Bundle::findOrFail($id);
 
-        if (! $bundle->is_active && $bundle->is_subscription_type && $this->anotherActiveSubscriptionBundleExists($bundle->id)) {
-            $this->catalogError = 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני הפעלת מארז מנוי זה.';
-
-            return;
-        }
-
         $bundle->is_active = ! $bundle->is_active;
         $bundle->save();
 
@@ -312,15 +317,6 @@ class extends Component
         ]);
 
         unset($this->bundles);
-    }
-
-    /** At most one active is_subscription_type bundle at a time — the discriminator Deal::openSubscriptionIfApplicable() uses. */
-    private function anotherActiveSubscriptionBundleExists(?int $excludingId = null): bool
-    {
-        return Bundle::where('is_subscription_type', true)
-            ->where('is_active', true)
-            ->when($excludingId, fn ($query) => $query->where('id', '!=', $excludingId))
-            ->exists();
     }
 
     /**
@@ -579,8 +575,21 @@ class extends Component
                             <div><label for="bundlePrice56">מחיר 5–6 כיתות</label><input type="text" id="bundlePrice56" wire:model="bundlePrice56" class="ltr-num" dir="ltr" placeholder="כמו 1–2"> @error('bundlePrice56') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
                         </div>
                         <div class="full">
-                            <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי</label></span>
+                            <span class="checkbox-row"><input type="checkbox" id="bundleIsSubscriptionType" wire:model.live="bundleIsSubscriptionType"><label for="bundleIsSubscriptionType" style="margin:0">מקנה מנוי שנתי</label></span>
                         </div>
+                        @if ($bundleIsSubscriptionType)
+                            <div class="full">
+                                <label for="bundleSchoolYear">שנת לימודים</label>
+                                <select id="bundleSchoolYear" wire:model="bundleSchoolYear">
+                                    <option value="">— בחרו שנה —</option>
+                                    @foreach ($this->schoolYearOptions() as $year => $label)
+                                        <option value="{{ $year }}">{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">המנוי של כל לקוחה שתקנה את המארז ירוץ בחודשי שנת הלימודים הזו ({{ \App\Services\HebrewCalendar::MONTHS[\App\Services\HebrewCalendar::startMonth()] }} עד 10 חודשים אחריו), גם אם נמכר מראש.</div>
+                                @error('bundleSchoolYear') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                            </div>
+                        @endif
                         <div class="full">
                             <label for="bundleContractTemplateId">חוזה ברירת מחדל</label>
                             <select id="bundleContractTemplateId" wire:model="bundleContractTemplateId">
@@ -658,7 +667,18 @@ class extends Component
                                             @endforeach
                                         </select>
                                         @error('editContractTemplateId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror</div>
-                                    <div class="half" style="align-self:end; padding-bottom:10px"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
+                                    <div class="half" style="align-self:end; padding-bottom:10px"><span class="checkbox-row"><input type="checkbox" id="editFlag" wire:model.live="editFlag"><label for="editFlag" style="margin:0">מקנה מנוי שנתי</label></span></div>
+                                    @if ($editFlag)
+                                        <div class="half"><label for="editSchoolYear">שנת לימודים</label>
+                                            <select id="editSchoolYear" wire:model="editSchoolYear">
+                                                <option value="">— בחרו שנה —</option>
+                                                @foreach ($this->schoolYearOptions($bundle->school_year) as $year => $label)
+                                                    <option value="{{ $year }}">{{ $label }}</option>
+                                                @endforeach
+                                            </select>
+                                            @error('editSchoolYear') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                            <div class="text-text-secondary" style="font-size: var(--fs-caption); margin-top: 4px;">שינוי השנה חל על מכירות חדשות בלבד — מנויים שכבר נמכרו שומרים על החודשים שלהם.</div></div>
+                                    @endif
                                     <div class="full catalog-edit-actions">
                                         <button type="submit" class="btn btn-primary btn-sm">שמירה</button>
                                         <button type="button" class="btn btn-ghost btn-sm" wire:click="cancelItemEdit">ביטול</button>
@@ -672,7 +692,7 @@ class extends Component
                         <tr>
                             <td>{{ $bundle->name }}</td>
                             <td class="ltr-num" title="{{ collect(\App\Models\Program::CLASS_TIERS)->map(fn ($l, $t) => $l.': ₪'.number_format($bundle->priceForClassTier($t), 0))->implode(' · ') }}">₪{{ number_format((float) $bundle->price, 0) }}</td>
-                            <td>@if ($bundle->is_subscription_type)<span class="badge" style="background:#92600D22; color:#92600D">מנוי שנתי</span>@else —@endif</td>
+                            <td>@if ($bundle->is_subscription_type)<span class="badge" style="background:#92600D22; color:#92600D">מנוי שנתי</span>@if ($bundle->school_year)<div style="font-size:var(--fs-caption); margin-top:2px">{{ $bundle->schoolYearLabel() }}@if ($bundle->schoolYearHasEnded()) <span class="badge badge-neutral">השנה הסתיימה</span>@endif</div>@else<div style="font-size:var(--fs-caption); margin-top:2px; color:var(--color-error)">חסרה שנת לימודים</div>@endif @else —@endif</td>
                             <td>
                                 <div class="chip-list">
                                     @foreach ($bundle->includedBundles as $childBundle)

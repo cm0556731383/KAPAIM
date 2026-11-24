@@ -129,9 +129,8 @@ class Customer extends Model
 
     /**
      * FR-8.23: purely informational — compares the total above to the
-     * current active subscription-type bundle's list price (build-plan 03's
-     * at-most-one-active-at-a-time discriminator/uniqueness guarantee, moved
-     * from Program to Bundle 2026-09-09).
+     * newest active subscription-type bundle's list price (several may be
+     * active since 2026-11-24 — one per school year).
      */
     /** Open balance across all of this customer's deals, excluding cancelled ones. */
     public function outstandingBalance(): float
@@ -161,7 +160,8 @@ class Customer extends Model
 
     public function exceedsSubscriptionPriceAlert(): bool
     {
-        $subscriptionPrice = Bundle::where('is_subscription_type', true)->where('is_active', true)->first()?->price;
+        // Several subscription bundles may be active (one per year, 2026-11-24): compared to the newest.
+        $subscriptionPrice = Bundle::where('is_subscription_type', true)->where('is_active', true)->latest('id')->first()?->price;
 
         if (! $subscriptionPrice) {
             return false;

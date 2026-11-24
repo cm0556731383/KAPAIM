@@ -299,6 +299,24 @@ Route::middleware('auth')->group(function () {
             ),
         ]);
     })->name('settings.import-template');
+    // Settings → יבוא נתונים → תוכניות ומארזים: the blank catalog file (App\Services\CatalogImport::template()).
+    Route::get('/settings/import/catalog-template', function (\App\Services\CatalogImport $import) {
+        abort_unless(auth()->user()->can('settings.view'), 403);
+
+        $book = $import->template();
+        ob_start();
+        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($book))->save('php://output');
+        $xlsx = (string) ob_get_clean();
+        $book->disconnectWorksheets();
+
+        return response($xlsx, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Length' => strlen($xlsx),
+            'Content-Disposition' => \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+                'attachment', 'יבוא תוכניות ומארזים.xlsx', 'catalog-import.xlsx',
+            ),
+        ]);
+    })->name('settings.import-catalog-template');
     Route::get('/expenses/export', function (\App\Services\ExpensesSpreadsheet $spreadsheet) {
         abort_unless(auth()->user()->can('expenses.view'), 403);
 

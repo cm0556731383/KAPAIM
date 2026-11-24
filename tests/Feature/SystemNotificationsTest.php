@@ -223,19 +223,19 @@ class SystemNotificationsTest extends TestCase
 
     // ----- business errors pop up (FR-7.25) -----
 
-    /** ProgramsCatalogTest's gate (only one active subscription-type bundle) — same rule, now a sticky popup. */
-    public function test_a_business_error_pops_up_and_blocks_a_duplicate_subscription_bundle(): void
+    /** A catalog business rule (a subscription bundle can't be included in another) — a sticky popup. */
+    public function test_a_business_error_pops_up_and_blocks_including_a_subscription_bundle(): void
     {
-        Bundle::create(['name' => 'מנוי קיים', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        $parent = Bundle::create(['name' => 'מנוי תשפ"ו', 'price' => 4000, 'is_subscription_type' => true, 'is_active' => true]);
+        $child = Bundle::create(['name' => 'מנוי תשפ"ז', 'price' => 4500, 'is_subscription_type' => true, 'is_active' => true]);
 
         Livewire::actingAs($this->owner)->test('programs-catalog')
-            ->set('bundleName', 'מנוי שני')
-            ->set('bundlePrice', '4500')
-            ->set('bundleIsSubscriptionType', true)
-            ->call('addBundle')
-            ->assertDispatched('notify', type: 'error', message: 'קיים כבר מארז מנוי אחד פעיל בקטלוג. יש להשבית אותו לפני יצירת מארז מנוי חדש.', sticky: true);
+            ->set('membershipBundleId', $parent->id)
+            ->set('membershipItem', "bundle:{$child->id}")
+            ->call('addBundleProgram')
+            ->assertDispatched('notify', type: 'error', message: 'אי אפשר לכלול מארז מנוי בתוך מארז מנוי.', sticky: true);
 
-        $this->assertDatabaseMissing('bundles', ['name' => 'מנוי שני']);
+        $this->assertSame(0, $parent->includedBundles()->count());
     }
 
     /** Second gate: the deal-status optimistic-lock conflict (DealsManagementTest) pops up too. */

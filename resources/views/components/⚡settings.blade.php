@@ -366,6 +366,184 @@ class extends Component
         return \App\Services\CustomerImport::columns();
     }
 
+    // ----- יבוא תוכניות ומארזים (App\Services\CatalogImport) -----
+
+    /** What the import tab imports: customers / catalog (programs + bundles). Kept in the URL. */
+    #[Url(as: 'import')]
+    public string $importKind = 'customers';
+
+    public $catalogFile = null;
+
+    #[\Livewire\Attributes\Locked]
+    public ?string $catalogPath = null;
+
+    /** The check's outcome: fileError, total, valid, invalidRows, valid rows, invalid rows (with their fields). */
+    #[\Livewire\Attributes\Locked]
+    public array $catalogCheck = [];
+
+    /** Values typed into the "שגויות" table: [sheet => [row => [column => value]]]. */
+    public array $catalogFixes = [];
+
+    /** The finished import: programs / bundles created. */
+    #[\Livewire\Attributes\Locked]
+    public array $catalogResult = [];
+
+    public function checkCatalogImport(\App\Services\CatalogImport $import): void
+    {
+        $this->validate(['catalogFile' => ['required', 'file', 'max:10240', 'mimes:xlsx']], [
+            'catalogFile.required' => 'יש לבחור קובץ.',
+            'catalogFile.mimes' => 'יש להעלות קובץ אקסל (xlsx).',
+            'catalogFile.max' => 'הקובץ גדול מדי (עד 10MB).',
+        ]);
+
+        $this->discardCatalogFile();
+        $this->catalogResult = [];
+
+        $path = $this->catalogFile->store('imports', 'local');
+        $this->catalogFile = null;
+
+        $this->analyzeCatalog($import, $path);
+    }
+
+    public function fixCatalogImport(\App\Services\CatalogImport $import): void
+    {
+        if (! $this->catalogPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->catalogPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetCatalogImport();
+
+            return;
+        }
+
+        // Only the rows and fields the check flagged can be changed here.
+        $allowed = [];
+
+        foreach ($this->catalogCheck['invalid'] ?? [] as $row) {
+            $allowed[$row['sheet']][$row['row']] = array_keys($row['fields']);
+        }
+
+        $fixes = [];
+
+        foreach ($this->catalogFixes as $sheet => $rows) {
+            foreach ((array) $rows as $row => $values) {
+                foreach ((array) $values as $key => $value) {
+                    if (in_array($key, $allowed[$sheet][$row] ?? [], true) && is_scalar($value ?? '')) {
+                        $fixes[$sheet][$row][$key] = (string) $value;
+                    }
+                }
+            }
+        }
+
+        try {
+            $import->applyFixes(\Illuminate\Support\Facades\Storage::disk('local')->path($this->catalogPath), $fixes);
+        } catch (\Throwable $e) {
+            report($e);
+            $this->notifyError('לא ניתן לשמור את התיקונים בקובץ. יש לתקן בקובץ עצמו ולהעלות אותו שוב.');
+
+            return;
+        }
+
+        $this->analyzeCatalog($import, $this->catalogPath);
+
+        $left = count($this->catalogCheck['invalid'] ?? []);
+        $this->notifySuccess($left ? "התיקונים נשמרו. נשארו {$left} שורות עם שגיאות." : 'התיקונים נשמרו — כל השורות תקינות.');
+    }
+
+    private function analyzeCatalog(\App\Services\CatalogImport $import, string $path): void
+    {
+        $result = $import->analyze(\Illuminate\Support\Facades\Storage::disk('local')->path($path));
+        $valid = [];
+        $invalid = [];
+        $fixes = [];
+
+        foreach ($result['rows'] as $row) {
+            if ($row['data'] !== null) {
+                $valid[] = ['sheet' => $row['sheet'], 'row' => $row['row'], 'name' => $row['name'], 'data' => $row['data']];
+
+                continue;
+            }
+
+            $columns = \App\Services\CatalogImport::columns($row['sheet']);
+            $fields = [];
+
+            foreach ($row['errors'] as $key => $message) {
+                $fields[$key] = ['label' => $columns[$key][0], 'message' => $message];
+                $fixes[$row['sheet']][$row['row']][$key] = $row['values'][$key] ?? '';
+            }
+
+            $invalid[] = ['sheet' => $row['sheet'], 'row' => $row['row'], 'name' => $row['name'], 'fields' => $fields];
+        }
+
+        $this->catalogFixes = $fixes;
+        $this->catalogCheck = [
+            'fileError' => $result['fileError'],
+            'total' => count($result['rows']),
+            'valid' => $valid,
+            'invalid' => $invalid,
+        ];
+
+        if ($result['fileError']) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($path);
+            $this->catalogPath = null;
+        } else {
+            $this->catalogPath = $path;
+        }
+    }
+
+    /** Imports the rows that passed the check — checked again from the file first. */
+    public function runCatalogImport(\App\Services\CatalogImport $import, ActivityLogger $activityLogger): void
+    {
+        if (! auth()->user()->hasPermission('settings', 'edit') || ! auth()->user()->hasPermission('catalog', 'edit')) {
+            $this->notifyError('ליבוא נדרשת הרשאת עריכה בהגדרות ובקטלוג התוכניות.');
+
+            return;
+        }
+
+        if (! $this->catalogPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($this->catalogPath)) {
+            $this->notifyError('הקובץ כבר אינו זמין — יש להעלות אותו שוב.');
+            $this->resetCatalogImport();
+
+            return;
+        }
+
+        $path = \Illuminate\Support\Facades\Storage::disk('local')->path($this->catalogPath);
+        $analysis = $import->analyze($path);
+
+        if ($analysis['fileError']) {
+            $this->notifyError('היבוא לא בוצע: '.$analysis['fileError']);
+
+            return;
+        }
+
+        try {
+            $result = $import->import($analysis['rows'], auth()->user(), $activityLogger);
+        } catch (\Throwable $e) {
+            report($e);
+            $this->notifyError($e instanceof \RuntimeException ? $e->getMessage() : 'היבוא נכשל בגלל שגיאה לא צפויה — שום דבר לא נשמר.');
+
+            return;
+        }
+
+        $skipped = count(array_filter($analysis['rows'], fn ($row) => $row['data'] === null));
+
+        $this->discardCatalogFile();
+        $this->reset(['catalogFile', 'catalogCheck', 'catalogFixes']);
+        $this->catalogResult = $result + ['skipped' => $skipped];
+    }
+
+    public function resetCatalogImport(): void
+    {
+        $this->discardCatalogFile();
+        $this->reset(['catalogFile', 'catalogCheck', 'catalogFixes', 'catalogResult']);
+    }
+
+    private function discardCatalogFile(): void
+    {
+        if ($this->catalogPath) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($this->catalogPath);
+            $this->catalogPath = null;
+        }
+    }
+
     /** HebrewCalendar: the Hebrew month that is month 1 of a newly opened subscription. */
     public function saveSubscriptionSettings(ActivityLogger $activityLogger): void
     {
@@ -1584,6 +1762,13 @@ class extends Component
     @if ($activeTab === 'import')
     {{-- ===== יבוא נתונים — customers from an Excel file (App\Services\CustomerImport) ===== --}}
     @php($errStyle = 'color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;')
+    <div class="tabs" style="margin-bottom: var(--sp-md)">
+        <span class="{{ $importKind === 'customers' ? 'active' : '' }}" wire:click="$set('importKind', 'customers')">לקוחות</span>
+        <span class="{{ $importKind === 'catalog' ? 'active' : '' }}" wire:click="$set('importKind', 'catalog')">תוכניות ומארזים</span>
+    </div>
+    @if ($importKind === 'catalog')
+        @include('partials.settings-catalog-import')
+    @else
     <section class="settings-section">
         <div class="section-head">
             <h2>יבוא לקוחות מאקסל</h2>
@@ -1857,6 +2042,7 @@ class extends Component
             </div>
         @endif
     </section>
+    @endif
     @endif
     @if ($activeTab === 'backup')
     {{-- ===== גיבוי שבועי — App\Services\WeeklyBackup ===== --}}

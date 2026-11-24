@@ -75,6 +75,23 @@ class SubscriptionsTest extends TestCase
         $this->assertSame(1, $customer->subscriptions()->count());
     }
 
+    /** 2026-11-24: a subscription bundle per school year — next year's bundle is sold while this year's subscription is still active. */
+    public function test_next_years_subscription_bundle_can_be_sold_while_this_years_is_active(): void
+    {
+        $customer = $this->createCustomer();
+        $thisYear = $this->createSubscriptionBundle('מנוי תשפ"ו', 4200);
+        $nextYear = $this->createSubscriptionBundle('מנוי תשפ"ז', 4500);
+        Deal::createForCustomer($customer, null, $thisYear);
+
+        Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $customer])
+            ->set('dealItem', 'bundle:'.$nextYear->id)
+            ->call('createDeal')
+            ->assertSet('dealError', null);
+
+        $this->assertSame(2, $customer->subscriptions()->count());
+        $this->assertSame(['מנוי תשפ"ו', 'מנוי תשפ"ז'], $customer->subscriptions()->orderBy('id')->get()->map(fn ($s) => $s->deal->subscriptionBundle()->name)->all());
+    }
+
     public function test_a_deal_for_a_non_subscription_program_never_opens_a_subscription(): void
     {
         $customer = $this->createCustomer();

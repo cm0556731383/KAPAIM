@@ -32,6 +32,9 @@ class HebrewCalendar
 
     private const TIMEZONE = 'Asia/Jerusalem';
 
+    /** תמוז: a start month from here on opens the school year in the summer before it. */
+    private const SUMMER_FIRST_MONTH = 10;
+
     public static function startMonth(): int
     {
         $month = (int) AppSetting::get(self::START_MONTH_SETTING, (string) self::DEFAULT_START_MONTH);
@@ -58,6 +61,95 @@ class HebrewCalendar
         }
 
         return self::firstOfMonth($year + 2, $startMonth);
+    }
+
+    /**
+     * Subscription bundles carry the school year they're for (2026-11-24,
+     * business owner: one subscription bundle per year), stored as the Hebrew
+     * year the school year is named after — תשפ״ז = 5787. Its month 1 is the
+     * settings' start month in that year, except a start month in the summer
+     * (תמוז/אב/אלול), which opens the school year in the summer before it:
+     * with אלול, תשפ״ז starts on 1 אלול תשפ״ו.
+     */
+    public static function schoolYearStart(int $schoolYear, ?int $startMonth = null): CarbonImmutable
+    {
+        $startMonth ??= self::startMonth();
+
+        return self::firstOfMonth($startMonth >= self::SUMMER_FIRST_MONTH ? $schoolYear - 1 : $schoolYear, $startMonth);
+    }
+
+    /** The school year whose subscription months $date falls in — or, in the summer gap, the next one. */
+    public static function schoolYearFor(DateTimeInterface $date, ?int $startMonth = null): int
+    {
+        $startMonth ??= self::startMonth();
+        $start = self::cycleStartFor($date, $startMonth, 10);
+        $year = self::calendarAt($start)->get(IntlCalendar::FIELD_YEAR);
+
+        return $startMonth >= self::SUMMER_FIRST_MONTH ? $year + 1 : $year;
+    }
+
+    /** 5787 => "תשפ״ז (2026–2027)". */
+    public static function schoolYearLabel(int $schoolYear): string
+    {
+        return self::yearInLetters($schoolYear).' ('.($schoolYear - 3761).'–'.($schoolYear - 3760).')';
+    }
+
+    /** Pick-list years: last year to three years ahead, year => label. */
+    public static function schoolYearOptions(?int $include = null): array
+    {
+        $current = self::schoolYearFor(now());
+        $years = range($current - 1, $current + 3);
+
+        if ($include && ! in_array($include, $years, true)) {
+            $years[] = $include;
+            sort($years);
+        }
+
+        return collect($years)->mapWithKeys(fn (int $year) => [$year => self::schoolYearLabel($year)])->all();
+    }
+
+    /**
+     * A school year as typed: "תשפ״ז" / "תשפז" / "תשפ"ז (2026–2027)", "5787",
+     * or the Gregorian years "2026-2027" / "2026/27" / "2027" (the year it ends in).
+     */
+    public static function parseSchoolYear(string $value): ?int
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('/^(5\d{3})$/', $value, $m)) {
+            return (int) $m[1];
+        }
+
+        if (preg_match('/^(20\d{2})\s*[-–\/]\s*(\d{2}|\d{4})$/u', $value, $m)) {
+            $end = strlen($m[2]) === 2 ? (int) (substr($m[1], 0, 2).$m[2]) : (int) $m[2];
+
+            return $end === (int) $m[1] + 1 ? $end + 3760 : null;
+        }
+
+        if (preg_match('/^(20\d{2})$/', $value, $m)) {
+            return (int) $m[1] + 3760;
+        }
+
+        // Hebrew letters — whatever follows them (a Gregorian label in brackets) is ignored.
+        $letters = preg_replace('/["\'״׳]/u', '', preg_split('/\s|\(/u', $value)[0]);
+        $values = ['א' => 1, 'ב' => 2, 'ג' => 3, 'ד' => 4, 'ה' => 5, 'ו' => 6, 'ז' => 7, 'ח' => 8, 'ט' => 9,
+            'י' => 10, 'כ' => 20, 'ך' => 20, 'ל' => 30, 'מ' => 40, 'ם' => 40, 'נ' => 50, 'ן' => 50, 'ס' => 60, 'ע' => 70,
+            'פ' => 80, 'ף' => 80, 'צ' => 90, 'ץ' => 90, 'ק' => 100, 'ר' => 200, 'ש' => 300, 'ת' => 400];
+        $sum = 0;
+
+        foreach (mb_str_split($letters) as $letter) {
+            if (! isset($values[$letter])) {
+                return null;
+            }
+
+            $sum += $values[$letter];
+        }
+
+        return $sum >= 700 && $sum < 1000 ? 5000 + $sum : null;
     }
 
     /** $months Hebrew months after $date (the 1st of a Hebrew month). */

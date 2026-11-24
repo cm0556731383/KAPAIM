@@ -360,6 +360,11 @@ class Deal extends Model
         foreach ($lines as $line) {
             $bundle = $line['bundle'];
 
+            // A subscription bundle whose school year is over can't be sold (2026-11-24).
+            if ($bundle?->is_subscription_type && $bundle->schoolYearHasEnded()) {
+                throw new RuntimeException("שנת הלימודים של המארז \"{$bundle->name}\" ({$bundle->schoolYearLabel()}) כבר הסתיימה — לא ניתן למכור אותו.");
+            }
+
             // The same subscription twice at once is a duplicate sale (e.g. a
             // second click) — renewing means next year's bundle, a different one.
             if ($bundle?->is_subscription_type && $customer->subscriptions()
@@ -669,7 +674,8 @@ class Deal extends Model
             'deal_id' => $this->id,
             'status_id' => $activeStatus->id,
             'start_date' => now()->toDateString(),
-            'first_month_date' => HebrewCalendar::cycleStartFor(now(), HebrewCalendar::startMonth(), Subscription::TOTAL_DELIVERIES)->toDateString(),
+            // The bundle's school year decides the months (2026-11-24); a bundle without one follows the sale date.
+            'first_month_date' => ($bundle->subscriptionFirstMonth() ?? HebrewCalendar::cycleStartFor(now(), HebrewCalendar::startMonth(), Subscription::TOTAL_DELIVERIES))->toDateString(),
             'agreed_price' => $agreedPrice ?? $this->agreed_amount,
             'version' => 0,
         ]);
