@@ -384,6 +384,36 @@ class DealImportTest extends TestCase
         $this->assertSame(0, ExternalOperation::where('operation_type', 'issue_receipt')->count());
     }
 
+    public function test_a_file_from_the_earlier_template_headings_still_imports(): void
+    {
+        Http::fake();
+        $file = $this->filledFile([[
+            'customer' => 'אורות', 'purchased_at' => '01/09/2026', 'item1' => 'תוכנית: מוגנות', 'special_request' => 'לשלוח חוברות',
+            'invoice_state' => 'הופקה ונשלחה', 'invoice_date' => '10/09/2026',
+            'pay1_method' => 'העברה בנקאית', 'pay1_amount' => '1500', 'pay1_receipt' => 'R-7',
+        ]]);
+
+        // Put back the headings the template had before 2026-11-25.
+        $book = IOFactory::load($file->getRealPath());
+        $sheet = $book->getSheet(0);
+        $keys = array_keys(DealImport::columns());
+        $sheet->setCellValue(Coordinate::stringFromColumnIndex(array_search('special_request', $keys, true) + 1).'1', 'בקשה מיוחדת / הערות');
+        $sheet->setCellValue(Coordinate::stringFromColumnIndex(array_search('pay1_receipt', $keys, true) + 1).'1', 'תשלום 1 — מספר קבלה');
+        $path = tempnam(sys_get_temp_dir(), 'deal').'.xlsx';
+        (new Xlsx($book))->save($path);
+        $old = UploadedFile::fake()->createWithContent('deals.xlsx', file_get_contents($path));
+        unlink($path);
+
+        $this->assertSame('בקשת התאמה מיוחדת', DealImport::columns()['special_request'][0]);
+        $this->assertSame('תשלום 1 — אסמכתא (מספר קבלה)', DealImport::columns()['pay1_receipt'][0]);
+
+        $this->screen()->set('dealFile', $old)->call('checkDealImport')->assertSet('dealCheck.invalid', [])->call('runDealImport')->assertSee('נוספו 1 עסקאות');
+
+        $deal = $this->orot->deals()->sole();
+        $this->assertSame('לשלוח חוברות', $deal->special_request);
+        $this->assertSame('R-7', $deal->payments()->sole()->receipt->external_number);
+    }
+
     public function test_payment_columns_are_checked(): void
     {
         $component = $this->screen()
