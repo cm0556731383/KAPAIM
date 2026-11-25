@@ -35,7 +35,7 @@ use RuntimeException;
 #[Fillable([
     'deal_id', 'expense_id', 'lead_id', 'lead_offer', 'document_template_id', 'business_entity_id', 'preceding_document_id',
     'document_type', 'status_id', 'format', 'is_external', 'external_number', 'file_reference', 'rendered_content',
-    'field_values', 'sent_at', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at', 'confirmation_noticed_at',
+    'field_values', 'sent_at', 'summit_drafted_at', 'summit_draft_reference', 'received_at', 'signed_at', 'confirmed_at', 'viewed_at', 'confirmation_noticed_at',
 ])]
 class Document extends Model
 {
@@ -84,6 +84,7 @@ class Document extends Model
             'is_external' => 'boolean',
             'lead_offer' => 'array',
             'sent_at' => 'datetime',
+            'summit_drafted_at' => 'datetime',
             'received_at' => 'datetime',
             'signed_at' => 'datetime',
             'confirmed_at' => 'datetime',
@@ -1556,6 +1557,10 @@ class Document extends Model
      * warn the user (FR-8.16).
      *
      * @param  array<int, array{contact_id: ?int, name: string, email: ?string}>  $recipients
+     * In SUMIT test mode an invoice/credit note is only a SUMIT draft:
+     * summit_drafted_at is set instead of sent_at, and $operations['draft']
+     * tells the caller.
+     *
      * @return array{smove: ?ExternalOperation, summit: ?ExternalOperation}
      *
      * @throws RuntimeException when no recipient is supplied.
@@ -1608,6 +1613,8 @@ class Document extends Model
             // (SummitClient::emailCopies()).
             $summitEmails = collect($recipients)->pluck('email')->filter(fn ($email) => filled($email) && filter_var(trim($email), FILTER_VALIDATE_EMAIL))->map(fn ($e) => trim($e))->values();
             $summitEmail = $summitEmails->first();
+            // Read before issuing: in test mode SUMIT only makes a draft, and never emails it.
+            $testMode = $summit->isTestMode();
 
             $operations['summit'] = $runner->run(
                 'summit',
@@ -1630,6 +1637,27 @@ class Document extends Model
                     $this->delete();
                     $operations['deleted'] = true;
                 }
+
+                return $operations;
+            }
+
+            // Test mode: SUMIT made a draft, which nobody received — recorded as
+            // that, not as sent, so the deal stays as it was and the document can
+            // be issued again (for real, once test mode is off). Business owner's
+            // call 2026-11-25, after a test-mode invoice showed as sent.
+            if ($testMode) {
+                $this->update([
+                    'summit_drafted_at' => now(),
+                    'summit_draft_reference' => $operations['summit']->external_reference,
+                ]);
+
+                $logger->log('document.summit_draft', "הופקה טיוטת {$typeLabel} ב-SUMIT (מצב בדיקה) עבור עסקה #{$this->deal_id} — לא נשלחה ללקוחה", [
+                    'document_id' => $this->id,
+                    'deal_id' => $this->deal_id,
+                    'metadata' => ['summit_document_id' => $operations['summit']->external_reference],
+                ]);
+
+                $operations['draft'] = true;
 
                 return $operations;
             }

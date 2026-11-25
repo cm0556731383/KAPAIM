@@ -208,6 +208,12 @@ class extends Component
 
         $this->document->refresh()->load('recipients');
 
+        if ($operations['draft'] ?? false) {
+            $this->notifyWarning('SUMIT במצב בדיקה — הופקה שם טיוטה בלבד, והיא לא נשלחה ללקוחה. כדי להפיק מסמך אמיתי, יש לכבות את מצב הבדיקה בהגדרות ולהפיק שוב.');
+
+            return;
+        }
+
         if ($operations['summit']?->status === ExternalOperation::STATUS_FAILED) {
             $this->sendError = 'ההפקה מול Summit נכשלה, ולכן המסמך לא נשלח ונשאר טיוטה: '.$operations['summit']->error_message;
 
@@ -378,6 +384,11 @@ class extends Component
                             הופק מול Summit בתאריך <span class="ltr-num">{{ $document->sent_at->format('d/m/Y H:i') }}</span>.
                         </p>
                     @else
+                        @if ($document->summit_drafted_at)
+                            <div style="margin-bottom: var(--sp-md); background: var(--color-warning-bg); color: var(--color-warning); border-radius: var(--radius-control); padding: var(--sp-sm) var(--sp-md); font-size: var(--fs-small);">
+                                הופקה טיוטה ב-SUMIT בתאריך <span class="ltr-num">{{ $document->summit_drafted_at->format('d/m/Y H:i') }}</span>@if ($document->summit_draft_reference) (מס' <span class="ltr-num">{{ $document->summit_draft_reference }}</span>)@endif, במצב בדיקה — המסמך לא נשלח ללקוחה. ניתן להפיק אותו שוב.
+                            </div>
+                        @endif
                         <p style="font-size:var(--fs-small); margin:0">
                             SUMIT ישלח את המסמך אל:
                             @forelse ($workingRecipients as $recipient)
@@ -388,7 +399,7 @@ class extends Component
                         </p>
                         <p class="text-text-secondary" style="font-size:var(--fs-caption); margin:4px 0 0">כל הגורמים החשבונאיים של הלקוחה (ובלעדיהם — איש הקשר הראשי).</p>
                         <div style="margin-top:var(--sp-lg)">
-                            <button type="button" wire:click="send('digital')" class="btn btn-primary" @if ($document->document_type === 'invoice' && ($invoiceMismatch ?? false)) wire:confirm="סה&quot;כ החשבונית שונה מסכום העסקה, ואחרי ההפקה לא ניתן לשנות את סכום העסקה. להפיק בכל זאת?" @endif>הפקה מול Summit</button>
+                            <button type="button" wire:click="send('digital')" class="btn btn-primary" @if ($document->document_type === 'invoice' && ($invoiceMismatch ?? false)) wire:confirm="סה&quot;כ החשבונית שונה מסכום העסקה, ואחרי ההפקה לא ניתן לשנות את סכום העסקה. להפיק בכל זאת?" @endif>{{ $document->summit_drafted_at ? 'הפקה שוב מול Summit' : 'הפקה מול Summit' }}</button>
                         </div>
                     @endif
                 </div>

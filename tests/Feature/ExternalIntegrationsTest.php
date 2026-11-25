@@ -627,6 +627,60 @@ class ExternalIntegrationsTest extends TestCase
         Http::assertSent(fn ($request) => ($request['Details']['IsDraft'] ?? null) === true);
     }
 
+    public function test_a_test_mode_invoice_is_a_sumit_draft_not_sent_and_can_be_issued_again(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => true]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 556]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+        $statusBefore = $deal->fresh()->status?->name;
+
+        $operations = $this->sendNow($invoice);
+
+        $this->assertTrue($operations['draft']);
+        $fresh = $invoice->fresh();
+        $this->assertNull($fresh->sent_at);
+        $this->assertNotNull($fresh->summit_drafted_at);
+        $this->assertSame('556', $fresh->summit_draft_reference);
+        $this->assertSame(0, $fresh->recipients()->count());
+        $this->assertNull($deal->fresh()->issuedInvoice());
+        $this->assertSame($statusBefore, $deal->fresh()->status?->name);
+        $this->assertDatabaseHas('activity_logs', ['activity_type' => 'document.summit_draft', 'document_id' => $invoice->id]);
+        // A draft is never emailed, so no copies are sent to other contacts either.
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/accounting/documents/send/'));
+        // Still a draft here, so it can be deleted for a fresh invoice.
+        $this->assertTrue($fresh->isDeletableDraft());
+
+        // Test mode off: the same document is issued again, for real this time.
+        ExternalIntegrationSetting::where('system', 'summit')->update(['settings' => ['test_mode' => false]]);
+        $this->sendNow(Document::find($invoice->id));
+
+        $this->assertNotNull($invoice->fresh()->sent_at);
+        $this->assertSame(2, ExternalOperation::where('document_id', $invoice->id)->where('operation_type', 'issue_invoice')->count());
+        $this->assertNotNull($deal->fresh()->issuedInvoice());
+    }
+
+    public function test_the_invoice_screen_shows_a_test_mode_draft_and_offers_to_issue_again(): void
+    {
+        ExternalIntegrationSetting::create(['system' => 'summit', 'is_active' => true, 'settings' => ['test_mode' => true]]);
+        Http::fake(['api.sumit.co.il/*' => Http::response(['Status' => 0, 'Data' => ['DocumentID' => 556]], 200)]);
+
+        $deal = $this->dealWithInvoice();
+        $invoice = $deal->documents()->where('document_type', 'invoice')->firstOrFail();
+        $invoice->update(['sent_at' => null]);
+
+        Livewire::actingAs($this->owner)->test('document-view', ['document' => $invoice])
+            ->set('workingRecipients', [['contact_id' => null, 'name' => 'לקוחה', 'email' => 'billing@example.com']])
+            ->call('send', 'digital')
+            ->assertSee('הופקה טיוטה ב-SUMIT')
+            ->assertSee('הפקה שוב מול Summit')
+            ->assertDontSee('הופק מול Summit בתאריך');
+
+        $this->actingAs($this->owner)->get(route('deal-detail', $deal))->assertSee('טיוטה ב-SUMIT');
+    }
+
     public function test_an_invoice_whose_summit_issuance_fails_is_deleted_and_the_deal_shows_why(): void
     {
         // No Summit setting at all — exactly the "not configured yet" failure.

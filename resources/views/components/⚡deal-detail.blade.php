@@ -1656,7 +1656,9 @@ class extends Component
                         <tr>
                             <td>{{ \App\Models\Document::TYPE_LABELS[$document->document_type] ?? $document->document_type }}</td>
                             <td>
-                                @if (! $document->sent_at)
+                                @if (! $document->sent_at && $document->summit_drafted_at)
+                                    <span class="badge badge-warning">טיוטה ב-SUMIT</span>
+                                @elseif (! $document->sent_at)
                                     <span class="text-text-secondary">—</span>
                                 @else
                                     <span class="badge badge-neutral">{{ $document->sentFormatLabel() }}</span>
