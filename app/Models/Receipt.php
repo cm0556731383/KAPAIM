@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Services\ActivityLogger;
 use App\Services\Integrations\ExternalOperationRunner;
 use App\Services\Integrations\SummitClient;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
@@ -23,7 +26,7 @@ use RuntimeException;
  * While SUMIT is connected the receipt only stays if SUMIT issued it (a
  * failure deletes it and throws); with SUMIT disabled it's local-only.
  */
-#[Fillable(['payment_id', 'document_id', 'status', 'issued_before_payment', 'issued_at'])]
+#[Fillable(['payment_id', 'document_id', 'status', 'issued_before_payment', 'is_external', 'external_number', 'issued_at'])]
 class Receipt extends Model
 {
     use HasFactory;
@@ -34,6 +37,7 @@ class Receipt extends Model
     {
         return [
             'issued_before_payment' => 'boolean',
+            'is_external' => 'boolean',
             'issued_at' => 'datetime',
         ];
     }
@@ -168,5 +172,138 @@ class Receipt extends Model
         ]);
 
         return $receipt;
+    }
+
+    /**
+     * A payment that came in, and its receipt, both done outside the system
+     * (2026-11-25 — as Document::recordExternal() for documents): the
+     * payment is recorded on $deal as usual (Deal::recordPayment()) and its
+     * receipt is marked issued on $receiptDate with its number. Nothing
+     * goes to SUMIT or to the customer. A check counts as cleared on the
+     * receipt's date — a receipt for it was already issued.
+     *
+     * @throws RuntimeException on a business-rule violation; nothing is recorded then.
+     */
+    public static function recordExternalPayment(Deal $deal, int $expectedVersion, int $paymentMethodId, float $amount, \DateTimeInterface $paymentDate, \DateTimeInterface $receiptDate, ?string $receiptNumber, ?string $checkNumber, ActivityLogger $logger): self
+    {
+        self::assertExternalDates($paymentDate, $receiptDate);
+
+        $receipt = DB::transaction(function () use ($deal, $expectedVersion, $paymentMethodId, $amount, $paymentDate, $receiptDate, $receiptNumber, $checkNumber) {
+            $payment = $deal->recordPayment($expectedVersion, $amount, Carbon::parse($paymentDate)->setTime(12, 0)->toDateTimeString(), $paymentMethodId, $checkNumber);
+
+            return self::attachExternal($deal, $payment, $receiptDate, $receiptNumber);
+        });
+
+        $payment = $receipt->payment;
+        $logger->log('receipt.recorded_external', 'נרשם תשלום בסך ₪'.number_format((float) $payment->amount, 2)." וקבלה שהופקה מחוץ למערכת עבור עסקה #{$deal->id}"
+            .' (קבלה מתאריך '.$receipt->issued_at->format('d/m/Y').($receipt->external_number ? ", מס' {$receipt->external_number}" : '').')', [
+                'deal_id' => $deal->id, 'customer_id' => $deal->customer_id,
+                'metadata' => ['receipt_id' => $receipt->id, 'payment_id' => $payment->id, 'amount' => (float) $payment->amount],
+            ]);
+
+        return $receipt;
+    }
+
+    /**
+     * A payment already recorded here whose receipt was issued outside the
+     * system — marks it receipted without going to SUMIT.
+     *
+     * @throws RuntimeException on a business-rule violation.
+     */
+    public static function recordExternalFor(Deal $deal, Payment $payment, \DateTimeInterface $receiptDate, ?string $receiptNumber, ActivityLogger $logger): self
+    {
+        if ($payment->deal_id !== $deal->id) {
+            throw new RuntimeException('התשלום שנבחר אינו שייך לעסקה זו.');
+        }
+
+        self::assertExternalDates($payment->payment_date ?? $receiptDate, $receiptDate);
+
+        $receipt = DB::transaction(fn () => self::attachExternal($deal, $payment, $receiptDate, $receiptNumber));
+
+        $logger->log('receipt.recorded_external', 'נרשמה קבלה שהופקה מחוץ למערכת עבור תשלום בסך ₪'.number_format((float) $payment->amount, 2)." בעסקה #{$deal->id}"
+            .' (מתאריך '.$receipt->issued_at->format('d/m/Y').($receipt->external_number ? ", מס' {$receipt->external_number}" : '').')', [
+                'deal_id' => $deal->id, 'customer_id' => $deal->customer_id,
+                'metadata' => ['receipt_id' => $receipt->id, 'payment_id' => $payment->id],
+            ]);
+
+        return $receipt;
+    }
+
+    private static function assertExternalDates(\DateTimeInterface $paymentDate, \DateTimeInterface $receiptDate): void
+    {
+        if (Carbon::parse($paymentDate)->isAfter(now()->endOfDay()) || Carbon::parse($receiptDate)->isAfter(now()->endOfDay())) {
+            throw new RuntimeException('תאריך התשלום והקבלה לא יכול להיות עתידי.');
+        }
+    }
+
+    /** The shared part: same gates as issueFor() (an invoice, one receipt per payment), minus SUMIT. */
+    private static function attachExternal(Deal $deal, Payment $payment, \DateTimeInterface $receiptDate, ?string $receiptNumber): self
+    {
+        $invoice = $deal->issuedInvoice();
+
+        if (! $invoice) {
+            throw new RuntimeException('לעסקה עדיין אין חשבונית — קבלה נרשמת על חשבונית. אם גם החשבונית הופקה מחוץ למערכת, יש לרשום אותה קודם ("רישום מסמך שנעשה מחוץ למערכת").');
+        }
+
+        if (self::whereHas('document', fn ($q) => $q->where('deal_id', $deal->id))->where('issued_before_payment', true)->exists()) {
+            throw new RuntimeException('לעסקה זו כבר הופקה קבלה לפני תשלום על מלוא סכום החשבונית — היא מכסה גם את התשלום הזה.');
+        }
+
+        if ($payment->sumit_document_id || self::where('payment_id', $payment->id)->exists()) {
+            throw new RuntimeException('כבר הופקה קבלה עבור תשלום זה.');
+        }
+
+        $at = Carbon::parse($receiptDate)->setTime(12, 0);
+
+        // Receipted outside → the check was cleared by then.
+        if ($payment->isCheck() && ! $payment->cleared_date) {
+            $payment->update(['check_status' => Payment::CHECK_CLEARED, 'cleared_date' => $at]);
+        }
+
+        $receipt = self::create([
+            'payment_id' => $payment->id,
+            'document_id' => $invoice->id,
+            'status' => self::STATUS_ISSUED,
+            'issued_before_payment' => false,
+            'is_external' => true,
+            'external_number' => filled($receiptNumber) ? trim($receiptNumber) : null,
+            'issued_at' => $at,
+        ]);
+
+        $deal->refreshPaidStatus();
+
+        return $receipt;
+    }
+
+    /**
+     * An external receipt recorded by mistake is removed together with its
+     * payment — unless the payment came through SUMIT, which then stays
+     * (only the receipt goes).
+     */
+    public function deleteExternal(ActivityLogger $logger): void
+    {
+        if (! $this->is_external) {
+            throw new RuntimeException('ניתן למחוק רק קבלה שנרשמה מחוץ למערכת.');
+        }
+
+        $payment = $this->payment;
+        $deal = $payment?->deal;
+        $withPayment = $payment && ! $payment->sumit_payment_id && ! $payment->sumit_document_id;
+
+        DB::transaction(function () use ($payment, $deal, $withPayment) {
+            $this->delete();
+
+            if ($withPayment) {
+                $payment->delete();
+            }
+
+            $deal?->increment('version');
+            $deal?->refreshPaidStatus();
+        });
+
+        $logger->log('receipt.external_deleted', ($withPayment ? 'נמחקו תשלום וקבלה' : 'נמחקה קבלה').' שנרשמו מחוץ למערכת'.($deal ? " בעסקה #{$deal->id}" : ''), [
+            'deal_id' => $deal?->id, 'customer_id' => $deal?->customer_id,
+            'metadata' => ['payment_id' => $payment?->id, 'amount' => (float) $payment?->amount],
+        ]);
     }
 }

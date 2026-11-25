@@ -812,6 +812,100 @@ class extends Component
         $this->notifySuccess('המסמך נמחק.');
     }
 
+    // ===== תשלום וקבלה שנעשו מחוץ למערכת (Receipt::recordExternalPayment(), 2026-11-25) =====
+    public string $extPayMethodId = '';
+    public string $extPayAmount = '';
+    public string $extPayDate = '';
+    public string $extCheckNumber = '';
+    public string $extReceiptDate = '';
+    public string $extReceiptNumber = '';
+
+    public function recordExternalPayment(ActivityLogger $activityLogger, bool $overpaymentConfirmed = false): void
+    {
+        $this->paymentError = null;
+
+        $data = $this->validate([
+            'extPayMethodId' => ['required', 'integer', \Illuminate\Validation\Rule::exists('payment_methods', 'id')],
+            'extPayAmount' => ['required', 'numeric', 'gt:0', \App\Support\Money::maxRule()],
+            'extPayDate' => ['required', 'date', 'before_or_equal:today'],
+            'extCheckNumber' => ['nullable', 'string', 'max:50'],
+            'extReceiptDate' => ['nullable', 'date', 'before_or_equal:today'],
+            'extReceiptNumber' => ['nullable', 'string', 'max:50'],
+        ], [
+            'extPayDate.before_or_equal' => 'התאריך לא יכול להיות עתידי.',
+            'extReceiptDate.before_or_equal' => 'התאריך לא יכול להיות עתידי.',
+        ], ['extPayMethodId' => 'אמצעי תשלום', 'extPayAmount' => 'סכום', 'extPayDate' => 'תאריך התשלום', 'extCheckNumber' => "מס' צ'ק", 'extReceiptDate' => 'תאריך הקבלה', 'extReceiptNumber' => 'מספר קבלה']);
+
+        if ($this->askToConfirmOverpayment((float) $data['extPayAmount'], 'recordExternalPayment', $overpaymentConfirmed)) {
+            return;
+        }
+
+        try {
+            Receipt::recordExternalPayment(
+                $this->deal, $this->loadedVersion, (int) $data['extPayMethodId'], (float) $data['extPayAmount'],
+                \Carbon\Carbon::parse($data['extPayDate']), \Carbon\Carbon::parse($data['extReceiptDate'] ?: $data['extPayDate']),
+                $data['extReceiptNumber'] ?: null, $data['extCheckNumber'] ?: null, $activityLogger,
+            );
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+            $this->dispatch('close-modals');
+
+            return;
+        }
+
+        $this->reset(['extPayMethodId', 'extPayAmount', 'extPayDate', 'extCheckNumber', 'extReceiptDate', 'extReceiptNumber']);
+        $this->afterExternalReceiptChange('התשלום והקבלה נרשמו.');
+    }
+
+    /** A payment already recorded here whose receipt was issued outside the system. */
+    public function recordExternalReceiptFor(int $paymentId, ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+
+        $data = $this->validate([
+            'extReceiptDate' => ['required', 'date', 'before_or_equal:today'],
+            'extReceiptNumber' => ['nullable', 'string', 'max:50'],
+        ], ['extReceiptDate.before_or_equal' => 'התאריך לא יכול להיות עתידי.'], ['extReceiptDate' => 'תאריך הקבלה', 'extReceiptNumber' => 'מספר קבלה']);
+
+        try {
+            Receipt::recordExternalFor($this->deal, $this->deal->payments()->findOrFail($paymentId), \Carbon\Carbon::parse($data['extReceiptDate']), $data['extReceiptNumber'] ?: null, $activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+            $this->dispatch('close-modals');
+
+            return;
+        }
+
+        $this->reset(['extReceiptDate', 'extReceiptNumber']);
+        $this->afterExternalReceiptChange('הקבלה נרשמה.');
+    }
+
+    public function deleteExternalReceipt(int $receiptId, ActivityLogger $activityLogger): void
+    {
+        $this->paymentError = null;
+
+        $receipt = Receipt::whereHas('payment', fn ($q) => $q->where('deal_id', $this->deal->id))->findOrFail($receiptId);
+
+        try {
+            $receipt->deleteExternal($activityLogger);
+        } catch (\RuntimeException $e) {
+            $this->paymentError = $e->getMessage();
+
+            return;
+        }
+
+        $this->afterExternalReceiptChange('הרישום נמחק.');
+    }
+
+    private function afterExternalReceiptChange(string $message): void
+    {
+        $this->deal->refresh()->load('status');
+        $this->syncFields();
+        unset($this->payments, $this->beforePaymentReceipt);
+        $this->dispatch('close-modals');
+        $this->notifySuccess($message);
+    }
+
     public function recordPayment(ActivityLogger $activityLogger, ExternalOperationRunner $runner, SummitClient $summit, bool $overpaymentConfirmed = false): void
     {
         $this->paymentError = null;
@@ -2078,7 +2172,10 @@ class extends Component
                                 @endif
                             </td>
                             <td>
-                                @if ($payment->receipt || $payment->sumit_document_id)
+                                @if ($payment->receipt?->is_external)
+                                    <span class="badge badge-info">קבלה מחוץ למערכת</span>
+                                    <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)"><span class="ltr-num">{{ $payment->receipt->issued_at?->format('d/m/Y') }}</span>@if ($payment->receipt->external_number) · מס' <span class="ltr-num">{{ $payment->receipt->external_number }}</span>@endif</div>
+                                @elseif ($payment->receipt || $payment->sumit_document_id)
                                     <span class="badge badge-info">הופקה קבלה</span>
                                 @elseif ($this->beforePaymentReceipt)
                                     <span class="text-text-secondary" style="font-size:var(--fs-caption)">בקבלה לפני תשלום</span>
@@ -2087,8 +2184,28 @@ class extends Component
                                 @else
                                     <button type="button" wire:click="issueReceipt({{ $payment->id }})" class="btn btn-ghost btn-sm" @disabled(! $hasInvoice)>הפקת קבלה</button>
                                 @endif
+                                @if (! $payment->receipt && ! $payment->sumit_document_id && ! $this->beforePaymentReceipt && $hasInvoice)
+                                    <x-modal trigger-label="קבלה מחוץ למערכת" trigger-class="btn btn-ghost btn-sm" title="קבלה שהופקה מחוץ למערכת">
+                                        <form wire:submit="recordExternalReceiptFor({{ $payment->id }})" class="form-grid">
+                                            <div>
+                                                <label>תאריך הקבלה</label>
+                                                <input type="date" wire:model="extReceiptDate" max="{{ now()->toDateString() }}">
+                                                @error('extReceiptDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                            </div>
+                                            <div>
+                                                <label>מספר קבלה (לא חובה)</label>
+                                                <input type="text" wire:model="extReceiptNumber" dir="ltr" class="ltr-num">
+                                                @error('extReceiptNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                                            </div>
+                                            <div class="full"><button type="submit" class="btn btn-primary">רישום הקבלה</button></div>
+                                        </form>
+                                    </x-modal>
+                                @endif
                             </td>
                             <td style="white-space:nowrap">
+                                @if ($payment->receipt?->is_external)
+                                    <button type="button" wire:click="deleteExternalReceipt({{ $payment->receipt->id }})" wire:confirm="{{ $payment->sumit_payment_id || $payment->sumit_document_id ? 'למחוק את רישום הקבלה? (שום דבר לא נשלח או בוטל מול הלקוחה או SUMIT)' : 'למחוק את רישום התשלום והקבלה? (שום דבר לא נשלח או בוטל מול הלקוחה או SUMIT)' }}" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
+                                @endif
                                 @if ($payment->isEditable())
                                     <button type="button" wire:click="editPayment({{ $payment->id }})" class="btn btn-ghost btn-sm">עריכה</button>
                                     <button type="button" wire:click="deletePayment({{ $payment->id }})" wire:confirm="למחוק את התשלום? (מחיקה לוגית)" class="btn btn-ghost btn-sm" style="color:var(--color-error)">מחיקה</button>
@@ -2103,6 +2220,48 @@ class extends Component
 
         {{-- FR-4.24/FR-4.25 — the exception, kept out of the main flow. --}}
         <div class="pay-secondary">
+            <x-modal trigger-label="+ רישום תשלום וקבלה שנעשו מחוץ למערכת" trigger-class="btn btn-ghost btn-sm" title="תשלום וקבלה שנעשו מחוץ למערכת">
+                <form wire:submit="recordExternalPayment" class="form-grid">
+                    <div>
+                        <label for="extPayMethodId">אמצעי תשלום</label>
+                        <select id="extPayMethodId" wire:model.live="extPayMethodId">
+                            <option value="">—</option>
+                            @foreach ($this->paymentMethods as $option)
+                                <option value="{{ $option->id }}">{{ $option->name }}</option>
+                            @endforeach
+                        </select>
+                        @error('extPayMethodId') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="extPayAmount">סכום</label>
+                        <input type="text" id="extPayAmount" wire:model="extPayAmount" class="ltr-num" dir="ltr">
+                        @error('extPayAmount') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="extPayDate">תאריך התשלום</label>
+                        <input type="date" id="extPayDate" wire:model="extPayDate" max="{{ now()->toDateString() }}">
+                        @error('extPayDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    @if ($this->paymentMethods->firstWhere('id', (int) $extPayMethodId)?->type === 'check')
+                        <div>
+                            <label for="extCheckNumber">מספר צ'ק (לא חובה)</label>
+                            <input type="text" id="extCheckNumber" wire:model="extCheckNumber" class="ltr-num" dir="ltr">
+                            @error('extCheckNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                        </div>
+                    @endif
+                    <div>
+                        <label for="extReceiptDate">תאריך הקבלה (אם שונה)</label>
+                        <input type="date" id="extReceiptDate" wire:model="extReceiptDate" max="{{ now()->toDateString() }}">
+                        @error('extReceiptDate') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div>
+                        <label for="extReceiptNumber">מספר קבלה (לא חובה)</label>
+                        <input type="text" id="extReceiptNumber" wire:model="extReceiptNumber" class="ltr-num" dir="ltr">
+                        @error('extReceiptNumber') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror
+                    </div>
+                    <div class="full"><button type="submit" class="btn btn-primary">רישום התשלום והקבלה</button></div>
+                </form>
+            </x-modal>
             @if ($this->beforePaymentReceipt)
                 <span class="badge badge-info">הופקה קבלה לפני תשלום <span class="ltr-num">{{ $this->beforePaymentReceipt->issued_at?->format('d/m/Y') }}</span></span>
                 <span class="badge {{ $this->outstandingBalance > 0 ? 'badge-warning' : 'badge-success' }}">{{ $this->outstandingBalance > 0 ? 'ממתינה לתשלום' : 'התשלום התקבל' }}</span>
