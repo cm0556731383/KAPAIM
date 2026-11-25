@@ -8,6 +8,7 @@ use App\Models\Deal;
 use App\Models\Document;
 use App\Models\PaymentMethod;
 use App\Models\Program;
+use App\Models\Receipt;
 use App\Models\User;
 use App\Support\Money;
 use Carbon\Carbon;
@@ -15,10 +16,10 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\RichText\RichText;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use Throwable;
 
@@ -31,8 +32,10 @@ use Throwable;
  * through it — so a subscription bundle opens its subscription and the
  * mailing lists are joined exactly as for a deal made by hand.
  *
- * Payments aren't imported: recording one can issue a SUMIT receipt, so they
- * are recorded on the deal card. Every imported deal starts "פתוחה".
+ * Payments made before the system come in with their receipt issued outside
+ * it (Receipt::recordExternalPayment(), 2026-11-25) — nothing goes to SUMIT,
+ * so a receipt needs the row's (external) invoice. Every imported deal starts
+ * "פתוחה" ("נשלחה חשבונית" with an invoice, "שולמה" once fully paid).
  */
 class DealImport
 {
@@ -42,6 +45,9 @@ class DealImport
 
     /** How many item lines (item + amount) the template has. */
     public const ITEMS = 6;
+
+    /** How many payments (method + amount + date + receipt number) the template has. */
+    public const PAYMENTS = 6;
 
     private const PROGRAM_PREFIX = 'תוכנית: ';
 
@@ -78,9 +84,19 @@ class DealImport
             $columns["{$type}_date"] = ["{$label} — תאריך", false, 'תאריך בפורמט 31/12/2025. ריק = תאריך הרכישה.'];
         }
 
-        return $columns + [
-            'invoice_number' => ['חשבונית — מספר', false, 'מספר החשבונית שהופקה מחוץ למערכת (לא חובה).'],
-        ];
+        $columns['invoice_number'] = ['חשבונית — מספר', false, 'מספר החשבונית שהופקה מחוץ למערכת (לא חובה).'];
+
+        // Payments made before the system, each with its receipt issued outside it.
+        for ($n = 1; $n <= self::PAYMENTS; $n++) {
+            $columns["pay{$n}_method"] = ["תשלום {$n} — אמצעי תשלום", false, $n === 1
+                ? 'בחירה מהרשימה. ריק = אין תשלום. כל תשלום נרשם עם קבלה שהופקה מחוץ למערכת — שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT. קבלה נרשמת על חשבונית, ולכן תשלום דורש חשבונית בעמודות החשבונית.'
+                : 'בחירה מהרשימה. ריק = אין תשלום נוסף.'];
+            $columns["pay{$n}_amount"] = ["תשלום {$n} — סכום", false, 'בש"ח. חובה כשנבחר אמצעי תשלום.'];
+            $columns["pay{$n}_date"] = ["תשלום {$n} — תאריך", false, 'תאריך בפורמט 31/12/2025. ריק = תאריך החשבונית. צ\'ק נחשב שנפרע בתאריך זה.'];
+            $columns["pay{$n}_receipt"] = ["תשלום {$n} — מספר קבלה", false, 'מספר הקבלה שהופקה מחוץ למערכת (לא חובה).'];
+        }
+
+        return $columns;
     }
 
     /** "נחתם" / "נשלחה" … typed in a state column => 'signed' / 'sent' (null = not recognised). */
@@ -96,7 +112,10 @@ class DealImport
 
     private static function amountKeys(): array
     {
-        return array_map(fn ($n) => "amount{$n}", range(1, self::ITEMS));
+        return [
+            ...array_map(fn ($n) => "amount{$n}", range(1, self::ITEMS)),
+            ...array_map(fn ($n) => "pay{$n}_amount", range(1, self::PAYMENTS)),
+        ];
     }
 
     // ===== The blank template =====
@@ -165,6 +184,10 @@ class DealImport
             $lists["item{$n}"] = $items;
         }
 
+        for ($n = 1; $n <= self::PAYMENTS; $n++) {
+            $lists["pay{$n}_method"] = $lists['payment_method'];
+        }
+
         $listSheet = $book->createSheet();
         $listSheet->setTitle('רשימות');
         $listSheet->setSheetState(Worksheet::SHEETSTATE_HIDDEN);
@@ -214,7 +237,8 @@ class DealImport
             ['• סכום ריק = המחיר בקטלוג לפי מספר הכיתות בשנתון, כמו בעסקה שנפתחת בכרטיס הלקוחה.'],
             ['• עסקה עם מארז מנוי פותחת מנוי לשנת הלימודים של המארז, וכל עסקה מצרפת את הלקוחה לרשימות התפוצה — בדיוק כמו עסקה ידנית.'],
             ['• מסמכים שכבר נשלחו או נחתמו לפני המערכת (הצעת מחיר, טופס הזמנה, חוזה, חשבונית) — בוחרים להם מצב ותאריך בעמודות המסמכים. הם רק נרשמים בעסקה: שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT, והמערכת ממשיכה מהם (למשל הפקת חשבונית אחרי חוזה שנחתם).'],
-            ['• כל עסקה נפתחת בסטטוס "פתוחה" (או "נשלחה חשבונית" כשנרשמה לה חשבונית). תשלומים מוסיפים אחר כך בכרטיס העסקה.'],
+            ['• תשלומים שכבר התקבלו (עד '.self::PAYMENTS.' לעסקה) — אמצעי, סכום, תאריך ומספר קבלה. כל תשלום נרשם עם קבלה שהופקה מחוץ למערכת, ולכן צריך לסמן לעסקה גם חשבונית. שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT.'],
+            ['• כל עסקה נפתחת בסטטוס "פתוחה" — "נשלחה חשבונית" כשנרשמה לה חשבונית, ו"שולמה" כשהתשלומים מכסים את הסכום.'],
             ['• עסקה זהה לעסקה שכבר קיימת (אותה לקוחה, אותו תאריך ואותם פריטים) לא תיובא — כדי שהעלאה חוזרת של אותו קובץ לא תכפיל עסקאות.'],
             ['• לפני היבוא המערכת בודקת את כל הקובץ ומציגה את השגיאות לפי מספר שורה. אפשר לתקן אותן במסך עצמו או בקובץ ולהעלות שוב.'],
             [''],
@@ -464,6 +488,67 @@ class DealImport
                 $errors['invoice_number'] = 'ארוך מדי (עד 50 תווים).';
             }
 
+            // Payments, each with its receipt issued outside the system.
+            $payments = [];
+            $invoiceDate = collect($documents)->firstWhere('type', 'invoice')['date'] ?? null;
+
+            for ($n = 1; $n <= self::PAYMENTS; $n++) {
+                $methodValue = $v["pay{$n}_method"];
+                $amountValue = $v["pay{$n}_amount"];
+                $dateValue = $v["pay{$n}_date"];
+                $receiptValue = $v["pay{$n}_receipt"];
+
+                if ($methodValue === '') {
+                    if ($amountValue !== '' || $dateValue !== '' || $receiptValue !== '') {
+                        $errors["pay{$n}_method"] = "יש פרטי תשלום בלי אמצעי תשלום — יש לבחור אמצעי לתשלום {$n} או למחוק את הפרטים.";
+                    }
+
+                    continue;
+                }
+
+                $payMethod = $methods[self::key($methodValue)] ?? null;
+
+                if (! $payMethod) {
+                    $errors["pay{$n}_method"] = 'אין אמצעי תשלום פעיל בשם זה — יש לבחור מהרשימה.';
+                }
+
+                if ($amountValue === '') {
+                    $errors["pay{$n}_amount"] = 'שדה חובה כשנבחר אמצעי תשלום.';
+                } elseif (! is_numeric($amountValue) || (float) $amountValue <= 0 || (float) $amountValue > Money::MAX_AMOUNT) {
+                    $errors["pay{$n}_amount"] = 'צריך להיות סכום גדול מאפס (למשל 1200 או 1200.50).';
+                }
+
+                $payDate = null;
+
+                if ($dateValue !== '') {
+                    $payDate = self::parseDate($dateValue);
+
+                    if (! $payDate) {
+                        $errors["pay{$n}_date"] = 'תאריך לא תקין — יש לכתוב בפורמט 31/12/2025.';
+                    } elseif ($payDate->isAfter(today())) {
+                        $errors["pay{$n}_date"] = 'תאריך עתידי.';
+                    }
+                }
+
+                if (mb_strlen($receiptValue) > 50) {
+                    $errors["pay{$n}_receipt"] = 'ארוך מדי (עד 50 תווים).';
+                }
+
+                if ($v['invoice_state'] === '') {
+                    $errors["pay{$n}_method"] = 'תשלום נרשם עם קבלה, וקבלה נרשמת על חשבונית — יש לסמן לעסקה חשבונית ("הופקה ונשלחה") בעמודות החשבונית.';
+                }
+
+                if (! array_intersect_key($errors, array_flip(["pay{$n}_method", "pay{$n}_amount", "pay{$n}_date", "pay{$n}_receipt"]))) {
+                    $payments[] = [
+                        'payment_method_id' => $payMethod->id,
+                        'payment_method' => $payMethod->name,
+                        'amount' => round((float) $amountValue, 2),
+                        'date' => $payDate?->toDateString() ?? $invoiceDate,
+                        'receipt_number' => $receiptValue === '' ? null : $receiptValue,
+                    ];
+                }
+            }
+
             // The same deal twice — already in the system, or earlier in the file.
             if ($errors === [] && $customer) {
                 $signature = self::signature($customer->id, ($purchasedAt ?? today())->toDateString(), array_map(fn ($i) => $i['program'] ? "p{$i['program']->id}" : "b{$i['bundle']->id}", $items));
@@ -496,6 +581,7 @@ class DealImport
                 'special_request' => $v['special_request'] === '' ? null : $v['special_request'],
                 'documents' => $documents,
                 'invoice_number' => $v['invoice_number'] === '' ? null : $v['invoice_number'],
+                'payments' => $payments,
             ] : null;
             $row['values'] = $errors === [] ? null : $v;
             unset($row['raw']);
@@ -639,6 +725,24 @@ class DealImport
                     report($e);
                     $failed[] = ['row' => $row['row'], 'customer' => $row['customer'], 'error' => "העסקה נוצרה (#{$deal->id}), אבל רישום המסמכים שלה נכשל"
                         .($e instanceof \RuntimeException ? ': '.$e->getMessage() : '').' — אפשר לרשום אותם בכרטיס העסקה.'];
+                    $data['payments'] = [];
+                }
+
+                // Payments with their receipts issued outside the system — on the payment's date, else the invoice's, else the purchase date.
+                $recorded = 0;
+
+                try {
+                    foreach ($data['payments'] ?? [] as $payment) {
+                        $fresh = $deal->fresh();
+                        $date = Carbon::parse($payment['date'] ?? $fresh->issuedInvoice()?->sent_at ?? $fresh->purchased_at, 'Asia/Jerusalem');
+                        Receipt::recordExternalPayment($fresh, (int) $fresh->version, $payment['payment_method_id'], (float) $payment['amount'], $date, $date, $payment['receipt_number'], null, $activityLogger);
+                        $recorded++;
+                    }
+                } catch (Throwable $e) {
+                    report($e);
+                    $failed[] = ['row' => $row['row'], 'customer' => $row['customer'], 'error' => "העסקה נוצרה (#{$deal->id}), אבל רישום התשלומים שלה נכשל"
+                        .($recorded ? " אחרי {$recorded} תשלומים" : '')
+                        .($e instanceof \RuntimeException ? ': '.$e->getMessage() : '').' — אפשר להשלים אותם בכרטיס העסקה.'];
                 }
 
                 $activityLogger->log('deal.created', "נוצרה עסקה #{$deal->id} מיבוא אקסל עבור לקוחה \"{$customer->school?->name}\": {$deal->itemsLabel()}", [
@@ -714,7 +818,7 @@ class DealImport
 
     private static function cellValue(mixed $value, string $key): string
     {
-        if ($value instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+        if ($value instanceof RichText) {
             $value = $value->getPlainText();
         }
 

@@ -6,6 +6,9 @@ use App\Models\ActivityLog;
 use App\Models\Bundle;
 use App\Models\Customer;
 use App\Models\Deal;
+use App\Models\Document;
+use App\Models\DocumentRecipient;
+use App\Models\ExternalOperation;
 use App\Models\Lead;
 use App\Models\PaymentMethod;
 use App\Models\Program;
@@ -17,6 +20,7 @@ use App\Services\ActivityLogger;
 use App\Services\DealImport;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -248,7 +252,7 @@ class DealImportTest extends TestCase
     /** 2026-11-25: documents sent / signed before the system are recorded with the deal — nothing is sent or issued. */
     public function test_documents_made_before_the_system_are_recorded_with_the_deal(): void
     {
-        \Illuminate\Support\Facades\Http::fake();
+        Http::fake();
 
         $this->screen()
             ->set('dealFile', $this->filledFile([
@@ -275,7 +279,7 @@ class DealImportTest extends TestCase
         $this->assertSame('2026-09-01', $documents['order_form']->received_at->toDateString()); // no date = the purchase date
         $this->assertSame('2026-09-03', $documents['contract']->signed_at->toDateString());
         $this->assertSame($documents['order_form']->id, $documents['contract']->preceding_document_id);
-        $this->assertSame(\App\Models\Document::CONFIRMED_STATUS_NAME, $documents['contract']->status->name);
+        $this->assertSame(Document::CONFIRMED_STATUS_NAME, $documents['contract']->status->name);
 
         // The invoice counts as the deal's invoice: status, amount lock, no second invoice.
         $this->assertSame('10045', $documents['invoice']->external_number);
@@ -284,21 +288,21 @@ class DealImportTest extends TestCase
         $this->assertSame($documents['invoice']->id, $deal->issuedInvoice()?->id);
         $this->assertSame(Deal::INVOICE_SENT_STATUS_NAME, $deal->fresh()->status->name);
         $this->assertNotNull($deal->fresh()->amountLockReason());
-        $this->assertFalse(\App\Models\Document::canGenerate($deal, 'invoice'));
+        $this->assertFalse(Document::canGenerate($deal, 'invoice'));
 
         // A contract sent but not yet signed — the next document may follow it, and it can be marked signed later.
         $noamDeal = $this->noam->deals()->sole();
         $contract = $noamDeal->documents()->sole();
         $this->assertNull($contract->signed_at);
         $this->assertTrue($contract->canBeMarkedSignedByHand());
-        $this->assertTrue(\App\Models\Document::canGenerate($noamDeal, 'invoice'));
+        $this->assertTrue(Document::canGenerate($noamDeal, 'invoice'));
         $this->assertSame(Deal::DEFAULT_STATUS_NAME, $noamDeal->status->name);
 
         // No document went out: nothing sent or issued for any of them (the deal's own mailing-list joins aside).
-        \Illuminate\Support\Facades\Http::assertNothingSent();
-        $this->assertSame(['mailing_list_join'], \App\Models\ExternalOperation::pluck('operation_type')->unique()->values()->all());
-        $this->assertSame(0, \App\Models\ExternalOperation::whereNotNull('document_id')->count());
-        $this->assertSame(0, \App\Models\DocumentRecipient::count());
+        Http::assertNothingSent();
+        $this->assertSame(['mailing_list_join'], ExternalOperation::pluck('operation_type')->unique()->values()->all());
+        $this->assertSame(0, ExternalOperation::whereNotNull('document_id')->count());
+        $this->assertSame(0, DocumentRecipient::count());
     }
 
     public function test_document_columns_are_checked(): void
@@ -333,6 +337,82 @@ class DealImportTest extends TestCase
             ->call('fixDealImport');
 
         $this->assertSame([], $component->get('dealCheck.invalid'), json_encode($component->get('dealCheck.invalid'), JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_payments_made_before_the_system_are_recorded_with_receipts_made_outside(): void
+    {
+        Http::fake();
+        $check = PaymentMethod::create(['name' => "צ'ק", 'type' => 'check', 'is_active' => true]);
+
+        $this->screen()
+            ->set('dealFile', $this->filledFile([
+                [
+                    'customer' => 'אורות', 'purchased_at' => '01/09/2026', 'item1' => 'תוכנית: מוגנות',
+                    'invoice_state' => 'הופקה ונשלחה', 'invoice_date' => '10/09/2026', 'invoice_number' => '10045',
+                    'pay1_method' => 'העברה בנקאית', 'pay1_amount' => '1000', 'pay1_date' => '12/09/2026', 'pay1_receipt' => 'R-1',
+                    'pay2_method' => "צ'ק", 'pay2_amount' => '500',
+                ],
+                [
+                    'customer' => 'נועם', 'class_tier' => '1–2 כיתות', 'item1' => 'מוגנות',
+                    'invoice_state' => 'הופקה ונשלחה', 'pay1_method' => 'העברה בנקאית', 'pay1_amount' => '400',
+                ],
+            ]))
+            ->call('checkDealImport')
+            ->assertSet('dealCheck.invalid', [])
+            ->assertSee('קבלה R-1')
+            ->call('runDealImport')
+            ->assertSee('נוספו 2 עסקאות');
+
+        // Fully paid: 1000 + a check of 500 = 1500 (3 classes).
+        $deal = $this->orot->deals()->sole();
+        $payments = $deal->payments()->with('receipt')->orderBy('id')->get();
+        $this->assertCount(2, $payments);
+        $this->assertTrue($payments->every(fn ($p) => $p->receipt?->is_external));
+        $this->assertSame('R-1', $payments[0]->receipt->external_number);
+        $this->assertSame('2026-09-12', $payments[0]->payment_date->toDateString());
+        $this->assertSame('2026-09-10', $payments[1]->payment_date->toDateString()); // no date = the invoice's
+        $this->assertSame('2026-09-10', $payments[1]->cleared_date->toDateString());
+        $this->assertSame(Deal::PAID_STATUS_NAME, $deal->fresh()->status->name);
+
+        // Partly paid: the invoice stays the deal's status.
+        $noamDeal = $this->noam->deals()->sole();
+        $this->assertSame(400.0, $noamDeal->totalPaid());
+        $this->assertSame(Deal::INVOICE_SENT_STATUS_NAME, $noamDeal->status->name);
+
+        // Nothing went to SUMIT.
+        Http::assertNothingSent();
+        $this->assertSame(0, ExternalOperation::where('operation_type', 'issue_receipt')->count());
+    }
+
+    public function test_payment_columns_are_checked(): void
+    {
+        $component = $this->screen()
+            ->set('dealFile', $this->filledFile([[
+                'customer' => 'אורות', 'item1' => 'מוגנות',
+                'pay1_method' => 'העברה בנקאית', 'pay1_amount' => '300',
+                'pay2_amount' => '200',
+                'pay3_method' => 'ביטקוין', 'pay3_amount' => '-5', 'pay3_date' => '01/01/2030',
+            ]]))
+            ->call('checkDealImport');
+
+        $fields = collect($component->get('dealCheck.invalid'))->sole()['fields'];
+        $this->assertStringContainsString('חשבונית', $fields['pay1_method']['message']);
+        $this->assertStringContainsString('בלי אמצעי תשלום', $fields['pay2_method']['message']);
+        $this->assertNotNull($fields['pay3_amount']['message']);
+        $this->assertSame('תאריך עתידי.', $fields['pay3_date']['message']);
+        // The invoice's fields show next to them, to be filled in.
+        $this->assertArrayHasKey('invoice_state', $fields);
+        $this->assertArrayHasKey('pay1_receipt', $fields);
+
+        $component->set('dealFixes.2.invoice_state', 'הופקה ונשלחה')
+            ->set('dealFixes.2.pay2_method', 'העברה בנקאית')
+            ->set('dealFixes.2.pay3_method', '')
+            ->set('dealFixes.2.pay3_amount', '')
+            ->set('dealFixes.2.pay3_date', '')
+            ->call('fixDealImport');
+
+        $this->assertSame([], $component->get('dealCheck.invalid'), json_encode($component->get('dealCheck.invalid'), JSON_UNESCAPED_UNICODE));
+        $this->assertCount(2, $component->get('dealCheck.valid')[0]['data']['payments']);
     }
 
     public function test_importing_needs_edit_rights_in_settings_and_customers(): void

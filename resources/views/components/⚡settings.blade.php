@@ -647,6 +647,15 @@ class extends Component
                         $keys[] = 'invoice_number';
                     }
                 }
+
+                // A payment's four fields too — and the invoice's, when the payment lacks one.
+                if (preg_match('/^pay(\d+)_/', $key, $m)) {
+                    array_push($keys, "pay{$m[1]}_method", "pay{$m[1]}_amount", "pay{$m[1]}_date", "pay{$m[1]}_receipt");
+
+                    if (($row['values']['invoice_state'] ?? '') === '') {
+                        array_push($keys, 'invoice_state', 'invoice_date', 'invoice_number');
+                    }
+                }
             }
 
             foreach (array_keys($columns) as $key) {

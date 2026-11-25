@@ -105,6 +105,9 @@
                                                 @foreach ($row['data']['documents'] ?? [] as $document)
                                                     <div><span class="badge badge-neutral">{{ \App\Models\Document::TYPE_LABELS[$document['type']] }}: {{ \App\Models\Document::externalStates($document['type'])[$document['state']] }}{{ $document['date'] ? ' '.\Carbon\Carbon::parse($document['date'])->format('d/m/Y') : '' }}</span></div>
                                                 @endforeach
+                                                @foreach ($row['data']['payments'] ?? [] as $payment)
+                                                    <div><span class="badge badge-info">תשלום {{ $payment['payment_method'] }} ₪{{ number_format($payment['amount'], 2) }}{{ $payment['date'] ? ' '.\Carbon\Carbon::parse($payment['date'])->format('d/m/Y') : '' }}{{ $payment['receipt_number'] ? " · קבלה {$payment['receipt_number']}" : '' }}</span></div>
+                                                @endforeach
                                             </td>
                                         </tr>
                                     @endforeach
@@ -144,8 +147,8 @@
                                                 @endif
                                                 <td>{{ $field['label'] }}</td>
                                                 <td>
-                                                    @if ($key === 'customer' || str_starts_with($key, 'item') || $key === 'payment_method')
-                                                        @php($options = $key === 'customer' ? $customerNames : ($key === 'payment_method' ? $methodNames : $itemLabels))
+                                                    @if ($key === 'customer' || str_starts_with($key, 'item') || $key === 'payment_method' || str_ends_with($key, '_method'))
+                                                        @php($options = $key === 'customer' ? $customerNames : (str_ends_with($key, '_method') ? $methodNames : $itemLabels))
                                                         <select class="import-fix-input" wire:model="{{ $model }}" @disabled(! $canImport)>
                                                             <option value="">—</option>
                                                             @if ($current !== '' && ! in_array($current, $options, true))
@@ -176,7 +179,7 @@
                                                         <textarea class="import-fix-input" rows="2" wire:model="{{ $model }}" @disabled(! $canImport)></textarea>
                                                     @else
                                                         <input type="text" class="import-fix-input" wire:model="{{ $model }}" dir="ltr"
-                                                            @if ($key === 'purchased_at' || str_ends_with($key, '_date')) placeholder="31/12/2025" @elseif (str_starts_with($key, 'amount')) inputmode="decimal" placeholder="ריק = מחיר הקטלוג" @endif
+                                                            @if ($key === 'purchased_at' || str_ends_with($key, '_date')) placeholder="31/12/2025" @elseif (str_starts_with($key, 'amount')) inputmode="decimal" placeholder="ריק = מחיר הקטלוג" @elseif (str_ends_with($key, '_amount')) inputmode="decimal" @endif
                                                             @disabled(! $canImport)>
                                                     @endif
                                                 </td>

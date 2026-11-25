@@ -64,7 +64,7 @@ The user is the business owner, not a developer: talk to her in Hebrew, plainly.
    business entities, SUMIT and Smove keys, the catalog, and settings → גיבוי (weekly backup password +
    who it downloads to — without it there is no off-server copy). Existing data from before the system
    goes in through settings → יבוא נתונים (Excel: customers, then programs & bundles, then deals —
-   with documents already sent/signed outside the system). Those settings live in the database,
+   with documents already sent/signed and payments already receipted outside the system). Those settings live in the database,
    not in `.env`, and a move brings them over.
 
 Never on a real server:
