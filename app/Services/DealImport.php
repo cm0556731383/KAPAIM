@@ -536,11 +536,12 @@ class DealImport
                     $errors["pay{$n}_receipt"] = 'ארוך מדי (עד 50 תווים).';
                 }
 
+                // The error sits on the invoice's state — the cell to fill — not on the payment's.
                 if ($v['invoice_state'] === '') {
-                    $errors["pay{$n}_method"] = 'תשלום נרשם עם קבלה, וקבלה נרשמת על חשבונית — יש לסמן לעסקה חשבונית ("הופקה ונשלחה") בעמודות החשבונית.';
+                    $errors['invoice_state'] = 'יש בשורה תשלום, והוא נרשם עם קבלה שנרשמת על חשבונית — יש לבחור "הופקה ונשלחה" (התאריך והמספר לא חובה).';
                 }
 
-                if (! array_intersect_key($errors, array_flip(["pay{$n}_method", "pay{$n}_amount", "pay{$n}_date", "pay{$n}_receipt"]))) {
+                if ($v['invoice_state'] !== '' && ! array_intersect_key($errors, array_flip(["pay{$n}_method", "pay{$n}_amount", "pay{$n}_date", "pay{$n}_receipt"]))) {
                     $payments[] = [
                         'payment_method_id' => $payMethod?->id,
                         'payment_method' => $payMethod?->name ?? 'לא ידוע',

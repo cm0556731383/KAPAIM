@@ -427,14 +427,18 @@ class DealImportTest extends TestCase
             ->call('checkDealImport');
 
         $fields = collect($component->get('dealCheck.invalid'))->sole()['fields'];
-        $this->assertStringContainsString('חשבונית', $fields['pay1_method']['message']);
-        $this->assertStringNotContainsString('אמצעי תשלום', $fields['pay2_method']['message']); // no method = "לא ידוע", only the invoice is missing
+        $this->assertStringContainsString('הופקה ונשלחה', $fields['invoice_state']['message']);
+        // Payments fine apart from the missing invoice aren't listed; empty optional cells never are.
+        $this->assertArrayNotHasKey('pay1_method', $fields);
+        $this->assertArrayNotHasKey('pay2_amount', $fields);
+        $this->assertArrayNotHasKey('pay4_method', $fields);
+        $this->assertArrayNotHasKey('pay4_date', $fields);
+        $this->assertArrayHasKey('pay4_receipt', $fields);
         $this->assertStringContainsString('בלי סכום', $fields['pay4_amount']['message']);
         $this->assertNotNull($fields['pay3_amount']['message']);
         $this->assertSame('תאריך עתידי.', $fields['pay3_date']['message']);
-        // The invoice's fields show next to them, to be filled in.
-        $this->assertArrayHasKey('invoice_state', $fields);
-        $this->assertArrayHasKey('pay1_receipt', $fields);
+        // The invoice's fields show, to be filled in.
+        $this->assertArrayHasKey('invoice_date', $fields);
 
         $component->set('dealFixes.2.invoice_state', 'הופקה ונשלחה')
             ->set('dealFixes.2.pay4_amount', '50')

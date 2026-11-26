@@ -648,12 +648,14 @@ class extends Component
                     }
                 }
 
-                // A payment's four fields too — and the invoice's, when the payment lacks one.
+                // A payment's amount and its other filled fields too — empty ones are fine ("לא ידוע").
                 if (preg_match('/^pay(\d+)_/', $key, $m)) {
-                    array_push($keys, "pay{$m[1]}_method", "pay{$m[1]}_amount", "pay{$m[1]}_date", "pay{$m[1]}_receipt");
+                    $keys[] = "pay{$m[1]}_amount";
 
-                    if (($row['values']['invoice_state'] ?? '') === '') {
-                        array_push($keys, 'invoice_state', 'invoice_date', 'invoice_number');
+                    foreach (['method', 'date', 'receipt'] as $part) {
+                        if (($row['values']["pay{$m[1]}_{$part}"] ?? '') !== '') {
+                            $keys[] = "pay{$m[1]}_{$part}";
+                        }
                     }
                 }
             }
