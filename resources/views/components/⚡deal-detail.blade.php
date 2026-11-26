@@ -1949,7 +1949,7 @@ class extends Component
                                 <input type="email" id="linkEmail" wire:model="linkEmail" list="linkEmailContacts" class="ltr-num" dir="ltr" placeholder="name@example.com" autocomplete="off">
                                 <datalist id="linkEmailContacts">
                                     @foreach ($this->linkRecipients as $contact)
-                                        <option value="{{ $contact->email }}">{{ $contact->name }}</option>
+                                        <option value="{{ $contact->email }}">{{ $contact->name !== '' ? $contact->name : $contact->email }}</option>
                                     @endforeach
                                 </datalist>
                                 @error('linkEmail') <div style="color: var(--color-error); font-size: var(--fs-caption); margin-top: 4px;">{{ $message }}</div> @enderror

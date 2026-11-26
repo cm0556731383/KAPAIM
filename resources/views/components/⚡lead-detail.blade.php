@@ -1321,7 +1321,7 @@ class extends Component
                         <div class="contact-item">
                             <div class="contact-view">
                                 <div>
-                                    <div class="who">{{ $contact->name }}</div>
+                                    <div class="who">{{ $contact->name !== '' ? $contact->name : '(יש להשלים שם)' }}</div>
                                     <div class="role">{{ $contact->role }}@if ($contact->phone) · <span class="ltr-num">{{ $contact->phone }}</span> @endif</div>
                                 </div>
                                 <div class="actions">
@@ -1465,7 +1465,7 @@ class extends Component
                     @foreach ($this->recentlyRemovedContacts as $contact)
                         <div class="list-item">
                             <div>
-                                <div style="font-weight:600">{{ $contact->name }}</div>
+                                <div style="font-weight:600">{{ $contact->name !== '' ? $contact->name : '(יש להשלים שם)' }}</div>
                                 <div class="who">איש קשר · הוסר ב-{{ $contact->deleted_at->format('d/m/Y') }}</div>
                             </div>
                             <button type="button" class="btn btn-ghost btn-sm" wire:click="restoreContact({{ $contact->id }})">שחזור</button>

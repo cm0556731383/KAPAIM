@@ -214,6 +214,28 @@ class CustomerImportTest extends TestCase
         $this->assertNull($customer->lead->phone);
     }
 
+    /** 2026-11-26: a contact needs no name when it has a phone or an email; emails lose their spaces. */
+    public function test_contacts_without_a_name_are_imported_when_they_have_a_phone_or_an_email(): void
+    {
+        Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
+            ->set('importFile', $this->filledFile([$this->validRow([
+                'contact1_name' => '', 'contact1_email' => ' rachel @orot .test ',
+                'contact2_name' => '', 'contact2_email' => '',
+                'contact3_phone' => '0529876543',
+            ])]))
+            ->call('checkImport')
+            ->assertSet('importCheck.errors', [])
+            ->assertSet('importCheck.valid', 1)
+            ->call('runImport');
+
+        $contacts = School::where('name', 'אורות')->first()->customer->contacts()->orderBy('id')->get();
+        $this->assertCount(2, $contacts);
+        $this->assertSame(['', ''], $contacts->pluck('name')->all());
+        $this->assertSame('rachel@orot.test', $contacts[0]->email);
+        $this->assertSame('0529876543', $contacts[1]->phone);
+        $this->assertNull($contacts[1]->email);
+    }
+
     public function test_contact_flags_must_be_yes_or_no_and_a_primary_contact_needs_an_email(): void
     {
         $component = Livewire::actingAs($this->owner)->test('settings')->set('activeTab', 'import')
@@ -232,8 +254,8 @@ class CustomerImportTest extends TestCase
         // 2026-11-19: a primary contact's phone is optional — only its email is required.
         $this->assertArrayNotHasKey('איש קשר 2 — טלפון', $errors[3]);
         $this->assertSame('חובה לאיש קשר ראשי — חסר.', $errors[3]['איש קשר 2 — דוא"ל']);
-        // At least one contact: contact 1's name is required.
-        $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
+        // At least one contact: contact 1 needs a name, a phone or an email.
+        $this->assertSame('חובה למלא לפחות שם, טלפון או דוא"ל.', $errors[4]['איש קשר 1 — שם']);
     }
 
     /** 2026-11-17: a contact email another customer (or another row) already uses is imported, but shown as a warning — Smove holds one contact per email. */
@@ -273,7 +295,7 @@ class CustomerImportTest extends TestCase
                 $this->validRow(['contact1_email' => 'not-an-email', 'contact1_phone' => '12']),
                 $this->validRow(['school_name' => 'קיים', 'business_number' => '1']),
                 $this->validRow(['school_name' => '', 'contact1_name' => '', 'business_number' => 'abc', 'status' => 'מומצא', 'converted_at' => '31/02/2025', 'gefen_budget' => 'אולי', 'classes_per_grade' => '-1']),
-                $this->validRow(['school_name' => 'נוסף', 'business_number' => '2', 'contact2_name' => '', 'contact2_email' => 'x@y.test']),
+                $this->validRow(['school_name' => 'נוסף', 'business_number' => '2', 'contact2_name' => '', 'contact2_email' => '', 'contact2_role' => 'מזכירה']),
             ]))
             ->call('checkImport')
             ->assertSet('importCheck.valid', 0)
@@ -286,13 +308,14 @@ class CustomerImportTest extends TestCase
         $this->assertArrayHasKey('איש קשר 1 — טלפון', $errors[2]);
         $this->assertStringContainsString('כבר קיים במערכת', $errors[3]['שם המוסד']);
         $this->assertSame('שדה חובה — חסר.', $errors[4]['שם המוסד']);
-        $this->assertSame('שדה חובה — חסר.', $errors[4]['איש קשר 1 — שם']);
+        // 2026-11-26: no name is fine when the contact has a phone or an email.
+        $this->assertArrayNotHasKey('איש קשר 1 — שם', $errors[4]);
         $this->assertArrayHasKey('ח.פ.', $errors[4]);
         $this->assertArrayHasKey('סטטוס לקוחה', $errors[4]);
         $this->assertArrayHasKey('תאריך הצטרפות', $errors[4]);
         $this->assertArrayHasKey('תקציב גפן', $errors[4]);
         $this->assertArrayHasKey('מספר כיתות בשנתון', $errors[4]);
-        $this->assertArrayHasKey('איש קשר 2 — שם', $errors[5]);
+        $this->assertSame('חובה למלא לפחות שם, טלפון או דוא"ל.', $errors[5]['איש קשר 2 — שם']);
 
         $this->assertSame(0, Customer::count());
         $this->assertSame(1, School::count());
@@ -382,7 +405,7 @@ class CustomerImportTest extends TestCase
     public function test_a_file_missing_required_columns_is_rejected(): void
     {
         $book = new \PhpOffice\PhpSpreadsheet\Spreadsheet;
-        $book->getActiveSheet()->fromArray([['שם המוסד', 'עיר'], ['אורות', 'ירושלים']]);
+        $book->getActiveSheet()->fromArray([['עיר', 'איש קשר 1 — שם'], ['ירושלים', 'רחל']]);
         $path = tempnam(sys_get_temp_dir(), 'imp').'.xlsx';
         (new Xlsx($book))->save($path);
 

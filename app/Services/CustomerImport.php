@@ -34,7 +34,8 @@ use Throwable;
  * One row = one customer: its school card and up to CONTACTS contacts, each
  * with its own כן/לא for "ראשי" and "גורם חשבונאי" (2026-11-17). At least one
  * contact (contact 1) is required; when no contact is marked ראשי, contact 1
- * is. A customer only ever exists as a converted lead
+ * is. A contact's name is optional when it has a phone or an email
+ * (2026-11-26) — it is then stored as '' and the card asks to complete it. A customer only ever exists as a converted lead
  * (Lead::convertToCustomer()), so each row opens a lead from the first
  * primary contact's email — required for every primary contact; its phone
  * is optional (2026-11-19: email-only contacts) — and converts it at once.
@@ -88,7 +89,7 @@ class CustomerImport
 
     /** Each contact group's fields: field => [header suffix, help]. Keys are "contact{n}_{field}". */
     private const CONTACT_FIELDS = [
-        'name' => ['שם', 'שם מלא. חובה אם מולא פרט כלשהו של איש הקשר.'],
+        'name' => ['שם', 'שם מלא. לא חובה — מספיק טלפון או דוא"ל.'],
         'role' => ['תפקיד', ''],
         'phone' => ['טלפון', 'לפחות 7 ספרות. לא חובה — אפשר איש קשר עם דוא"ל בלבד.'],
         'phone_secondary' => ['טלפון נוסף', ''],
@@ -100,6 +101,9 @@ class CustomerImport
 
     /** Contact fields that are a phone / a yes-no choice. */
     private const CONTACT_PHONE_FIELDS = ['phone', 'phone_secondary'];
+
+    /** A contact must have at least one of these (no name needed when there's a phone or an email). */
+    private const CONTACT_IDENTIFYING_FIELDS = ['name', 'phone', 'phone_secondary', 'email', 'email_secondary'];
 
     private const CONTACT_FLAG_FIELDS = ['primary', 'accounting'];
 
@@ -114,7 +118,7 @@ class CustomerImport
 
         for ($n = 1; $n <= self::CONTACTS; $n++) {
             foreach (self::CONTACT_FIELDS as $field => [$label, $help]) {
-                $columns["contact{$n}_{$field}"] = ["איש קשר {$n} — {$label}", $n === 1 && $field === 'name', $help];
+                $columns["contact{$n}_{$field}"] = ["איש קשר {$n} — {$label}", false, $help];
             }
         }
 
@@ -482,9 +486,11 @@ class CustomerImport
             for ($n = 1; $n <= self::CONTACTS; $n++) {
                 $isFilled = in_array($n, $filled, true);
                 $isPrimary = in_array($n, $primary, true);
+                // A contact needs a name, a phone or an email — any one is enough (2026-11-26).
+                $identified = collect(self::CONTACT_IDENTIFYING_FIELDS)->contains(fn ($field) => $v["contact{$n}_{$field}"] !== '');
 
                 $rules += [
-                    "contact{$n}_name" => [Rule::requiredIf($isFilled), 'nullable', 'string', 'max:255'],
+                    "contact{$n}_name" => [Rule::requiredIf($isFilled && ! $identified), 'nullable', 'string', 'max:255'],
                     "contact{$n}_role" => ['nullable', 'string', 'max:255'],
                     "contact{$n}_phone" => ['nullable', 'string', 'max:50', new Phone],
                     "contact{$n}_phone_secondary" => ['nullable', 'string', 'max:50', new Phone],
@@ -501,6 +507,7 @@ class CustomerImport
                 $flagMessages["contact{$n}_primary.in"] = 'יש לכתוב כן או לא.';
                 $flagMessages["contact{$n}_accounting.in"] = 'יש לכתוב כן או לא.';
                 $flagMessages["contact{$n}_email.required"] = 'חובה לאיש קשר ראשי — חסר.';
+                $flagMessages["contact{$n}_name.required"] = 'חובה למלא לפחות שם, טלפון או דוא"ל.';
             }
 
             $validator = Validator::make($v, $rules, $flagMessages + [

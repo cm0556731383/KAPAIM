@@ -2063,7 +2063,7 @@ class extends Component
                                                 <td>{{ $row['school'] }}</td>
                                                 <td style="font-size:var(--fs-caption)">
                                                     @foreach ($row['contacts'] as $contact)
-                                                        <div>{{ $contact['name'] }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif @if ($contact['primary'])<span class="badge badge-neutral">ראשי</span>@endif @if ($contact['accounting'])<span class="badge badge-neutral">חשבונאי</span>@endif</div>
+                                                        <div>{{ filled($contact['name']) ? $contact['name'] : '(ללא שם)' }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif @if ($contact['primary'])<span class="badge badge-neutral">ראשי</span>@endif @if ($contact['accounting'])<span class="badge badge-neutral">חשבונאי</span>@endif</div>
                                                     @endforeach
                                                 </td>
                                             </tr>
@@ -2097,7 +2097,7 @@ class extends Component
                                                 <td style="font-size:var(--fs-caption)">
                                                     @foreach ($row['contacts'] as $contact)
                                                         <div>
-                                                            {{ $contact['name'] }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif
+                                                            {{ filled($contact['name']) ? $contact['name'] : '(ללא שם)' }}@if ($contact['email']) · <span dir="ltr">{{ $contact['email'] }}</span>@endif
                                                             @if ($contact['unlisted'])<span class="badge badge-warning">ייפתח ב־Smove</span>@elseif ($contact['email'])<span class="badge badge-success">נמצא ב־Smove</span>@endif
                                                         </div>
                                                     @endforeach
