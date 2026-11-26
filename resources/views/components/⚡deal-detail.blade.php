@@ -2149,7 +2149,7 @@ class extends Component
                             @continue
                         @endif
                         <tr wire:key="payment-{{ $payment->id }}">
-                            <td class="ltr-num">{{ $payment->payment_date?->format('d/m/Y') }}</td>
+                            <td class="ltr-num">{{ $payment->date_unknown ? 'לא ידוע' : $payment->payment_date?->format('d/m/Y') }}</td>
                             <td class="ltr-num">₪{{ number_format((float) $payment->amount, 0) }}</td>
                             {{-- A check's number sits under its method; bank details are in the edit form (and the tooltip). --}}
                             <td @if ($payment->checkBankLabel()) title="{{ $payment->checkBankLabel() }}" @endif>
@@ -2174,7 +2174,7 @@ class extends Component
                             <td>
                                 @if ($payment->receipt?->is_external)
                                     <span class="badge badge-info">קבלה מחוץ למערכת</span>
-                                    <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)"><span class="ltr-num">{{ $payment->receipt->issued_at?->format('d/m/Y') }}</span>@if ($payment->receipt->external_number) · מס' <span class="ltr-num">{{ $payment->receipt->external_number }}</span>@endif</div>
+                                    <div style="font-size:var(--fs-caption); color:var(--color-text-secondary)">@if ($payment->date_unknown) תאריך לא ידוע @else<span class="ltr-num">{{ $payment->receipt->issued_at?->format('d/m/Y') }}</span>@endif · מס' @if ($payment->receipt->external_number)<span class="ltr-num">{{ $payment->receipt->external_number }}</span>@else לא ידוע @endif</div>
                                 @elseif ($payment->receipt || $payment->sumit_document_id)
                                     <span class="badge badge-info">הופקה קבלה</span>
                                 @elseif ($this->beforePaymentReceipt)

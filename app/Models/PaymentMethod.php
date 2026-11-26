@@ -18,6 +18,9 @@ class PaymentMethod extends Model
         ];
     }
 
+    /** Type of the system method an imported payment whose method wasn't given is recorded under. */
+    public const UNKNOWN_TYPE = 'unknown';
+
     private const DEFAULT_NAMES = ['card' => 'אשראי', 'recurring' => 'הוראת קבע'];
 
     /**
@@ -47,5 +50,15 @@ class PaymentMethod extends Model
     {
         return self::where('type', $type)->orderByDesc('is_active')->orderBy('id')->first()
             ?? self::create(['name' => self::DEFAULT_NAMES[$type] ?? $type, 'type' => $type, 'is_active' => true]);
+    }
+
+    /**
+     * "לא ידוע" — for a payment imported without its method (DealImport).
+     * Inactive, so no picker offers it, and hidden from the settings list.
+     */
+    public static function unknown(): self
+    {
+        return self::where('type', self::UNKNOWN_TYPE)->orderBy('id')->first()
+            ?? self::create(['name' => 'לא ידוע', 'type' => self::UNKNOWN_TYPE, 'is_active' => false]);
     }
 }

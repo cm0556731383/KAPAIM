@@ -422,12 +422,14 @@ class DealImportTest extends TestCase
                 'pay1_method' => 'העברה בנקאית', 'pay1_amount' => '300',
                 'pay2_amount' => '200',
                 'pay3_method' => 'ביטקוין', 'pay3_amount' => '-5', 'pay3_date' => '01/01/2030',
+                'pay4_receipt' => 'R-9',
             ]]))
             ->call('checkDealImport');
 
         $fields = collect($component->get('dealCheck.invalid'))->sole()['fields'];
         $this->assertStringContainsString('חשבונית', $fields['pay1_method']['message']);
-        $this->assertStringContainsString('בלי אמצעי תשלום', $fields['pay2_method']['message']);
+        $this->assertStringNotContainsString('אמצעי תשלום', $fields['pay2_method']['message']); // no method = "לא ידוע", only the invoice is missing
+        $this->assertStringContainsString('בלי סכום', $fields['pay4_amount']['message']);
         $this->assertNotNull($fields['pay3_amount']['message']);
         $this->assertSame('תאריך עתידי.', $fields['pay3_date']['message']);
         // The invoice's fields show next to them, to be filled in.
@@ -435,14 +437,45 @@ class DealImportTest extends TestCase
         $this->assertArrayHasKey('pay1_receipt', $fields);
 
         $component->set('dealFixes.2.invoice_state', 'הופקה ונשלחה')
-            ->set('dealFixes.2.pay2_method', 'העברה בנקאית')
+            ->set('dealFixes.2.pay4_amount', '50')
             ->set('dealFixes.2.pay3_method', '')
             ->set('dealFixes.2.pay3_amount', '')
             ->set('dealFixes.2.pay3_date', '')
             ->call('fixDealImport');
 
         $this->assertSame([], $component->get('dealCheck.invalid'), json_encode($component->get('dealCheck.invalid'), JSON_UNESCAPED_UNICODE));
-        $this->assertCount(2, $component->get('dealCheck.valid')[0]['data']['payments']);
+        $this->assertCount(3, $component->get('dealCheck.valid')[0]['data']['payments']);
+    }
+
+    public function test_a_payment_with_only_an_amount_is_recorded_with_unknown_details(): void
+    {
+        Http::fake();
+
+        $this->screen()
+            ->set('dealFile', $this->filledFile([[
+                'customer' => 'אורות', 'purchased_at' => '01/09/2026', 'item1' => 'תוכנית: מוגנות',
+                'invoice_state' => 'הופקה ונשלחה', 'invoice_date' => '10/09/2026',
+                'pay1_amount' => '700',
+            ]]))
+            ->call('checkDealImport')
+            ->assertSet('dealCheck.invalid', [])
+            ->assertSee('תשלום לא ידוע')
+            ->call('runDealImport')
+            ->assertSee('נוספו 1 עסקאות');
+
+        $deal = $this->orot->deals()->sole();
+        $payment = $deal->payments()->with('receipt', 'paymentMethod')->sole();
+        $this->assertSame(700.0, (float) $payment->amount);
+        $this->assertSame('לא ידוע', $payment->paymentMethod->name);
+        $this->assertFalse($payment->paymentMethod->is_active);
+        $this->assertTrue($payment->date_unknown);
+        $this->assertSame('2026-09-10', $payment->payment_date->toDateString());
+        $this->assertTrue($payment->receipt->is_external);
+        $this->assertNull($payment->receipt->external_number);
+
+        // The deal card says "לא ידוע"; the settings list doesn't offer the method.
+        Livewire::actingAs($this->owner)->test('deal-detail', ['deal' => $deal])->assertSee('תאריך לא ידוע')->assertSeeInOrder(['תאריך לא ידוע', "מס'", 'לא ידוע']);
+        Http::assertNothingSent();
     }
 
     public function test_importing_needs_edit_rights_in_settings_and_customers(): void

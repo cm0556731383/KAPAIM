@@ -106,7 +106,7 @@
                                                     <div><span class="badge badge-neutral">{{ \App\Models\Document::TYPE_LABELS[$document['type']] }}: {{ \App\Models\Document::externalStates($document['type'])[$document['state']] }}{{ $document['date'] ? ' '.\Carbon\Carbon::parse($document['date'])->format('d/m/Y') : '' }}</span></div>
                                                 @endforeach
                                                 @foreach ($row['data']['payments'] ?? [] as $payment)
-                                                    <div><span class="badge badge-info">תשלום {{ $payment['payment_method'] }} ₪{{ number_format($payment['amount'], 2) }}{{ $payment['date'] ? ' '.\Carbon\Carbon::parse($payment['date'])->format('d/m/Y') : '' }}{{ $payment['receipt_number'] ? " · קבלה {$payment['receipt_number']}" : '' }}</span></div>
+                                                    <div><span class="badge badge-info">תשלום {{ $payment['payment_method'] }} ₪{{ number_format($payment['amount'], 2) }}{{ empty($payment['date_unknown']) && $payment['date'] ? ' '.\Carbon\Carbon::parse($payment['date'])->format('d/m/Y') : ' · תאריך לא ידוע' }}{{ ' · קבלה '.($payment['receipt_number'] ?: 'לא ידוע') }}</span></div>
                                                 @endforeach
                                             </td>
                                         </tr>

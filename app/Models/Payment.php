@@ -23,7 +23,7 @@ use RuntimeException;
  */
 #[Fillable([
     'deal_id', 'payment_method_id', 'status_id', 'amount',
-    'check_status', 'check_number', 'check_due_date', 'check_bank_number', 'check_branch_number', 'check_account_number', 'payment_date', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
+    'check_status', 'check_number', 'check_due_date', 'check_bank_number', 'check_branch_number', 'check_account_number', 'payment_date', 'date_unknown', 'cleared_date', 'sumit_payment_id', 'sumit_document_id',
 ])]
 class Payment extends Model
 {
@@ -67,6 +67,7 @@ class Payment extends Model
         return [
             'amount' => 'decimal:2',
             'payment_date' => 'datetime',
+            'date_unknown' => 'boolean',
             'cleared_date' => 'datetime',
             'check_due_date' => 'date',
         ];

@@ -89,11 +89,11 @@ class DealImport
         // Payments made before the system, each with its receipt issued outside it.
         for ($n = 1; $n <= self::PAYMENTS; $n++) {
             $columns["pay{$n}_method"] = ["תשלום {$n} — אמצעי תשלום", false, $n === 1
-                ? 'בחירה מהרשימה. ריק = אין תשלום. כל תשלום נרשם עם קבלה שהופקה מחוץ למערכת — שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT. קבלה נרשמת על חשבונית, ולכן תשלום דורש חשבונית בעמודות החשבונית.'
-                : 'בחירה מהרשימה. ריק = אין תשלום נוסף.'];
-            $columns["pay{$n}_amount"] = ["תשלום {$n} — סכום", false, 'בש"ח. חובה כשנבחר אמצעי תשלום.'];
-            $columns["pay{$n}_date"] = ["תשלום {$n} — תאריך", false, 'תאריך בפורמט 31/12/2025. ריק = תאריך החשבונית. צ\'ק נחשב שנפרע בתאריך זה.'];
-            $columns["pay{$n}_receipt"] = ["תשלום {$n} — אסמכתא (מספר קבלה)", false, 'מספר הקבלה שהופקה מחוץ למערכת (לא חובה).'];
+                ? 'בחירה מהרשימה (לא חובה). ריק = "לא ידוע". כל תשלום נרשם עם קבלה שהופקה מחוץ למערכת — שום דבר לא נשלח ללקוחה ולא מופק ב־SUMIT. קבלה נרשמת על חשבונית, ולכן תשלום דורש חשבונית בעמודות החשבונית.'
+                : 'בחירה מהרשימה (לא חובה). ריק = "לא ידוע".'];
+            $columns["pay{$n}_amount"] = ["תשלום {$n} — סכום", false, $n === 1 ? 'בש"ח. ריק = אין תשלום.' : 'בש"ח. ריק = אין תשלום נוסף.'];
+            $columns["pay{$n}_date"] = ["תשלום {$n} — תאריך", false, 'תאריך בפורמט 31/12/2025 (לא חובה). ריק = "לא ידוע" (נשמר לפי תאריך החשבונית). צ\'ק נחשב שנפרע בתאריך זה.'];
+            $columns["pay{$n}_receipt"] = ["תשלום {$n} — אסמכתא (מספר קבלה)", false, 'מספר הקבלה שהופקה מחוץ למערכת (לא חובה). ריק = "לא ידוע".'];
         }
 
         return $columns;
@@ -498,22 +498,24 @@ class DealImport
                 $dateValue = $v["pay{$n}_date"];
                 $receiptValue = $v["pay{$n}_receipt"];
 
-                if ($methodValue === '') {
-                    if ($amountValue !== '' || $dateValue !== '' || $receiptValue !== '') {
-                        $errors["pay{$n}_method"] = "יש פרטי תשלום בלי אמצעי תשלום — יש לבחור אמצעי לתשלום {$n} או למחוק את הפרטים.";
-                    }
-
+                // A payment is any filled column; only the amount is required —
+                // a missing method, date or receipt number is recorded as "לא ידוע".
+                if ($methodValue === '' && $amountValue === '' && $dateValue === '' && $receiptValue === '') {
                     continue;
                 }
 
-                $payMethod = $methods[self::key($methodValue)] ?? null;
+                $payMethod = null;
 
-                if (! $payMethod) {
-                    $errors["pay{$n}_method"] = 'אין אמצעי תשלום פעיל בשם זה — יש לבחור מהרשימה.';
+                if ($methodValue !== '') {
+                    $payMethod = $methods[self::key($methodValue)] ?? null;
+
+                    if (! $payMethod) {
+                        $errors["pay{$n}_method"] = 'אין אמצעי תשלום פעיל בשם זה — יש לבחור מהרשימה, או להשאיר ריק ("לא ידוע").';
+                    }
                 }
 
                 if ($amountValue === '') {
-                    $errors["pay{$n}_amount"] = 'שדה חובה כשנבחר אמצעי תשלום.';
+                    $errors["pay{$n}_amount"] = "יש פרטי תשלום בלי סכום — יש לכתוב את הסכום של תשלום {$n} או למחוק את הפרטים.";
                 } elseif (! is_numeric($amountValue) || (float) $amountValue <= 0 || (float) $amountValue > Money::MAX_AMOUNT) {
                     $errors["pay{$n}_amount"] = 'צריך להיות סכום גדול מאפס (למשל 1200 או 1200.50).';
                 }
@@ -540,10 +542,11 @@ class DealImport
 
                 if (! array_intersect_key($errors, array_flip(["pay{$n}_method", "pay{$n}_amount", "pay{$n}_date", "pay{$n}_receipt"]))) {
                     $payments[] = [
-                        'payment_method_id' => $payMethod->id,
-                        'payment_method' => $payMethod->name,
+                        'payment_method_id' => $payMethod?->id,
+                        'payment_method' => $payMethod?->name ?? 'לא ידוע',
                         'amount' => round((float) $amountValue, 2),
                         'date' => $payDate?->toDateString() ?? $invoiceDate,
+                        'date_unknown' => ! $payDate,
                         'receipt_number' => $receiptValue === '' ? null : $receiptValue,
                     ];
                 }
@@ -735,7 +738,11 @@ class DealImport
                     foreach ($data['payments'] ?? [] as $payment) {
                         $fresh = $deal->fresh();
                         $date = Carbon::parse($payment['date'] ?? $fresh->issuedInvoice()?->sent_at ?? $fresh->purchased_at, 'Asia/Jerusalem');
-                        Receipt::recordExternalPayment($fresh, (int) $fresh->version, $payment['payment_method_id'], (float) $payment['amount'], $date, $date, $payment['receipt_number'], null, $activityLogger);
+                        $receipt = Receipt::recordExternalPayment($fresh, (int) $fresh->version, $payment['payment_method_id'] ?? PaymentMethod::unknown()->id, (float) $payment['amount'], $date, $date, $payment['receipt_number'], null, $activityLogger);
+
+                        if (! empty($payment['date_unknown'])) {
+                            $receipt->payment->update(['date_unknown' => true]);
+                        }
                         $recorded++;
                     }
                 } catch (Throwable $e) {

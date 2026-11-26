@@ -1024,7 +1024,7 @@ class extends Component
     #[Computed]
     public function paymentMethods()
     {
-        return PaymentMethod::orderBy('name')->get();
+        return PaymentMethod::where('type', '!=', PaymentMethod::UNKNOWN_TYPE)->orderBy('name')->get();
     }
 
     // ----- עוסקים -----
