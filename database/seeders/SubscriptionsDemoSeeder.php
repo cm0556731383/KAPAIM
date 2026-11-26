@@ -35,7 +35,10 @@ class SubscriptionsDemoSeeder extends Seeder
             return;
         }
 
-        $suppliablePrograms = Program::where('is_active', true)->orderBy('id')->get();
+        // The subscriber chooses from her subscription bundle (any active program if it has none).
+        $suppliablePrograms = $subscription->choosablePrograms()->isNotEmpty()
+            ? $subscription->choosablePrograms()->values()
+            : Program::where('is_active', true)->orderBy('id')->get();
 
         if ($suppliablePrograms->isEmpty()) {
             return;

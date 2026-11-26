@@ -140,9 +140,6 @@ class extends Component
     public ?string $dealError = null;
 
     // ===== מנוי (SUBSCRIPTION / SUBSCRIPTION_DELIVERY) =====
-    /** delivery_id => chosen program_id, bound per delivery row. */
-    public array $deliveryProgramSelections = [];
-
     public ?int $editingMonthlyPaymentForSubscriptionId = null;
 
     public string $monthlyPaymentOverrideInput = '';
@@ -989,11 +986,42 @@ class extends Component
         return $this->customer->exceedsSubscriptionPriceAlert();
     }
 
-    /** FR-3.14: the secretary chooses which active, non-subscription catalog program filled a slot. */
-    #[Computed]
-    public function availableDeliveryPrograms()
+    /**
+     * Step one of a delivery row (2026-11-26): the program the subscriber
+     * chose, from her subscription bundle — saved on the row as "chosen".
+     * Empty clears it. The same program in another row asks first.
+     */
+    public function chooseDeliveryProgram(int $subscriptionId, int $deliveryId, $programId, ActivityLogger $activityLogger, bool $confirmed = false): void
     {
-        return Program::where('is_active', true)->orderBy('name')->get();
+        abort_unless(auth()->user()->can('subscriptions.manage'), 403);
+
+        $this->subscriptionError = null;
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
+        $programId = filled($programId) ? (int) $programId : null;
+
+        if (! $confirmed && $programId && ($other = $subscription->deliveries()->whereKeyNot($deliveryId)->where('program_id', $programId)->first())) {
+            $warning = 'התוכנית "'.Program::find($programId)?->name.'" כבר '.($other->is_supplied ? 'נשלחה' : 'נבחרה')." למנויה (שורה {$other->sequence_number}).\nלבחור בה שוב?";
+            $this->js('confirmDialog('.json_encode($warning, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).").then((ok) => ok ? \$wire.chooseDeliveryProgram({$subscriptionId}, {$deliveryId}, {$programId}, true) : \$wire.\$refresh())");
+
+            return;
+        }
+
+        try {
+            $delivery = $subscription->chooseDeliveryProgram($deliveryId, $programId);
+        } catch (\RuntimeException $e) {
+            $this->subscriptionError = $e->getMessage();
+            unset($this->subscriptions);
+
+            return;
+        }
+
+        $activityLogger->log('subscription.delivery_chosen', $delivery->program
+            ? "נבחרה התוכנית \"{$delivery->program->name}\" לשורה {$delivery->sequence_number} במנוי #{$subscription->id}"
+            : "בוטלה הבחירה בשורה {$delivery->sequence_number} במנוי #{$subscription->id}", [
+                'subscription_id' => $subscription->id, 'customer_id' => $this->customer->id, 'deal_id' => $subscription->deal_id,
+            ]);
+
+        unset($this->subscriptions);
     }
 
     /**
@@ -1009,15 +1037,14 @@ class extends Component
 
         $this->subscriptionError = null;
 
-        $programId = $this->deliveryProgramSelections[$deliveryId] ?? null;
+        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
+        $programId = $subscription->deliveries()->whereKey($deliveryId)->value('program_id');
 
         if (! $programId) {
-            $this->subscriptionError = 'יש לבחור תוכנית עבור שורת האספקה לפני הסימון.';
+            $this->subscriptionError = 'יש לבחור תוכנית עבור השורה לפני הסימון כנשלחה.';
 
             return;
         }
-
-        $subscription = Subscription::where('customer_id', $this->customer->id)->findOrFail($subscriptionId);
 
         if (! $confirmed && ($warning = $subscription->deliverySupplyWarning($deliveryId, (int) $programId))) {
             $this->js('confirmDialog('.json_encode($warning, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP).").then((ok) => ok && \$wire.markDeliverySupplied({$subscriptionId}, {$deliveryId}, true))");
@@ -1050,7 +1077,6 @@ class extends Component
             $this->notifyInfo('המנוי הסתיים אוטומטית לאחר סימון התוכנית העשירית.');
         }
 
-        unset($this->deliveryProgramSelections[$deliveryId]);
         unset($this->subscriptions, $this->hasActiveSubscription);
     }
 
@@ -1975,7 +2001,7 @@ class extends Component
                 <div style="display:flex; gap:var(--sp-xl); flex-wrap:wrap; margin-bottom:var(--sp-md); font-size:var(--fs-small)">
                     <div><span style="color:var(--color-text-secondary)">תאריך תחילה: </span><span class="ltr-num" style="font-weight:600">{{ $subscription->start_date->format('d/m/Y') }}</span></div>
                     <div><span style="color:var(--color-text-secondary)">מחיר שסוכם: </span><span class="ltr-num" style="font-weight:600">₪{{ number_format((float) $subscription->agreed_price, 0) }}</span></div>
-                    <div><span style="color:var(--color-text-secondary)">התקדמות: </span><span style="font-weight:600">{{ $subscription->suppliedCount() }} מתוך {{ \App\Models\Subscription::TOTAL_DELIVERIES }} תוכניות סופקו</span></div>
+                    <div><span style="color:var(--color-text-secondary)">התקדמות: </span><span style="font-weight:600">{{ $subscription->suppliedCount() }} מתוך {{ \App\Models\Subscription::TOTAL_DELIVERIES }} תוכניות נשלחו</span></div>
                     @if ($subscription->cancelled_from_month)
                         <div><span style="color:var(--color-text-secondary)">מבוטל החל מ: </span><span style="font-weight:600">חודש {{ $subscription->cancelled_from_month }} ({{ $subscription->monthLabel($subscription->cancelled_from_month) }})</span></div>
                     @endif
@@ -2007,45 +2033,52 @@ class extends Component
 
                 {{-- ===== יומן אספקה (FR-3.13-FR-3.15) ===== --}}
                 <h3 style="font-size:var(--fs-h3)">יומן אספקה</h3>
+                @if ($subscriptionError)
+                    <div style="color:var(--color-error); font-size:var(--fs-small); margin-bottom:var(--sp-sm)">{{ $subscriptionError }}</div>
+                @endif
                 <div class="table-scroll">
                 <table>
-                    <thead><tr><th>#</th><th>חודש</th><th>תוכנית</th><th>תאריך אספקה</th><th>סומן ע"י</th><th></th></tr></thead>
+                    <thead><tr><th>#</th><th>תוכנית שנבחרה</th><th>תאריך שליחה</th><th>סומן ע"י</th><th></th></tr></thead>
                     <tbody>
+                        @php $choosablePrograms = $subscription->choosablePrograms(); @endphp
                         @foreach ($subscription->deliveries as $delivery)
                             @php
                                 $deliveryCancelled = $subscription->isDeliveryCancelled($delivery);
-                                // Months before a cancellation month are still owed and can be marked.
+                                // Rows before a cancellation month are still owed and can be marked.
                                 $deliverySuppliable = ! $delivery->is_supplied && ($subscription->isActive() || ($subscription->cancelled_from_month && ! $deliveryCancelled && $subscription->status?->name === \App\Models\Subscription::CANCELLED_STATUS_NAME));
                             @endphp
-                            <tr @if ($deliveryCancelled) style="color:var(--color-text-secondary)" @endif>
+                            <tr wire:key="delivery-{{ $delivery->id }}-{{ $delivery->program_id }}-{{ (int) $delivery->is_supplied }}" @if ($deliveryCancelled) style="color:var(--color-text-secondary)" @endif>
                                 <td>{{ $delivery->sequence_number }}</td>
-                                <td>{{ $subscription->monthLabel($delivery->sequence_number) }}</td>
                                 <td>
-                                    @if ($delivery->is_supplied)
-                                        {{ $delivery->program?->name }}
-                                    @elseif ($deliverySuppliable)
-                                        <select wire:model="deliveryProgramSelections.{{ $delivery->id }}">
-                                            <option value="">בחרו תוכנית שסופקה</option>
-                                            @foreach ($this->availableDeliveryPrograms as $program)
-                                                <option value="{{ $program->id }}">{{ $program->name }}</option>
+                                    @if ($deliverySuppliable && auth()->user()->can('subscriptions.manage'))
+                                        <select wire:change="chooseDeliveryProgram({{ $subscription->id }}, {{ $delivery->id }}, $event.target.value)">
+                                            <option value="">בחרו תוכנית</option>
+                                            @if ($delivery->program && ! $choosablePrograms->contains('id', $delivery->program_id))
+                                                <option value="{{ $delivery->program_id }}" selected>{{ $delivery->program->name }}</option>
+                                            @endif
+                                            @foreach ($choosablePrograms as $program)
+                                                <option value="{{ $program->id }}" @selected($program->id === $delivery->program_id)>{{ $program->name }}</option>
                                             @endforeach
                                         </select>
                                     @else
-                                        —
+                                        {{ $delivery->program?->name ?? '—' }}
                                     @endif
                                 </td>
                                 <td class="ltr-num">{{ $delivery->supplied_at?->format('d/m/Y') ?? '—' }}</td>
                                 <td>{{ $delivery->suppliedBy?->name ?? '—' }}</td>
                                 <td>
                                     @if ($delivery->is_supplied)
-                                        <span class="badge badge-success">סופקה</span>
-                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="unmarkDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})" wire:confirm="לבטל את סימון האספקה של שורה זו?">ביטול סימון</button>
+                                        <span class="badge badge-success">נשלחה</span>
+                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="unmarkDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})" wire:confirm="לבטל את סימון השליחה של שורה זו? (הבחירה נשארת)">ביטול סימון</button>
                                     @elseif ($deliveryCancelled)
                                         <span class="badge badge-error">בוטלה</span>
-                                    @elseif ($deliverySuppliable)
-                                        <button type="button" class="btn btn-ghost btn-sm" wire:click="markDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})">סימון כסופקה</button>
+                                    @elseif ($delivery->program_id)
+                                        <span class="badge badge-info">נבחרה</span>
+                                        @if ($deliverySuppliable)
+                                            <button type="button" class="btn btn-ghost btn-sm" wire:click="markDeliverySupplied({{ $subscription->id }}, {{ $delivery->id }})">סימון כנשלחה</button>
+                                        @endif
                                     @else
-                                        <span class="badge badge-neutral">טרם סופקה</span>
+                                        <span class="badge badge-neutral">טרם נבחרה</span>
                                     @endif
                                 </td>
                             </tr>

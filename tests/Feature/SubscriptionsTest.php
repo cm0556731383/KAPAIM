@@ -27,6 +27,9 @@ class SubscriptionsTest extends TestCase
 
     private User $owner;
 
+    /** Subscription bundles made in the test — a program made by createProgram() is in them (a subscriber chooses from her bundle). */
+    private array $subscriptionBundles = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -429,6 +432,7 @@ class SubscriptionsTest extends TestCase
         $third->customer->school->update(['city' => 'אילת']);
         $firstProgram = $this->createProgram('תוכנית א לסינון');
         $secondProgram = $this->createProgram('תוכנית ב לסינון');
+        \Illuminate\Support\Facades\DB::table('bundle_program')->delete(); // createProgram() put them in every bundle
         $first->deal->bundle->programs()->attach($firstProgram->id);
         $second->deal->bundle->programs()->attach($secondProgram->id);
 
@@ -977,10 +981,18 @@ class SubscriptionsTest extends TestCase
         $program = $this->createProgram();
         $limitedUser = $this->userWithOnlyCustomersPermission();
 
+        $chosen = $subscription->deliveries()->where('sequence_number', 2)->first();
+        $chosen->update(['program_id' => $program->id]);
+
         Livewire::actingAs($limitedUser)->test('customer-detail', ['customer' => $subscription->customer])
-            ->set("deliveryProgramSelections.{$delivery->id}", (string) $program->id)
-            ->call('markDeliverySupplied', $subscription->id, $delivery->id)
+            ->call('chooseDeliveryProgram', $subscription->id, $delivery->id, $program->id)
             ->assertStatus(403);
+        $this->assertNull($delivery->fresh()->program_id);
+
+        Livewire::actingAs($limitedUser)->test('customer-detail', ['customer' => $subscription->customer])
+            ->call('markDeliverySupplied', $subscription->id, $chosen->id)
+            ->assertStatus(403);
+        $this->assertFalse($chosen->fresh()->is_supplied);
 
         $this->assertFalse($delivery->fresh()->is_supplied);
     }
@@ -1047,24 +1059,82 @@ class SubscriptionsTest extends TestCase
         $deliveries = $subscription->deliveries()->orderBy('sequence_number')->get();
         $subscription->markDeliverySupplied($subscription->version, $deliveries[0]->id, $program->id, $this->owner);
 
+        // Choosing a program already sent asks first.
         $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
-            ->set("deliveryProgramSelections.{$deliveries[2]->id}", (string) $program->id)
+            ->call('chooseDeliveryProgram', $subscription->id, $deliveries[2]->id, $program->id);
+        $this->assertStringContainsString('כבר נשלחה למנויה (שורה 1)', collect($component->effects['xjs'] ?? [])->pluck('expression')->implode(''));
+        $this->assertNull($deliveries[2]->fresh()->program_id);
+
+        $component->call('chooseDeliveryProgram', $subscription->id, $deliveries[2]->id, $program->id, true);
+        $this->assertSame($program->id, $deliveries[2]->fresh()->program_id);
+
+        $component = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
             ->call('markDeliverySupplied', $subscription->id, $deliveries[2]->id);
 
         $js = collect($component->effects['xjs'] ?? [])->pluck('expression')->implode('');
-        $this->assertStringContainsString('כבר סומנה כסופקה בחודש 1', $js);
-        $this->assertStringContainsString('חודש 2 עדיין לא סומן', $js);
+        $this->assertStringContainsString('כבר נשלחה למנויה (שורה 1)', $js);
+        $this->assertStringContainsString('שורה 2 עדיין לא סומנה', $js);
         $this->assertFalse($deliveries[2]->fresh()->is_supplied);
 
         $component->call('markDeliverySupplied', $subscription->id, $deliveries[2]->id, true);
         $this->assertTrue($deliveries[2]->fresh()->is_supplied);
 
-        // The next month in order, with a new program, needs no confirmation.
+        // The next row in order, with a new program, needs no confirmation.
         Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])
-            ->set("deliveryProgramSelections.{$deliveries[1]->id}", (string) $this->createProgram()->id)
+            ->call('chooseDeliveryProgram', $subscription->id, $deliveries[1]->id, $this->createProgram()->id)
+            ->assertNoJs()
             ->call('markDeliverySupplied', $subscription->id, $deliveries[1]->id)
             ->assertNoJs();
         $this->assertTrue($deliveries[1]->fresh()->is_supplied);
+    }
+
+    public function test_a_subscriber_chooses_from_her_bundle_which_may_hold_more_than_ten_programs(): void
+    {
+        $subscription = $this->openSubscription();
+        $bundle = $subscription->deal->subscriptionBundle();
+        $programs = collect(range(1, 12))->map(fn ($i) => $this->createProgram("תוכנית מארז {$i}"));
+        $included = Bundle::create(['name' => 'מארז כלול', 'price' => 100, 'is_active' => true]);
+        $inIncluded = Program::create(['name' => 'תוכנית ממארז כלול', 'price' => 100, 'is_active' => true]);
+        $included->programs()->attach($inIncluded->id);
+        $bundle->includedBundles()->attach($included->id);
+        $outside = Program::create(['name' => 'תוכנית מחוץ למארז', 'price' => 100, 'is_active' => true]);
+
+        $choosable = $subscription->fresh()->choosablePrograms()->pluck('id');
+        $this->assertCount(13, $choosable);
+        $this->assertTrue($choosable->contains($inIncluded->id));
+        $this->assertFalse($choosable->contains($outside->id));
+
+        $deliveries = $subscription->deliveries()->orderBy('sequence_number')->get();
+        $page = Livewire::actingAs($this->owner)->test('customer-detail', ['customer' => $subscription->customer])->set('activeTab', 'subscription');
+
+        // Outside the bundle — refused, nothing saved.
+        $page->call('chooseDeliveryProgram', $subscription->id, $deliveries[0]->id, $outside->id)->assertSee('אינה כלולה במארז המנוי');
+        $this->assertNull($deliveries[0]->fresh()->program_id);
+        try {
+            $subscription->fresh()->markDeliverySupplied($subscription->version, $deliveries[0]->id, $outside->id, $this->owner);
+            $this->fail('A program outside the bundle was marked sent.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('אינה כלולה במארז המנוי', $e->getMessage());
+        }
+
+        // Step one: chosen, not yet sent.
+        $page->call('chooseDeliveryProgram', $subscription->id, $deliveries[0]->id, $programs[11]->id)
+            ->assertSee('נבחרה')->assertSee('סימון כנשלחה')->assertDontSee('<th>חודש</th>', false)->assertSee('תוכנית שנבחרה');
+        $this->assertFalse($deliveries[0]->fresh()->is_supplied);
+        $this->assertSame(0, $subscription->fresh()->suppliedCount());
+
+        // Step two: sent.
+        $page->call('markDeliverySupplied', $subscription->id, $deliveries[0]->id)->assertSee('נשלחה');
+        $this->assertTrue($deliveries[0]->fresh()->is_supplied);
+
+        // Undoing the send keeps the choice.
+        $page->call('unmarkDeliverySupplied', $subscription->id, $deliveries[0]->id);
+        $this->assertFalse($deliveries[0]->fresh()->is_supplied);
+        $this->assertSame($programs[11]->id, $deliveries[0]->fresh()->program_id);
+
+        // Clearing the choice.
+        $page->call('chooseDeliveryProgram', $subscription->id, $deliveries[0]->id, '');
+        $this->assertNull($deliveries[0]->fresh()->program_id);
     }
 
     private function openSubscription(float $agreedAmount = 4200): Subscription
@@ -1123,7 +1193,7 @@ class SubscriptionsTest extends TestCase
 
     private function createSubscriptionBundle(?string $name = null, float $price = 4200, bool $isActive = true): Bundle
     {
-        return Bundle::create([
+        return $this->subscriptionBundles[] = Bundle::create([
             'name' => $name ?? 'מנוי שנתי לבדיקה '.random_int(1, 999999),
             'description' => null,
             'price' => $price,
@@ -1138,13 +1208,19 @@ class SubscriptionsTest extends TestCase
         bool $isActive = true,
         bool $isPremium = false,
     ): Program {
-        return Program::create([
+        $program = Program::create([
             'name' => $name ?? 'תוכנית בדיקת מנויים '.random_int(1, 999999),
             'description' => null,
             'price' => $price,
             'is_premium' => $isPremium,
             'is_active' => $isActive,
         ]);
+
+        foreach ($this->subscriptionBundles as $bundle) {
+            $bundle->programs()->attach($program->id);
+        }
+
+        return $program;
     }
 
     private function createTemplate(string $documentType): DocumentTemplate

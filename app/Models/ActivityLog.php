@@ -132,6 +132,7 @@ class ActivityLog extends Model
         'status_definition.created' => 'סטטוס חדש',
         'status_definition.toggled' => 'הפעלה/השבתה של סטטוס',
         'subscription.cancelled' => 'ביטול מנוי',
+        'subscription.delivery_chosen' => 'נבחרה תוכנית במנוי',
         'subscription.delivery_supplied' => 'תוכנית סומנה כסופקה',
         'subscription.delivery_unsupplied' => 'ביטול סימון אספקה',
         'subscription.demo_deliveries_seeded' => 'סימון אספקות לדוגמה',

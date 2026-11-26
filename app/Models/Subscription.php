@@ -309,6 +309,67 @@ class Subscription extends Model
      * @throws RuntimeException on a version conflict or a rule violation.
      */
     /**
+     * The programs a subscriber chooses her 10 from: the active programs of
+     * her subscription bundle, its included bundles' too (2026-11-26 — a
+     * bundle may hold more than 10). Every active program when the deal has
+     * no subscription bundle (older data).
+     *
+     * @return \Illuminate\Support\Collection<int, Program>
+     */
+    public function choosablePrograms(): \Illuminate\Support\Collection
+    {
+        $bundle = $this->deal?->subscriptionBundle();
+
+        return ($bundle ? $bundle->allPrograms() : Program::all())
+            ->where('is_active', true)
+            ->sortBy('name')
+            ->values();
+    }
+
+    /**
+     * Records which program the subscriber chose for a delivery row (step one;
+     * markDeliverySupplied() is step two) — a row with a program that isn't
+     * supplied is "chosen". Null clears the choice.
+     *
+     * @throws RuntimeException when the row is supplied or can't be marked, or the program isn't in the subscription.
+     */
+    public function chooseDeliveryProgram(int $deliveryId, ?int $programId): SubscriptionDelivery
+    {
+        $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
+
+        if ($delivery->is_supplied) {
+            throw new RuntimeException('שורה זו כבר סומנה כנשלחה — יש לבטל את הסימון לפני שינוי הבחירה.');
+        }
+
+        $this->assertDeliveryMarkable($delivery);
+
+        if ($programId !== null && ! $this->choosablePrograms()->contains('id', $programId)) {
+            throw new RuntimeException('התוכנית שנבחרה אינה כלולה במארז המנוי (או אינה פעילה).');
+        }
+
+        $delivery->update(['program_id' => $programId]);
+
+        return $delivery->refresh();
+    }
+
+    /** Active, or cancelled/ended with this row still owed. */
+    private function assertDeliveryMarkable(SubscriptionDelivery $delivery): void
+    {
+        // A cancelled subscription still owes the months before its
+        // cancellation month — only those rows may be marked after it.
+        $suppliableAfterCancel = $this->status?->name === self::CANCELLED_STATUS_NAME
+            && $this->cancelled_from_month !== null
+            && ! $this->isDeliveryCancelled($delivery);
+
+        // One ended by date (endExpired()) may still have a supplied month recorded late.
+        $suppliableAfterEnd = $this->status?->name === self::ENDED_STATUS_NAME;
+
+        if (! $this->isActive() && ! $suppliableAfterCancel && ! $suppliableAfterEnd) {
+            throw new RuntimeException('ניתן לסמן אספקה רק עבור מנוי פעיל.');
+        }
+    }
+
+    /**
      * What to confirm before marking $deliveryId supplied with $programId —
      * null when nothing looks off. Both are allowed (a month can be supplied
      * late, a program twice on purpose), but are usually a slip: the same
@@ -323,14 +384,14 @@ class Subscription extends Model
 
         $sameProgram = $others->where('is_supplied', true)->firstWhere('program_id', $programId);
         if ($sameProgram) {
-            $warnings[] = 'התוכנית "'.Program::find($programId)?->name."\" כבר סומנה כסופקה בחודש {$sameProgram->sequence_number} של המנוי.";
+            $warnings[] = 'התוכנית "'.Program::find($programId)?->name."\" כבר נשלחה למנויה (שורה {$sameProgram->sequence_number}).";
         }
 
         $earlierOpen = $others
             ->filter(fn (SubscriptionDelivery $d) => $d->sequence_number < $delivery->sequence_number && ! $d->is_supplied && ! $this->isDeliveryCancelled($d))
             ->pluck('sequence_number')->sort()->values();
         if ($earlierOpen->isNotEmpty()) {
-            $warnings[] = ($earlierOpen->count() === 1 ? 'חודש '.$earlierOpen->first().' עדיין לא סומן' : 'חודשים '.$earlierOpen->implode(', ').' עדיין לא סומנו').' כסופק — מסמנים את חודש '.$delivery->sequence_number.' לפניהם.';
+            $warnings[] = ($earlierOpen->count() === 1 ? 'שורה '.$earlierOpen->first().' עדיין לא סומנה' : 'שורות '.$earlierOpen->implode(', ').' עדיין לא סומנו').' כנשלחה — מסמנים את שורה '.$delivery->sequence_number.' לפניהן.';
         }
 
         return $warnings ? implode("\n", $warnings)."\nלסמן בכל זאת?" : null;
@@ -340,27 +401,21 @@ class Subscription extends Model
     {
         $delivery = $this->deliveries()->whereKey($deliveryId)->firstOrFail();
 
-        // A cancelled subscription still owes the months before its
-        // cancellation month — only those rows may be marked after it.
-        $suppliableAfterCancel = $this->status?->name === self::CANCELLED_STATUS_NAME
-            && $this->cancelled_from_month !== null
-            && ! $this->isDeliveryCancelled($delivery);
-
-        // One ended by date (endExpired()) may still have a supplied month recorded late.
-        $suppliableAfterEnd = $this->status?->name === self::ENDED_STATUS_NAME;
-
-        if (! $this->isActive() && ! $suppliableAfterCancel && ! $suppliableAfterEnd) {
-            throw new RuntimeException('ניתן לסמן אספקה רק עבור מנוי פעיל.');
-        }
+        $this->assertDeliveryMarkable($delivery);
 
         if ($delivery->is_supplied) {
-            throw new RuntimeException('שורת אספקה זו כבר סומנה כסופקה.');
+            throw new RuntimeException('שורת אספקה זו כבר סומנה כנשלחה.');
         }
 
         $program = Program::find($programId);
 
         if (! $program || ! $program->is_active) {
             throw new RuntimeException('יש לבחור תוכנית קטלוג פעילה עבור שורת האספקה.');
+        }
+
+        // Kept already chosen even if it since left the bundle; a new one must be in it.
+        if ($program->id !== $delivery->program_id && ! $this->choosablePrograms()->contains('id', $program->id)) {
+            throw new RuntimeException('התוכנית שנבחרה אינה כלולה במארז המנוי.');
         }
 
         $wasActive = $this->isActive();
@@ -428,7 +483,8 @@ class Subscription extends Model
                 throw new RuntimeException('המנוי עודכן על ידי משתמשת אחרת בינתיים — נא לרענן ולנסות שוב.');
             }
 
-            $delivery->update(['program_id' => null, 'is_supplied' => false, 'supplied_at' => null, 'supplied_by' => null]);
+            // Back to "chosen" — the subscriber's choice stays.
+            $delivery->update(['is_supplied' => false, 'supplied_at' => null, 'supplied_by' => null]);
 
             // Only an end caused by the 10th delivery is undone — never one whose months are over.
             if ($this->status?->name === self::ENDED_STATUS_NAME && ! $this->hasPeriodEnded()) {
